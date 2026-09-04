@@ -7,6 +7,8 @@ Auth resolution:
 
 Env:
   GLM_MODEL (default glm-5.2)
+  ZHIPU_API_BASE (default coding plan:
+    https://open.bigmodel.cn/api/coding/paas/v4)
   GROK_MODEL (default grok-2-latest)
 """
 from __future__ import annotations
@@ -21,7 +23,13 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-ZHIPU_CHAT_URL = "https://open.bigmodel.cn/api/paas/v4/chat/completions"
+DEFAULT_ZHIPU_API_BASE = "https://open.bigmodel.cn/api/coding/paas/v4"
+
+
+def _zhipu_chat_url() -> str:
+    base = (os.getenv("ZHIPU_API_BASE") or DEFAULT_ZHIPU_API_BASE).rstrip("/")
+    return f"{base}/chat/completions"
+
 XAI_CHAT_URL = "https://api.x.ai/v1/chat/completions"
 DEFAULT_GLM_MODEL = "glm-5.2"
 DEFAULT_GROK_MODEL = "grok-2-latest"
@@ -176,11 +184,23 @@ def _chat_zhipu(api_key: str, system: str, user: str) -> str:
         ],
         "temperature": 0.3,
     }
-    with httpx.Client(timeout=60.0) as client:
-        resp = client.post(ZHIPU_CHAT_URL, headers=headers, json=payload)
-        resp.raise_for_status()
+    url = _zhipu_chat_url()
+    with httpx.Client(timeout=90.0) as client:
+        resp = client.post(url, headers=headers, json=payload)
+        if resp.status_code >= 400:
+            detail = resp.text[:300]
+            raise httpx.HTTPStatusError(
+                f"{resp.status_code} {detail}",
+                request=resp.request,
+                response=resp,
+            )
         data = resp.json()
-    return data["choices"][0]["message"]["content"]
+    msg = data["choices"][0]["message"]
+    content = (msg.get("content") or "").strip()
+    if not content:
+        # some GLM coding responses put text in reasoning_content briefly
+        content = (msg.get("reasoning_content") or "").strip()
+    return content
 
 
 def _chat_xai(api_key: str, system: str, user: str) -> str:

@@ -44,7 +44,8 @@ def test_zhipu_http_mocked(monkeypatch):
     }
 
     mock_resp = MagicMock()
-    mock_resp.raise_for_status = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = "{}"
     mock_resp.json.return_value = {
         "choices": [{"message": {"content": json.dumps(payload, ensure_ascii=False)}}]
     }
@@ -69,7 +70,7 @@ def test_zhipu_http_mocked(monkeypatch):
     assert result["answer"]["风险等级"] == "高"
     assert "预付" in result["answer"]["原文在哪"] or "预付" in result["answer"]["问题是啥"]
     call_kwargs = client.post.call_args
-    assert call_kwargs.args[0] == llm_ask.ZHIPU_CHAT_URL
+    assert call_kwargs.args[0] == llm_ask._zhipu_chat_url()
     body = call_kwargs.kwargs["json"]
     assert body["model"] == "glm-5.2"
     assert abs(body["temperature"] - 0.3) < 1e-6
@@ -80,7 +81,8 @@ def test_prefers_zhipu_over_xai(monkeypatch):
     monkeypatch.setenv("ZHIPU_API_KEY", "zk")
     monkeypatch.setenv("XAI_API_KEY", "xk")
     mock_resp = MagicMock()
-    mock_resp.raise_for_status = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = "{}"
     mock_resp.json.return_value = {
         "choices": [
             {
@@ -101,4 +103,4 @@ def test_prefers_zhipu_over_xai(monkeypatch):
             contract_text="t",
             policies=[],
         )
-    assert client.post.call_args.args[0] == llm_ask.ZHIPU_CHAT_URL
+    assert client.post.call_args.args[0] == llm_ask._zhipu_chat_url()
