@@ -27,7 +27,7 @@
   }
 
   function statusLabel(status) {
-    if (status === "通过") return "已通过";
+    if (status === "本类不适用") return "不适用";
     return status;
   }
 
@@ -167,15 +167,19 @@
   }
 
   function renderResults(data) {
+    const items = data.items || [];
+    const nAtt = items.filter((i) => i.status === "需关注").length;
+    const nPass = items.filter((i) => i.status === "通过").length;
     $("results-meta").innerHTML =
       `<strong>${escapeHtml(data.filename || "")}</strong>` +
-      ` · ${escapeHtml(data.category_label || data.category || "")}`;
+      ` · ${escapeHtml(data.category_label || data.category || "")}` +
+      `<br/>需关注 ${nAtt} 项 · 已通过 ${nPass} 项`;
     const list = $("item-list");
     list.innerHTML = "";
     state.selectedItemId = null;
     $("item-detail").classList.add("hidden");
 
-    (data.items || []).forEach((item) => {
+    items.forEach((item) => {
       const li = document.createElement("li");
       li.className = `item ${statusClass(item.status)}`;
       li.dataset.itemId = item.id;
@@ -279,7 +283,10 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "请求失败");
       if (!data.ok) {
-        err.textContent = data.error || "追问失败";
+        const msg = data.error || "追问失败";
+        err.textContent = /key|api|配置|未配置|XAI|GROK/i.test(msg)
+          ? "追问暂未开通"
+          : msg;
         err.classList.remove("hidden");
         return;
       }
@@ -295,18 +302,25 @@
 
   function renderAnswer(answer, raw) {
     const box = $("ask-answer");
-    const fields = ["风险等级", "这条在查啥", "原文在哪", "问题是啥", "建议怎么改", "还想问"];
-    let html = "<dl>";
-    let any = false;
-    fields.forEach((k) => {
-      if (answer && answer[k]) {
-        any = true;
-        html += `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(answer[k]))}</dd>`;
-      }
-    });
-    html += "</dl>";
-    if (!any && raw) {
-      html = `<pre style="white-space:pre-wrap">${escapeHtml(raw)}</pre>`;
+    const explain = [answer && answer["问题是啥"], answer && answer["这条在查啥"], answer && answer["风险等级"]]
+      .filter(Boolean)
+      .map(String)
+      .join("\n");
+    const rewrite = (answer && answer["建议怎么改"]) || "";
+    const extra = [answer && answer["原文在哪"], answer && answer["还想问"]].filter(Boolean).map(String).join("\n");
+    let html = "";
+    html += `<p class="detail-label">人话解释</p>`;
+    if (explain) {
+      html += `<div class="detail-note">${escapeHtml(explain)}</div>`;
+    } else if (raw) {
+      html += `<pre style="white-space:pre-wrap">${escapeHtml(raw)}</pre>`;
+    } else {
+      html += `<div class="detail-note muted">暂无</div>`;
+    }
+    html += `<p class="detail-label">建议改法</p>`;
+    html += `<div class="detail-note">${escapeHtml(rewrite || "暂无")}</div>`;
+    if (extra) {
+      html += `<p class="detail-label">补充</p><div class="detail-note">${escapeHtml(extra)}</div>`;
     }
     box.innerHTML = html;
   }

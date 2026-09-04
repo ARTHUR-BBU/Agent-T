@@ -12,6 +12,8 @@
   --color-accent-text: #FFFFFF;
   --color-attention: #F5A524;
   --color-attention-bg: #FFF1D6;
+  --highlight-bg: #FFE08A;
+  --highlight-underline: #FF9F0A;
   --color-pass: #34C759;
   --color-pass-bg: #E8F8EE;
   --color-notfound-bg: #F5F5F7;
@@ -267,11 +269,13 @@ textarea { resize: vertical; min-height: 88px; }
 
 mark.kw,
 .kw {
-  background: var(--color-attention-bg);
+  background: var(--highlight-bg);
   color: var(--color-text-primary);
   padding: 0 2px;
   border-radius: 3px;
   font-style: normal;
+  font-weight: 510;
+  border-bottom: 2px solid var(--highlight-underline);
 }
 
 .detail-actions {
