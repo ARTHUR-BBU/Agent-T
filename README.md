@@ -37,6 +37,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 |------|------|
 | `ZHIPU_API_KEY` 或 `GLM_API_KEY` | 智谱 OpenAPI（优先）；不配且无 Grok Key 时清单审查仍可用，`/api/ask` 返回「追问暂未开通」 |
 | `GLM_MODEL` | 可选，默认 `glm-5.2` |
+| `ZHIPU_API_BASE` | 默认 Coding 套餐 `https://open.bigmodel.cn/api/coding/paas/v4`；标准 API Key 改为 `https://open.bigmodel.cn/api/paas/v4` |
 | `XAI_API_KEY` 或 `GROK_API_KEY` | 可选，无智谱 Key 时回退 xAI Grok |
 | `GROK_MODEL` | 可选，默认 `grok-2-latest` |
 
