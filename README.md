@@ -65,7 +65,7 @@ bash scripts/demo_procurement.sh
 | `ZHIPU_API_KEY` 或 `GLM_API_KEY` | 智谱追问 Key；不配也能跑清单 |
 | `GLM_MODEL` | 默认 `glm-5.2` |
 | `ZHIPU_API_BASE` | Coding 套餐默认 `https://open.bigmodel.cn/api/coding/paas/v4`；标准 API 改为 `https://open.bigmodel.cn/api/paas/v4` |
-| `XAI_API_KEY` / `GROK_API_KEY` | 可选回退 |
+| `XAI_API_KEY` / `GROK_API_KEY` | 可选回退（**一般不用**） |
 
 ## 测试
 
