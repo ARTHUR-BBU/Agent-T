@@ -1,6 +1,6 @@
 # Agent-T · 合同审查 Agent（MVP）
 
-上传一份合同（PDF / Word / txt）→ 按可配置 12 项清单做规则优先审查 → 仅对「需关注」项用 Grok 追问。
+上传一份合同（PDF / Word / txt）→ 按可配置 12 项清单做规则优先审查 → 仅对「需关注」项用 智谱 GLM（默认）或可选 Grok 追问。
 
 **范围（本 MVP）**：单文档；无企微；LangGraph **库**编排（非 LangGraph Platform）。
 
@@ -12,8 +12,12 @@ python3.11 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# 可选：Grok 追问
-export XAI_API_KEY=xai-...   # 或 GROK_API_KEY
+# 追问：智谱 GLM（MVP 推荐）
+export ZHIPU_API_KEY=...     # 或 GLM_API_KEY
+# export GLM_MODEL=glm-5.2   # 默认即为 glm-5.2
+
+# 可选：无智谱 Key 时回退 xAI Grok
+# export XAI_API_KEY=xai-... # 或 GROK_API_KEY
 
 # 启动
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -31,10 +35,13 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 | 变量 | 说明 |
 |------|------|
-| `XAI_API_KEY` 或 `GROK_API_KEY` | xAI Grok HTTP API；不配则清单审查可用，`/api/ask` 返回清晰错误 |
+| `ZHIPU_API_KEY` 或 `GLM_API_KEY` | 智谱 OpenAPI（优先）；不配且无 Grok Key 时清单审查仍可用，`/api/ask` 返回「追问暂未开通」 |
+| `GLM_MODEL` | 可选，默认 `glm-5.2` |
+| `ZHIPU_API_BASE` | 默认 Coding 套餐 `https://open.bigmodel.cn/api/coding/paas/v4`；标准 API Key 改为 `https://open.bigmodel.cn/api/paas/v4` |
+| `XAI_API_KEY` 或 `GROK_API_KEY` | 可选，无智谱 Key 时回退 xAI Grok |
 | `GROK_MODEL` | 可选，默认 `grok-2-latest` |
 
-> 预留：`app/services/grok.py` 中的 `GrokAuthProvider` 接口，供未来用户 OAuth 登录后按用户取 Key。
+> 追问实现：`app/services/llm_ask.py`（`ask_about_item`）。预留 `AskAuthProvider` / 兼容 `GrokAuthProvider`，供未来按用户 OAuth 取 Key。
 
 ## API
 
@@ -50,9 +57,9 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 - 配置：`config/checklist_procurement.yaml`、`config/checklist_nda.yaml`
 - NDA 下「价款与支付」为 `本类不适用`
-- 规则优先（关键词 / 正则）；Grok **不**参与打标，只做需关注追问，且必须引用原文，不得盖章「没问题」
+- 规则优先（关键词 / 正则）；LLM **不**参与打标，只做需关注追问，且必须引用原文，不得盖章「没问题」
 
-政策要点（注入 Grok 上下文，非独立清单项）：
+政策要点（注入追问上下文，非独立清单项）：
 
 - 先验收后付款；小额货 90%+10% 质保金
 - 质保≥12 个月；签收≠验收完
@@ -61,7 +68,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ## 管线（LangGraph 库）
 
-`parse`（Docling 可选 / 文本直读）→ `checklist`（YAML 规则）→ `grok_ready`（追问走 `/api/ask`）
+`parse`（Docling 可选 / 文本直读）→ `checklist`（YAML 规则）→ `grok_ready`（追问走 `/api/ask`，智谱 GLM / 可选 Grok）
 
 PDF/Word：若已安装 `docling`（或 `python-docx` / `pypdf`）则用之；**始终**支持 `.txt`，保证无重依赖也能演示。
 
@@ -81,7 +88,8 @@ app/
   api/routes.py        # upload / review / ask
   services/extract.py  # 文本抽取
   services/checklist.py
-  services/grok.py     # xAI + OAuth stub
+  services/llm_ask.py  # 智谱 GLM + 可选 xAI Grok
+  services/grok.py     # 兼容 re-export
   graph/pipeline.py    # LangGraph
   static/              # 三屏前端
 config/                # YAML 清单
