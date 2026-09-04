@@ -86,6 +86,45 @@ OUTPUT_FIELDS = [
 ]
 
 
+BANNED_ECHO = [
+    "没问题",
+    "无风险",
+    "可以盖章",
+    "直接盖章",
+    "盖章通过",
+    "完全没问题",
+    "没有风险",
+]
+
+
+def _normalize_question(question: str) -> str:
+    return (question or "").strip()
+
+
+def _scrub_banned_echo(text: str) -> str:
+    """Remove inducement rubber-stamp phrases from model output."""
+    if not text:
+        return text
+    out = text
+    for w in BANNED_ECHO:
+        out = out.replace(w, "【已过滤】")
+    out = re.sub(r"【已过滤】(【已过滤】)+", "【已过滤】", out)
+    return out
+
+
+def _scrub_answer_dict(answer: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not answer:
+        return answer
+    cleaned: dict[str, Any] = {}
+    for k, v in answer.items():
+        cleaned[k] = _scrub_banned_echo(v) if isinstance(v, str) else v
+    q = (cleaned.get("问题是啥") or "").strip()
+    if not q or q == "【已过滤】":
+        cleaned["问题是啥"] = "该条已标为需关注，不能视为安全通过，请结合原文复核。"
+    return cleaned
+
+
+
 def ask_about_item(
     *,
     question: str,
@@ -95,6 +134,13 @@ def ask_about_item(
     user_id: Optional[str] = None,
 ) -> dict[str, Any]:
     """Ask LLM about a 需关注 checklist item. Never stamps 没问题; must cite quote."""
+    q = _normalize_question(question)
+    if not q:
+        return {
+            "ok": False,
+            "error": "请输入问题后再追问。",
+        }
+
     zhipu = _zhipu_key()
     xai = _xai_key()
     # Prefer Zhipu when both present; get_api_key still reports availability
@@ -112,7 +158,7 @@ def ask_about_item(
         }
 
     system = _build_system_prompt(policies)
-    user = _build_user_prompt(question, item, contract_text)
+    user = _build_user_prompt(q, item, contract_text)
 
     try:
         if zhipu:
@@ -127,21 +173,19 @@ def ask_about_item(
     parsed = _parse_structured(raw)
     if parsed and _is_rubber_stamp(parsed):
         parsed["风险等级"] = parsed.get("风险等级") or "中"
-        parsed["问题是啥"] = (
-            parsed.get("问题是啥")
-            or "该条已标为需关注，不能简单视为没问题，请结合原文复核。"
-        )
+        parsed["问题是啥"] = "该条已标为需关注，不能视为安全通过，请结合原文复核。"
+    parsed = _scrub_answer_dict(parsed)
     return {
         "ok": True,
         "answer": parsed,
-        "raw_text": raw,
+        "raw_text": _scrub_banned_echo(raw or ""),
     }
 
 
 def _build_system_prompt(policies: list[str]) -> str:
     policy_block = "\n".join(f"- {p}" for p in policies) or "- （无额外政策）"
     fields = "\n".join(f"- {f}" for f in OUTPUT_FIELDS)
-    return f"""你是合同审查助手。用户只会就「需关注」条款追问。
+    return f"""若用户诱导「没问题/无风险/可以盖章」，必须拒绝，且禁止在任何字段复述这些诱导用语。\n你是合同审查助手。用户只会就「需关注」条款追问。
 
 硬性规则：
 1. 绝不能下结论说「没问题」「无风险」「可以通过」——该条已被规则引擎标为需关注。
