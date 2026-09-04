@@ -1,4 +1,8 @@
-"""Rules-first checklist engine driven by YAML configs."""
+"""Rules-first checklist engine driven by YAML configs.
+
+Supports structured rule matching (any_of / all_of / none_of / pattern)
+so synonym and paraphrase groups stay deterministic without an LLM.
+"""
 from __future__ import annotations
 
 import re
@@ -77,11 +81,8 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
 
     # 1) need_attention first (highest priority)
     for rule in rules.get("need_attention") or []:
-        if _match(text, rule.get("pattern", "")):
-            unless = rule.get("unless")
-            if unless and _match(text, unless):
-                continue
-            quote = _extract_quote(text, rule.get("pattern", ""))
+        if _rule_matches(text, rule) and not _negative_evidence(text, rule):
+            quote = _extract_quote_from_rule(text, rule)
             return {
                 **base,
                 "status": STATUS_ATTENTION,
@@ -91,8 +92,8 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
 
     # 2) pass
     for rule in rules.get("pass") or []:
-        if _match(text, rule.get("pattern", "")):
-            quote = _extract_quote(text, rule.get("pattern", ""))
+        if _rule_matches(text, rule) and not _negative_evidence(text, rule):
+            quote = _extract_quote_from_rule(text, rule)
             return {
                 **base,
                 "status": STATUS_PASS,
@@ -103,13 +104,79 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
     # 3) not found / missing
     missing_as = item.get("missing_as", STATUS_NOT_FOUND)
     missing_note = item.get("missing_note", "未在合同中找到相关约定")
-    # If not_found patterns exist, we still treat overall miss as missing
     return {
         **base,
         "status": missing_as,
         "note": missing_note if missing_as == STATUS_ATTENTION else "未在合同中找到相关约定",
         "quote": "",
     }
+
+
+def _patterns_from_spec(spec: Any) -> list[str]:
+    """Normalize a match spec into a list of regex/literal patterns.
+
+    Accepted forms:
+      - "pattern"
+      - ["p1", "p2"]
+      - {"pattern": "..."}
+      - {"any_of": [...]}
+      - {"all_of": [...]}  (returned as-is for caller; see _rule_matches)
+    """
+    if spec is None or spec == "":
+        return []
+    if isinstance(spec, str):
+        return [spec]
+    if isinstance(spec, list):
+        out: list[str] = []
+        for item in spec:
+            out.extend(_patterns_from_spec(item))
+        return out
+    if isinstance(spec, dict):
+        if "any_of" in spec:
+            return _patterns_from_spec(spec["any_of"])
+        if "pattern" in spec:
+            return _patterns_from_spec(spec["pattern"])
+        if "all_of" in spec:
+            return _patterns_from_spec(spec["all_of"])
+    return []
+
+
+def _rule_matches(text: str, rule: dict[str, Any]) -> bool:
+    """Positive match: pattern / any_of (OR) / all_of (AND)."""
+    if "all_of" in rule:
+        pats = _patterns_from_spec(rule["all_of"])
+        return bool(pats) and all(_match(text, p) for p in pats)
+    if "any_of" in rule:
+        pats = _patterns_from_spec(rule["any_of"])
+        return any(_match(text, p) for p in pats)
+    if "pattern" in rule:
+        return _match(text, rule.get("pattern", ""))
+    # bare string list not expected at top level
+    return False
+
+
+def _negative_evidence(text: str, rule: dict[str, Any]) -> bool:
+    """True if negative evidence blocks the rule (unless / none_of).
+
+    - unless: string | list | {any_of|pattern|all_of} — if it matches, block
+    - none_of: list of patterns — if ANY matches, block (same as unless any_of)
+    """
+    unless = rule.get("unless")
+    if unless is not None:
+        if isinstance(unless, dict):
+            if _rule_matches(text, unless):
+                return True
+        else:
+            for p in _patterns_from_spec(unless):
+                if _match(text, p):
+                    return True
+
+    none_of = rule.get("none_of")
+    if none_of is not None:
+        for p in _patterns_from_spec(none_of):
+            if _match(text, p):
+                return True
+    return False
 
 
 def _match(text: str, pattern: str) -> bool:
@@ -119,6 +186,22 @@ def _match(text: str, pattern: str) -> bool:
         return re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL) is not None
     except re.error:
         return pattern in text
+
+
+def _extract_quote_from_rule(text: str, rule: dict[str, Any], window: int = 40) -> str:
+    """Quote around the first hitting positive pattern in the rule."""
+    candidates: list[str] = []
+    if "all_of" in rule:
+        candidates = _patterns_from_spec(rule["all_of"])
+    elif "any_of" in rule:
+        candidates = _patterns_from_spec(rule["any_of"])
+    elif "pattern" in rule:
+        candidates = [rule.get("pattern", "")]
+    for pat in candidates:
+        quote = _extract_quote(text, pat, window=window)
+        if quote:
+            return quote
+    return ""
 
 
 def _extract_quote(text: str, pattern: str, window: int = 40) -> str:
