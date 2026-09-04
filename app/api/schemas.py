@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 
 Status = Literal["通过", "需关注", "未找到", "本类不适用"]
+TagSource = Literal["rule", "blind"]
 
 
 class ChecklistItemResult(BaseModel):
@@ -17,6 +18,19 @@ class ChecklistItemResult(BaseModel):
     quote: str = ""
     hits: list[str] = Field(default_factory=list)
     category_na: bool = False
+    tag_source: Optional[TagSource] = None
+    needs_confirm: bool = False
+
+
+class BlindCandidate(BaseModel):
+    id: str
+    name: str
+    status: Status = "需关注"
+    note: str = ""
+    quote: str = ""
+    hits: list[str] = Field(default_factory=list)
+    tag_source: Literal["blind"] = "blind"
+    needs_confirm: bool = True
 
 
 class ReviewSummary(BaseModel):
@@ -26,6 +40,10 @@ class ReviewSummary(BaseModel):
     category_label: str
     status: Literal["pending", "processing", "done", "error"] = "pending"
     items: list[ChecklistItemResult] = Field(default_factory=list)
+    blind_candidates: list[BlindCandidate] = Field(default_factory=list)
+    blind_skipped_messages: list[str] = Field(default_factory=list)
+    blind_skipped_reason: Optional[str] = None
+    blind_enabled: bool = False
     error: Optional[str] = None
     text_preview: str = ""
     ask_available: bool = False

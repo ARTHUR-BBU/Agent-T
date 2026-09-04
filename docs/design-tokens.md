@@ -19,6 +19,9 @@
 | `--highlight-underline` | `#FF9F0A` | 关键词下划线 |
 | `--color-pass` / `--color-pass-bg` | `#34C759` / `#E8F8EE` | 通过 |
 | `--color-danger` | `#FF3B30` | 错误 |
+| `--color-attention-bar` | `#FF9F0A` | 规则「需关注」左侧 3px 条 |
+| `--color-blind` | `#AF52DE` | 补盲候选左侧条 / 描边徽章 |
+| `--color-blind-bg` | `#F9F0FF` | 补盲候选行底 |
 
 ## 字号 `--type-*`
 
@@ -43,3 +46,9 @@
 
 - 过渡 ≤ **150ms**
 - 禁止弹跳、闪红、长动画
+
+## 补盲视觉（M2.5）
+
+- 规则「需关注」：琥珀左边条 `--color-attention-bar` + 实心徽章「规则」
+- 补盲候选：薰衣草左边条 `--color-blind` + 描边徽章「补盲」+ 灰字说明「候选，需人工确认」；行底 `--color-blind-bg`
+- 开关关闭（`BLIND_SPOT_ENABLED` 非真）：不出现补盲样式与文案

@@ -66,6 +66,7 @@ bash scripts/demo_procurement.sh
 | `GLM_MODEL` | 默认 `glm-5.2` |
 | `ZHIPU_API_BASE` | Coding 套餐默认 `https://open.bigmodel.cn/api/coding/paas/v4`；标准 API 改为 `https://open.bigmodel.cn/api/paas/v4` |
 | `XAI_API_KEY` / `GROK_API_KEY` | 可选回退（**一般不用**） |
+| `BLIND_SPOT_ENABLED` | 补盲开关，默认 `true`；关则纯规则、界面无「补盲」 |
 
 ## 测试
 
