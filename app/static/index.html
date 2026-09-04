@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>合同审查</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Screen 1: Upload -->
+    <section id="screen-upload" class="screen">
+      <header class="top">
+        <h1>上传合同</h1>
+      </header>
+      <div class="card empty-state" id="empty-hint">
+        <p class="muted">还没有合同。先上传一份，我按清单帮你挑问题。</p>
+      </div>
+      <div class="card">
+        <label class="field">
+          <span>合同类型</span>
+          <select id="category">
+            <option value="procurement">采购合同</option>
+            <option value="nda">保密协议（NDA）</option>
+          </select>
+        </label>
+        <label class="field file-field">
+          <span>选择文件（.txt / .pdf / .docx）</span>
+          <input type="file" id="file" accept=".txt,.md,.pdf,.docx,.doc,text/plain" />
+        </label>
+        <button id="btn-upload" class="primary" type="button">开始审查</button>
+        <p id="upload-error" class="error hidden"></p>
+      </div>
+    </section>
+
+    <!-- Screen 2: Results -->
+    <section id="screen-results" class="screen hidden">
+      <header class="top">
+        <button type="button" class="link" id="btn-back-upload">← 重新上传</button>
+        <h1>审查结果</h1>
+      </header>
+      <div id="results-loading" class="card">
+        <p class="muted">还在看……通常一两分钟。</p>
+      </div>
+      <div id="results-error" class="card error hidden"></div>
+      <div id="results-body" class="hidden">
+        <div class="meta card" id="results-meta"></div>
+        <div class="legend card">
+          <span class="tag pass">已通过</span>
+          <span class="tag attention">需关注</span>
+          <span class="tag notfound">未找到</span>
+          <span class="tag na">本类不适用</span>
+        </div>
+        <ul id="item-list" class="item-list"></ul>
+      </div>
+    </section>
+
+    <!-- Screen 3: Ask -->
+    <section id="screen-ask" class="screen hidden">
+      <header class="top">
+        <button type="button" class="link" id="btn-back-results">← 返回结果</button>
+        <h1>问清楚一点</h1>
+        <p class="sub" id="ask-subtitle"></p>
+      </header>
+      <div class="card">
+        <div id="ask-context" class="ask-context"></div>
+        <textarea id="ask-input" rows="3" placeholder="比如「违约金这一条风险大吗？」"></textarea>
+        <button id="btn-ask" class="primary" type="button">发送</button>
+        <p id="ask-error" class="error hidden"></p>
+        <div id="ask-answer" class="answer hidden"></div>
+      </div>
+    </section>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

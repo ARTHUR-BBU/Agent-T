@@ -1,0 +1,122 @@
+# 保密协议（NDA）审查清单（12 项）
+# 价款与支付对本类可标「本类不适用」
+category: nda
+label: 保密协议
+items:
+  - id: subject
+    name: 主体
+    description: 合同主体是否完整、清晰
+    rules:
+      need_attention:
+        - pattern: "有限公司|股份有限公司"
+          note: 仅见公司名称占位，主体信息不完整
+          unless: "法定代表人|统一社会信用代码|住所"
+      pass:
+        - pattern: "法定代表人|统一社会信用代码|住所|注册地址"
+      not_found:
+        - pattern: "甲方|乙方"
+
+  - id: subject_matter
+    name: 标的
+    description: 保密信息范围是否明确（NDA 语境下的「标的」）
+    rules:
+      pass:
+        - pattern: "保密信息|商业秘密|技术资料|经营信息"
+      not_found:
+        - pattern: "保密信息|商业秘密"
+
+  - id: payment
+    name: 价款与支付
+    description: NDA 通常不涉及价款
+    na: true
+    na_reason: 保密协议一般不涉及价款与支付，本类不适用
+
+  - id: term
+    name: 期限
+    description: 保密期限是否明确
+    rules:
+      pass:
+        - pattern: "保密期限|自签署之日起|不少于.*年|有效期"
+      not_found:
+        - pattern: "期限|年"
+
+  - id: breach
+    name: 违约责任
+    description: 违约责任是否约定
+    rules:
+      pass:
+        - pattern: "违约|赔偿|损失"
+      not_found:
+        - pattern: "违约"
+
+  - id: confidentiality
+    name: 保密
+    description: 保密义务是否完整
+    rules:
+      pass:
+        - pattern: "保密|不得.*披露|不得向第三方"
+      not_found:
+        - pattern: "保密"
+
+  - id: ip
+    name: 知识产权归属
+    description: 知识产权归属是否约定
+    rules:
+      pass:
+        - pattern: "知识产权|归属"
+      not_found:
+        - pattern: "知识产权"
+
+  - id: jurisdiction
+    name: 管辖与争议
+    description: 争议解决与管辖是否明确
+    rules:
+      pass:
+        - pattern: "法院|仲裁|管辖|诉讼"
+      not_found:
+        - pattern: "争议|管辖|仲裁|诉讼"
+
+  - id: termination
+    name: 解除/终止
+    description: 解除与终止条件是否约定
+    rules:
+      pass:
+        - pattern: "解除|终止"
+      not_found:
+        - pattern: "解除|终止"
+
+  - id: unfair_terms
+    name: 格式条款/明显单方不公平
+    description: 是否存在明显单方不公平条款
+    rules:
+      need_attention:
+        - pattern: "不得追究|单方免除|无限责任"
+          note: 存在明显单方不公平表述
+      # 无命中则默认通过
+
+  - id: governing_law
+    name: 适用法律
+    description: 是否明确适用法律
+    rules:
+      pass:
+        - pattern: "适用.*法律|适用中华人民共和国"
+      not_found:
+        - pattern: "法律"
+
+  - id: signature
+    name: 签署与印章
+    description: 签署方式是否完整
+    rules:
+      pass:
+        - pattern: "签字.*盖章|盖章.*签字|签字并加盖|签字/盖章"
+      need_attention:
+        - pattern: "盖章"
+          note: 仅见盖章，签署要件可能不完整
+          unless: "签字|签名"
+      not_found:
+        - pattern: "盖章|签字|签署"
+
+policies:
+  - 保密义务应对等，期限合理
+  - 保密范围宜可识别，避免无限扩大
+  - 违约救济应可执行
