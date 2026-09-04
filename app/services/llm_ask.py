@@ -121,7 +121,7 @@ def ask_about_item(
             raw = _chat_xai(xai, system, user)  # type: ignore[arg-type]
     except Exception as exc:  # noqa: BLE001
         logger.exception("Ask LLM API error")
-        provider = "智谱" if zhipu else "Grok"
+        provider = "智能解释"
         return {"ok": False, "error": f"{provider} 调用失败: {exc}"}
 
     parsed = _parse_structured(raw)

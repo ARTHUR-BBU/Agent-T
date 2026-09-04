@@ -1,4 +1,4 @@
-"""LangGraph library pipeline: parse → checklist → (optional grok node stub).
+"""LangGraph library pipeline: parse → checklist → (optional ask node stub).
 
 Uses langgraph as a library only — not LangGraph Platform.
 """
@@ -43,10 +43,10 @@ def node_checklist(state: ReviewState) -> ReviewState:
     }
 
 
-def node_grok_ready(state: ReviewState) -> ReviewState:
-    """Marker node: Grok is only invoked later via /api/ask on 需关注 items.
+def node_ask_ready(state: ReviewState) -> ReviewState:
+    """Marker node: Ask LLM is only invoked later via /api/ask on 需关注 items.
 
-    Kept in the graph so the wiring parse→checklist→optional grok is explicit.
+    Kept in the graph so the wiring parse→checklist→optional ask is explicit.
     """
     _ = state
     return {}
@@ -56,11 +56,11 @@ def build_graph():
     g = StateGraph(ReviewState)
     g.add_node("parse", node_parse)
     g.add_node("checklist", node_checklist)
-    g.add_node("grok_ready", node_grok_ready)
+    g.add_node("ask_ready", node_ask_ready)
     g.set_entry_point("parse")
     g.add_edge("parse", "checklist")
-    g.add_edge("checklist", "grok_ready")
-    g.add_edge("grok_ready", END)
+    g.add_edge("checklist", "ask_ready")
+    g.add_edge("ask_ready", END)
     return g.compile()
 
 
