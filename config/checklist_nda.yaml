@@ -97,6 +97,8 @@ items:
   - id: governing_law
     name: 适用法律
     description: 是否明确适用法律
+    missing_as: 需关注
+    missing_note: 全文检索未找到适用法律条款（未写明适用哪国/哪地法律）
     rules:
       pass:
         - pattern: "适用.*法律|适用中华人民共和国"

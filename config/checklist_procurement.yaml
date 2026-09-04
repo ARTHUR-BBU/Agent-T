@@ -181,7 +181,7 @@ items:
     description: 是否明确适用法律
     # 采购合同缺少适用法律 → 需关注（非仅未找到）
     missing_as: 需关注
-    missing_note: 全文未约定适用法律，管辖依据不完整
+    missing_note: 全文检索未找到适用法律条款（未写明适用哪国/哪地法律），管辖依据不完整
     rules:
       pass:
         - any_of:
