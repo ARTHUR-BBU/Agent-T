@@ -12,9 +12,10 @@
     <section id="screen-upload" class="screen">
       <header class="top">
         <h1>上传合同</h1>
+        <p class="sub">拖入 PDF 或 Word，或点此选择</p>
       </header>
       <div class="card empty-state" id="empty-hint">
-        <p class="muted">还没有合同。先上传一份，我按清单帮你挑问题。</p>
+        <p class="muted">还没有文件</p>
       </div>
       <div class="card">
         <label class="field">
@@ -25,7 +26,7 @@
           </select>
         </label>
         <label class="field file-field">
-          <span>选择文件（.txt / .pdf / .docx）</span>
+          <span>选择文件</span>
           <input type="file" id="file" accept=".txt,.md,.pdf,.docx,.doc,text/plain" />
         </label>
         <button id="btn-upload" class="primary" type="button">开始审查</button>
@@ -40,18 +41,28 @@
         <h1>审查结果</h1>
       </header>
       <div id="results-loading" class="card">
-        <p class="muted">还在看……通常一两分钟。</p>
+        <p class="muted">正在审查…</p>
       </div>
       <div id="results-error" class="card error hidden"></div>
       <div id="results-body" class="hidden">
         <div class="meta card" id="results-meta"></div>
         <div class="legend card">
-          <span class="tag pass">已通过</span>
+          <span class="tag pass">通过</span>
           <span class="tag attention">需关注</span>
           <span class="tag notfound">未找到</span>
-          <span class="tag na">本类不适用</span>
+          <span class="tag na">不适用</span>
         </div>
         <ul id="item-list" class="item-list"></ul>
+        <!-- Detail panel: 原文摘句 when a row is selected -->
+        <div id="item-detail" class="item-detail hidden" aria-live="polite">
+          <p class="detail-label">说明</p>
+          <p id="detail-note" class="detail-note"></p>
+          <p class="detail-label">原文</p>
+          <div id="detail-quote" class="detail-quote"></div>
+          <div id="detail-actions" class="detail-actions hidden">
+            <button type="button" class="link ask-link" id="detail-ask">问清楚一点 →</button>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -62,12 +73,22 @@
         <h1>问清楚一点</h1>
         <p class="sub" id="ask-subtitle"></p>
       </header>
+      <!-- Fixed top trust card -->
+      <div class="card quote-card" id="ask-quote-card">
+        <p class="quote-title">原文</p>
+        <div id="ask-quote" class="quote-body"></div>
+      </div>
       <div class="card">
         <div id="ask-context" class="ask-context"></div>
-        <textarea id="ask-input" rows="3" placeholder="比如「违约金这一条风险大吗？」"></textarea>
+        <textarea id="ask-input" rows="3" placeholder="例如：违约金风险大吗？"></textarea>
         <button id="btn-ask" class="primary" type="button">发送</button>
         <p id="ask-error" class="error hidden"></p>
-        <div id="ask-answer" class="answer hidden"></div>
+        <div id="ask-answer" class="answer hidden">
+          <p class="detail-label">人话解释</p>
+          <div id="ask-explain" class="detail-note"></div>
+          <p class="detail-label">建议改法</p>
+          <div id="ask-rewrite" class="detail-note"></div>
+        </div>
       </div>
     </section>
   </div>
