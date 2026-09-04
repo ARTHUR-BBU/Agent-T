@@ -5,7 +5,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.api.schemas import AskRequest, AskResponse, ReviewSummary, UploadResponse
 from app.graph.pipeline import run_review
-from app.services import grok
+from app.services import llm_ask
 from app.services.checklist import list_categories
 from app.services.store import store
 
@@ -83,7 +83,7 @@ def get_review(review_id: str):
         items=row.get("items") or [],
         error=row.get("error"),
         text_preview=row.get("text_preview") or "",
-        ask_available=bool(grok.get_api_key()),
+        ask_available=bool(llm_ask.get_api_key()),
     )
 
 
@@ -97,7 +97,7 @@ def ask(body: AskRequest):
     if not item:
         raise HTTPException(status_code=404, detail="清单项不存在")
 
-    result = grok.ask_about_item(
+    result = llm_ask.ask_about_item(
         question=body.question,
         item=item,
         contract_text=row.get("text") or "",

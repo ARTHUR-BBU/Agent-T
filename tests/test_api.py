@@ -34,12 +34,15 @@ def test_upload_and_review():
     assert len(attention) >= 7
 
 
-def test_ask_without_key_clear_message():
+def test_ask_without_key_clear_message(monkeypatch):
+    for k in ("ZHIPU_API_KEY", "GLM_API_KEY", "XAI_API_KEY", "GROK_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
     files = {"file": ("procurement_sample.txt", FIXTURE.read_bytes(), "text/plain")}
     rid = client.post("/api/upload", files=files, data={"category": "procurement"}).json()[
         "review_id"
     ]
     review = client.get(f"/api/review/{rid}").json()
+    assert review.get("ask_available") is False
     item = next(i for i in review["items"] if i["status"] == "需关注")
     r = client.post(
         "/api/ask",
@@ -47,6 +50,5 @@ def test_ask_without_key_clear_message():
     )
     assert r.status_code == 200
     body = r.json()
-    # Without API key, should return clear message (ok=False)
-    if not body.get("ok"):
-        assert (body.get("error") or "") == "追问暂未开通"
+    assert body.get("ok") is False
+    assert (body.get("error") or "") == "追问暂未开通"
