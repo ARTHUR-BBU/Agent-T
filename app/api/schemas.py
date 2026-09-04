@@ -15,6 +15,7 @@ class ChecklistItemResult(BaseModel):
     status: Status
     note: str = ""
     quote: str = ""
+    hits: list[str] = Field(default_factory=list)
     category_na: bool = False
 
 
@@ -27,6 +28,7 @@ class ReviewSummary(BaseModel):
     items: list[ChecklistItemResult] = Field(default_factory=list)
     error: Optional[str] = None
     text_preview: str = ""
+    ask_available: bool = False
 
 
 class UploadResponse(BaseModel):

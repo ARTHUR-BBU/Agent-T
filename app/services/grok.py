@@ -78,7 +78,7 @@ def ask_about_item(
     if not api_key:
         return {
             "ok": False,
-            "error": "未配置 XAI_API_KEY / GROK_API_KEY，无法进行追问。清单审查仍可用。",
+            "error": "追问暂未开通",
         }
 
     if item.get("status") != "需关注":
