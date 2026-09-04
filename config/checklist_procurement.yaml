@@ -1,0 +1,139 @@
+# 采购合同审查清单（12 项）
+category: procurement
+label: 采购合同
+items:
+  - id: subject
+    name: 主体
+    description: 合同主体是否完整、清晰（名称、角色、授权等）
+    rules:
+      need_attention:
+        - pattern: "有限公司|股份有限公司|有限责任公司"
+          note: 仅见公司名称，未见法定代表人、住所或统一社会信用代码等完整主体信息
+          unless: "法定代表人|统一社会信用代码|住所[:：]|注册地址"
+      pass:
+        - pattern: "法定代表人|统一社会信用代码"
+      not_found:
+        - pattern: "甲方|乙方|买方|卖方|采购方|供货方"
+
+  - id: subject_matter
+    name: 标的
+    description: 采购标的是否明确、规格数量是否可验收
+    rules:
+      need_attention:
+        - pattern: "办公主流配置|满足日常办公使用"
+          note: 标的仅写「办公主流配置」，规格型号不明确，难以验收
+      pass:
+        - pattern: "型号|规格参数|配置清单|技术参数"
+      not_found:
+        - pattern: "标的|采购|货物|设备|商品"
+
+  - id: payment
+    name: 价款与支付
+    description: 价款构成与付款节奏是否合理（先验收后付款、质保金等）
+    rules:
+      need_attention:
+        - pattern: "合同全款|支付.*全款|全款|签订后.{0,20}支付|无需提供质保|无质保服务"
+          note: 签约即付全款且无质保留存，违背「先验收后付款」「小额货90%+10%质保金」政策
+      pass:
+        - pattern: "质保金|验收合格.{0,10}支付|分期支付"
+      not_found:
+        - pattern: "价款|总价|付款|支付|人民币|元"
+
+  - id: term
+    name: 期限
+    description: 交付/履行期限是否明确
+    rules:
+      pass:
+        - pattern: "\\d+日内|\\d+天内|工作日内.{0,10}(完成|交付|送货)|完成送货"
+      not_found:
+        - pattern: "期限|日期|日内|天内"
+
+  - id: breach
+    name: 违约责任
+    description: 违约责任是否对等、可执行
+    rules:
+      need_attention:
+        - pattern: "不得追究.{0,10}违约|甲方不得追究|不得追究乙方"
+          note: 单方免除乙方违约责任，权利义务严重不对等
+      pass:
+        - pattern: "违约金|赔偿.{0,6}损失|承担违约责任"
+      not_found:
+        - pattern: "违约"
+
+  - id: confidentiality
+    name: 保密
+    description: 是否约定保密义务（采购合同可较简）
+    rules:
+      pass:
+        - pattern: "保密义务|商业秘密|不得披露"
+      not_found:
+        - pattern: "保密"
+
+  - id: ip
+    name: 知识产权归属
+    description: 知识产权归属是否约定
+    rules:
+      pass:
+        - pattern: "知识产权|著作权|专利权|所有权归"
+      not_found:
+        - pattern: "知识产权|著作权|专利"
+
+  - id: jurisdiction
+    name: 管辖与争议
+    description: 争议解决与管辖法院是否明确
+    rules:
+      pass:
+        - pattern: "法院|仲裁|管辖|提起诉讼"
+      not_found:
+        - pattern: "争议|纠纷|管辖|仲裁|诉讼"
+
+  - id: termination
+    name: 解除/终止
+    description: 解除与终止条件是否约定
+    rules:
+      pass:
+        - pattern: "解除合同|终止本|提前解除|可以解除"
+      not_found:
+        - pattern: "解除|终止"
+
+  - id: unfair_terms
+    name: 格式条款/明显单方不公平
+    description: 是否存在签收即验收、免质保、不得以发票拒付等单方不公平条款
+    rules:
+      need_attention:
+        - pattern: "签收即视为验收|签收即.{0,6}验收|无需提供质保|不得以发票.{0,8}拒付|不得以发票问题"
+          note: 存在签收即验收、免质保、不得以发票问题拒付等明显单方不公平条款
+      pass:
+        - pattern: "验收标准|质保期|有权拒付"
+
+  - id: governing_law
+    name: 适用法律
+    description: 是否明确适用法律
+    # 采购合同缺少适用法律 → 需关注（非仅未找到）
+    missing_as: 需关注
+    missing_note: 全文未约定适用法律，管辖依据不完整
+    rules:
+      pass:
+        - pattern: "适用.{0,10}法律|适用中华人民共和国|受中华人民共和国法律"
+      not_found:
+        - pattern: "适用法律"
+
+  - id: signature
+    name: 签署与印章
+    description: 签署方式是否完整（签字+盖章）
+    rules:
+      need_attention:
+        # 落款仅（盖章）且无（签字 → 需关注；正文「签字盖章后生效」不阻止
+        - pattern: "（盖章）|\\(盖章\\)"
+          note: 仅见盖章栏，未见签字栏或授权代表签署，签署要件不完整
+          unless: "（签字|\\(签字|签字/盖章|签字并加盖"
+      pass:
+        - pattern: "（签字.{0,4}盖章|签字/盖章|签字并加盖"
+      not_found:
+        - pattern: "盖章|签字|签署"
+
+policies:
+  - 先验收后付款；小额货90%+10%质保金
+  - 质保≥12个月；签收≠验收完
+  - 办公设备原则上不找小规模纳税人
+  - 无合规发票可拒付
