@@ -3,6 +3,7 @@
     reviewId: null,
     review: null,
     askItem: null,
+    selectedItemId: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -30,6 +31,74 @@
     return status;
   }
 
+  /** Collect highlight keywords from note that also appear in quote. */
+  function keywordsForHighlight(note, quote) {
+    if (!note || !quote) return [];
+    const found = [];
+    const seen = new Set();
+
+    function add(kw) {
+      const t = (kw || "").trim();
+      if (t.length < 2 || t.length > 24) return;
+      if (!quote.includes(t)) return;
+      if (seen.has(t)) return;
+      seen.add(t);
+      found.push(t);
+    }
+
+    // Phrases inside 「」
+    const reBracket = /「([^」]+)」/g;
+    let m;
+    while ((m = reBracket.exec(note)) !== null) add(m[1]);
+
+    // Split note on punctuation /顿号 and keep short phrases present in quote
+    note
+      .split(/[，。；、,.;:：\s]+/)
+      .forEach((part) => {
+        // Prefer mid-length Chinese/risk phrases
+        if (/[\u4e00-\u9fff]/.test(part) && part.length >= 2 && part.length <= 12) {
+          add(part);
+        }
+      });
+
+    // Longest first so nested matches don't break
+    found.sort((a, b) => b.length - a.length);
+    return found;
+  }
+
+  function highlightQuoteHtml(quote, note) {
+    if (!quote) {
+      return `<span class="empty">暂无原文摘句</span>`;
+    }
+    const kws = keywordsForHighlight(note || "", quote);
+    if (!kws.length) return escapeHtml(quote);
+
+    // Build a simple non-overlapping highlighter
+    const ranges = [];
+    kws.forEach((kw) => {
+      let from = 0;
+      while (from < quote.length) {
+        const idx = quote.indexOf(kw, from);
+        if (idx < 0) break;
+        const end = idx + kw.length;
+        const overlaps = ranges.some((r) => !(end <= r[0] || idx >= r[1]));
+        if (!overlaps) ranges.push([idx, end]);
+        from = end;
+      }
+    });
+    ranges.sort((a, b) => a[0] - b[0]);
+
+    let out = "";
+    let cursor = 0;
+    ranges.forEach(([s, e]) => {
+      out += escapeHtml(quote.slice(cursor, s));
+      out += `<mark class="kw">${escapeHtml(quote.slice(s, e))}</mark>`;
+      cursor = e;
+    });
+    out += escapeHtml(quote.slice(cursor));
+    return out;
+  }
+
   async function upload() {
     const fileInput = $("file");
     const err = $("upload-error");
@@ -49,10 +118,12 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "上传失败");
       state.reviewId = data.review_id;
+      state.selectedItemId = null;
       show("results");
       $("results-loading").classList.remove("hidden");
       $("results-body").classList.add("hidden");
       $("results-error").classList.add("hidden");
+      $("item-detail").classList.add("hidden");
       await pollReview();
     } catch (e) {
       err.textContent = e.message || String(e);
@@ -101,47 +172,84 @@
       ` · ${escapeHtml(data.category_label || data.category || "")}`;
     const list = $("item-list");
     list.innerHTML = "";
+    state.selectedItemId = null;
+    $("item-detail").classList.add("hidden");
+
     (data.items || []).forEach((item) => {
       const li = document.createElement("li");
       li.className = `item ${statusClass(item.status)}`;
+      li.dataset.itemId = item.id;
+      li.setAttribute("role", "button");
+      li.tabIndex = 0;
+
       const head = document.createElement("div");
       head.className = "item-head";
       head.innerHTML =
         `<span class="item-name">${escapeHtml(item.name)}</span>` +
         `<span class="tag ${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span>`;
       li.appendChild(head);
-      if (item.note) {
-        const note = document.createElement("p");
-        note.className = "item-note";
-        note.textContent = item.note;
-        li.appendChild(note);
-      }
-      if (item.quote) {
-        const q = document.createElement("div");
-        q.className = "item-quote";
-        q.textContent = item.quote;
-        li.appendChild(q);
-      }
-      if (item.status === "需关注") {
-        const a = document.createElement("button");
-        a.type = "button";
-        a.className = "link ask-link";
-        a.textContent = "问清楚一点 →";
-        a.addEventListener("click", () => openAsk(item));
-        li.appendChild(a);
-      }
+
+      li.addEventListener("click", () => selectItem(item));
+      li.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault();
+          selectItem(item);
+        }
+      });
       list.appendChild(li);
     });
   }
 
+  function selectItem(item) {
+    state.selectedItemId = item.id;
+    document.querySelectorAll(".item").forEach((el) => {
+      el.classList.toggle("selected", el.dataset.itemId === item.id);
+    });
+
+    const detail = $("item-detail");
+    const noteEl = $("detail-note");
+    const quoteEl = $("detail-quote");
+    const actions = $("detail-actions");
+
+    noteEl.textContent = item.note || "（无说明）";
+    if (item.quote) {
+      quoteEl.classList.remove("empty");
+      quoteEl.innerHTML = highlightQuoteHtml(item.quote, item.note);
+    } else {
+      quoteEl.classList.add("empty");
+      quoteEl.textContent = "暂无原文摘句";
+    }
+
+    if (item.status === "需关注") {
+      actions.classList.remove("hidden");
+      $("detail-ask").onclick = () => openAsk(item);
+    } else {
+      actions.classList.add("hidden");
+      $("detail-ask").onclick = null;
+    }
+
+    detail.classList.remove("hidden");
+    detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
   function openAsk(item) {
     state.askItem = item;
-    $("ask-subtitle").textContent = `← ${item.name} · 需关注`;
+    $("ask-subtitle").textContent = `${item.name} · 需关注`;
     $("ask-context").textContent = item.note || "";
     $("ask-input").value = "";
     $("ask-error").classList.add("hidden");
     $("ask-answer").classList.add("hidden");
     $("ask-answer").innerHTML = "";
+
+    const quoteBox = $("ask-quote");
+    if (item.quote) {
+      quoteBox.classList.remove("empty");
+      quoteBox.innerHTML = highlightQuoteHtml(item.quote, item.note);
+    } else {
+      quoteBox.classList.add("empty");
+      quoteBox.textContent = "暂无原文摘句";
+    }
+
     show("ask");
   }
 

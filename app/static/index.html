@@ -52,6 +52,16 @@
           <span class="tag na">本类不适用</span>
         </div>
         <ul id="item-list" class="item-list"></ul>
+        <!-- Detail panel: 原文摘句 when a row is selected -->
+        <div id="item-detail" class="item-detail hidden" aria-live="polite">
+          <p class="detail-label">说明</p>
+          <p id="detail-note" class="detail-note"></p>
+          <p class="detail-label">原文摘句</p>
+          <div id="detail-quote" class="detail-quote"></div>
+          <div id="detail-actions" class="detail-actions hidden">
+            <button type="button" class="link ask-link" id="detail-ask">问清楚一点 →</button>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -62,6 +72,11 @@
         <h1>问清楚一点</h1>
         <p class="sub" id="ask-subtitle"></p>
       </header>
+      <!-- Fixed top trust card -->
+      <div class="card quote-card" id="ask-quote-card">
+        <p class="quote-title">原文摘句</p>
+        <div id="ask-quote" class="quote-body"></div>
+      </div>
       <div class="card">
         <div id="ask-context" class="ask-context"></div>
         <textarea id="ask-input" rows="3" placeholder="比如「违约金这一条风险大吗？」"></textarea>
