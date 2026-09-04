@@ -66,6 +66,7 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
         "name": item["name"],
         "note": "",
         "quote": "",
+        "hits": [],
         "category_na": False,
     }
 
@@ -83,22 +84,26 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
     for rule in rules.get("need_attention") or []:
         if _rule_matches(text, rule) and not _negative_evidence(text, rule):
             quote = _extract_quote_from_rule(text, rule)
+            hits = _extract_hits_from_rule(text, rule)
             return {
                 **base,
                 "status": STATUS_ATTENTION,
                 "note": rule.get("note", "需关注"),
                 "quote": quote,
+                "hits": hits,
             }
 
     # 2) pass
     for rule in rules.get("pass") or []:
         if _rule_matches(text, rule) and not _negative_evidence(text, rule):
             quote = _extract_quote_from_rule(text, rule)
+            hits = _extract_hits_from_rule(text, rule)
             return {
                 **base,
                 "status": STATUS_PASS,
                 "note": rule.get("note", "条款基本可接受"),
                 "quote": quote,
+                "hits": hits,
             }
 
     # 3) not found / missing
@@ -109,6 +114,7 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
         "status": missing_as,
         "note": missing_note if missing_as == STATUS_ATTENTION else "未在合同中找到相关约定",
         "quote": "",
+        "hits": [],
     }
 
 
@@ -186,6 +192,38 @@ def _match(text: str, pattern: str) -> bool:
         return re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL) is not None
     except re.error:
         return pattern in text
+
+
+
+def _extract_hits_from_rule(text: str, rule: dict[str, Any]) -> list[str]:
+    """Return matched substrings from the contract for positive rule patterns."""
+    candidates: list[str] = []
+    if "all_of" in rule:
+        candidates = _patterns_from_spec(rule["all_of"])
+    elif "any_of" in rule:
+        candidates = _patterns_from_spec(rule["any_of"])
+    elif "pattern" in rule:
+        candidates = [rule.get("pattern", "")]
+    hits: list[str] = []
+    seen: set[str] = set()
+    for pat in candidates:
+        if not pat:
+            continue
+        try:
+            for m in re.finditer(pat, text, flags=re.IGNORECASE | re.DOTALL):
+                frag = (m.group(0) or "").strip()
+                if not frag or frag in seen:
+                    continue
+                if len(frag) > 40:
+                    frag = frag[:40].strip()
+                seen.add(frag)
+                hits.append(frag)
+        except re.error:
+            if pat in text and pat not in seen:
+                seen.add(pat)
+                hits.append(pat)
+    hits.sort(key=len, reverse=True)
+    return hits
 
 
 def _extract_quote_from_rule(text: str, rule: dict[str, Any], window: int = 40) -> str:

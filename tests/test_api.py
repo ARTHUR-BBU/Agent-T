@@ -49,4 +49,4 @@ def test_ask_without_key_clear_message():
     body = r.json()
     # Without API key, should return clear message (ok=False)
     if not body.get("ok"):
-        assert "API_KEY" in (body.get("error") or "") or "未配置" in (body.get("error") or "")
+        assert (body.get("error") or "") == "追问暂未开通"

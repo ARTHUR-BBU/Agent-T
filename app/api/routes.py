@@ -83,6 +83,7 @@ def get_review(review_id: str):
         items=row.get("items") or [],
         error=row.get("error"),
         text_preview=row.get("text_preview") or "",
+        ask_available=bool(grok.get_api_key()),
     )
 
 

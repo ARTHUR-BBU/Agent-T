@@ -31,46 +31,42 @@
     return status;
   }
 
-  /** Collect highlight keywords from note that also appear in quote. */
-  function keywordsForHighlight(note, quote) {
-    if (!note || !quote) return [];
+  /** Prefer rule hit strings from checklist; fall back to substrings present in quote. */
+  function keywordsForHighlight(hits, quote) {
+    if (!quote) return [];
     const found = [];
     const seen = new Set();
-
-    function add(kw) {
+    (hits || []).forEach((kw) => {
       const t = (kw || "").trim();
-      if (t.length < 2 || t.length > 24) return;
-      if (!quote.includes(t)) return;
-      if (seen.has(t)) return;
-      seen.add(t);
-      found.push(t);
-    }
-
-    // Phrases inside 「」
-    const reBracket = /「([^」]+)」/g;
-    let m;
-    while ((m = reBracket.exec(note)) !== null) add(m[1]);
-
-    // Split note on punctuation /顿号 and keep short phrases present in quote
-    note
-      .split(/[，。；、,.;:：\s]+/)
-      .forEach((part) => {
-        // Prefer mid-length Chinese/risk phrases
-        if (/[\u4e00-\u9fff]/.test(part) && part.length >= 2 && part.length <= 12) {
-          add(part);
+      if (!t || seen.has(t)) return;
+      // Hit may be regex match spanning punctuation; still try direct include
+      if (quote.includes(t)) {
+        seen.add(t);
+        found.push(t);
+        return;
+      }
+      // If hit longer than quote window, try sliding substrings of 2..12 chars present in both
+      if (t.length > 12) {
+        for (let len = Math.min(12, t.length); len >= 2; len--) {
+          for (let i = 0; i + len <= t.length; i++) {
+            const sub = t.slice(i, i + len);
+            if (quote.includes(sub) && !seen.has(sub) && /[\u4e00-\u9fff]/.test(sub)) {
+              seen.add(sub);
+              found.push(sub);
+            }
+          }
         }
-      });
-
-    // Longest first so nested matches don't break
+      }
+    });
     found.sort((a, b) => b.length - a.length);
     return found;
   }
 
-  function highlightQuoteHtml(quote, note) {
+  function highlightQuoteHtml(quote, hits) {
     if (!quote) {
       return `<span class="empty">暂无原文摘句</span>`;
     }
-    const kws = keywordsForHighlight(note || "", quote);
+    const kws = keywordsForHighlight(hits || [], quote);
     if (!kws.length) return escapeHtml(quote);
 
     // Build a simple non-overlapping highlighter
@@ -218,7 +214,7 @@
     noteEl.textContent = item.note || "（无说明）";
     if (item.quote) {
       quoteEl.classList.remove("empty");
-      quoteEl.innerHTML = highlightQuoteHtml(item.quote, item.note);
+      quoteEl.innerHTML = highlightQuoteHtml(item.quote, item.hits || []);
     } else {
       quoteEl.classList.add("empty");
       quoteEl.textContent = "暂无原文摘句";
@@ -248,10 +244,25 @@
     const quoteBox = $("ask-quote");
     if (item.quote) {
       quoteBox.classList.remove("empty");
-      quoteBox.innerHTML = highlightQuoteHtml(item.quote, item.note);
+      quoteBox.innerHTML = highlightQuoteHtml(item.quote, item.hits || []);
     } else {
       quoteBox.classList.add("empty");
       quoteBox.textContent = "暂无原文摘句";
+    }
+
+    const available = !!(state.review && state.review.ask_available);
+    const banner = $("ask-unavailable");
+    const btn = $("btn-ask");
+    const input = $("ask-input");
+    if (available) {
+      banner.classList.add("hidden");
+      btn.disabled = false;
+      input.disabled = false;
+    } else {
+      banner.classList.remove("hidden");
+      banner.textContent = "追问暂未开通";
+      btn.disabled = true;
+      input.disabled = true;
     }
 
     show("ask");
@@ -283,10 +294,7 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "请求失败");
       if (!data.ok) {
-        const msg = data.error || "追问失败";
-        err.textContent = /key|api|配置|未配置|XAI|GROK/i.test(msg)
-          ? "追问暂未开通"
-          : msg;
+        err.textContent = data.error || "追问暂未开通";
         err.classList.remove("hidden");
         return;
       }
