@@ -1,76 +1,71 @@
 # Agent-T · 合同审查 Agent（MVP）
 
-上传一份合同（PDF / Word / txt）→ 按可配置 12 项清单做规则优先审查 → 仅对「需关注」项用 智谱 GLM（默认）或可选 Grok 追问。
+**是做什么的**  
+上传一份合同 → 按 12 条清单挑问题 → 对「需关注」点「问清楚一点」用人话解释（不盖「没问题」章）。
 
-**范围（本 MVP）**：单文档；无企微；LangGraph **库**编排（非 LangGraph Platform）。
+**范围**：一次只审一份；不用企微/钉钉。底层用现成脚手架（FastAPI、LangGraph **库**），不自研调度平台。
 
-## 快速开始
+## 最短跑起来
+
+1. 装 Python 3.11+，进入本仓库目录  
+2. 创建并激活虚拟环境，装依赖：
 
 ```bash
-cd Agent-T
-python3.11 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+python3 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-
-# 追问：智谱 GLM（MVP 推荐）
-export ZHIPU_API_KEY=...     # 或 GLM_API_KEY
-# export GLM_MODEL=glm-5.2   # 默认即为 glm-5.2
-
-# 可选：无智谱 Key 时回退 xAI Grok
-# export XAI_API_KEY=xai-... # 或 GROK_API_KEY
-
-# 启动
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-浏览器打开 <http://localhost:8000>。
+3. 复制环境变量模板（**没有 Key 也能先看清单**；追问会显示「追问暂未开通」）：
 
-### 用采购样例演示
+```bash
+cp .env.example .env
+# 若要演示「问清楚一点」，编辑 .env 填入 ZHIPU_API_KEY
+# Coding 套餐保持 ZHIPU_API_BASE=https://open.bigmodel.cn/api/coding/paas/v4
+```
 
-1. 上传 `fixtures/procurement_sample.txt`，类型选「采购合同」
-2. 应看到至少 7 条「需关注」（价款、违约、格式条款、主体、标的、适用法律、签署）
-3. 点开某条「需关注」→「问清楚一点」（需配置 API Key；无 Key 时清单仍可用，追问返回明确提示）
+4. 启动：
 
-## 环境变量
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+5. 浏览器打开 <http://localhost:8000>
+
+## 三分钟演示（页面）
+
+1. 上传 `fixtures/procurement_sample.txt`，类型选「采购合同」  
+2. 应看到约 **7 条「需关注」**（价款与支付、违约责任、格式条款、主体、标的、适用法律、签署与印章）  
+3. 点「价款与支付」看原文黄底命中词  
+4. 再点「问清楚一点」（有 Key 才有智能解释；无 Key 显示「追问暂未开通」）
+
+## 一键演示脚本（命令行）
+
+服务先按上面启动着，另开终端：
+
+```bash
+source .venv/bin/activate
+bash scripts/demo_procurement.sh
+```
+
+脚本会：上传采购样例 → 断言 7 条「需关注」→ 若已配置 Key 则追问「价款与支付」，否则打印「追问暂未开通」。
+
+可选：`BASE_URL=http://127.0.0.1:8000 bash scripts/demo_procurement.sh`
+
+## 术语一句
+
+- **清单** = 事先定好的必看项  
+- **需关注** = 建议你仔细看  
+- **智能解释** = 把难懂条款说成人话（不盖章）
+
+## 环境变量（`.env.example`）
 
 | 变量 | 说明 |
 |------|------|
-| `ZHIPU_API_KEY` 或 `GLM_API_KEY` | 智谱 OpenAPI（优先）；不配且无 Grok Key 时清单审查仍可用，`/api/ask` 返回「追问暂未开通」 |
-| `GLM_MODEL` | 可选，默认 `glm-5.2` |
-| `ZHIPU_API_BASE` | 默认 Coding 套餐 `https://open.bigmodel.cn/api/coding/paas/v4`；标准 API Key 改为 `https://open.bigmodel.cn/api/paas/v4` |
-| `XAI_API_KEY` 或 `GROK_API_KEY` | 可选，无智谱 Key 时回退 xAI Grok |
-| `GROK_MODEL` | 可选，默认 `grok-2-latest` |
-
-> 追问实现：`app/services/llm_ask.py`（`ask_about_item`）。预留 `AskAuthProvider` / 兼容 `GrokAuthProvider`，供未来按用户 OAuth 取 Key。
-
-## API
-
-- `POST /api/upload` — `multipart/form-data`：`file` + 可选 `category`（`procurement` \| `nda`）
-- `GET /api/review/{id}` — 审查结果与 12 项状态
-- `POST /api/ask` — `{ review_id, item_id, question }`，仅「需关注」
-- `GET /api/categories` — 可用清单类别
-- `GET /health`
-
-状态枚举：`通过` / `需关注` / `未找到` / `本类不适用`（UI 文案：已通过 / 需关注 / 未找到 / 本类不适用）。
-
-## 清单与规则
-
-- 配置：`config/checklist_procurement.yaml`、`config/checklist_nda.yaml`
-- NDA 下「价款与支付」为 `本类不适用`
-- 规则优先（关键词 / 正则）；LLM **不**参与打标，只做需关注追问，且必须引用原文，不得盖章「没问题」
-
-政策要点（注入追问上下文，非独立清单项）：
-
-- 先验收后付款；小额货 90%+10% 质保金
-- 质保≥12 个月；签收≠验收完
-- 办公设备原则上不找小规模纳税人
-- 无合规发票可拒付
-
-## 管线（LangGraph 库）
-
-`parse`（Docling 可选 / 文本直读）→ `checklist`（YAML 规则）→ `grok_ready`（追问走 `/api/ask`，智谱 GLM / 可选 Grok）
-
-PDF/Word：若已安装 `docling`（或 `python-docx` / `pypdf`）则用之；**始终**支持 `.txt`，保证无重依赖也能演示。
+| `ZHIPU_API_KEY` 或 `GLM_API_KEY` | 智谱追问 Key；不配也能跑清单 |
+| `GLM_MODEL` | 默认 `glm-5.2` |
+| `ZHIPU_API_BASE` | Coding 套餐默认 `https://open.bigmodel.cn/api/coding/paas/v4`；标准 API 改为 `https://open.bigmodel.cn/api/paas/v4` |
+| `XAI_API_KEY` / `GROK_API_KEY` | 可选回退（**一般不用**） |
 
 ## 测试
 
@@ -78,21 +73,21 @@ PDF/Word：若已安装 `docling`（或 `python-docx` / `pypdf`）则用之；**
 pytest -q
 ```
 
-采购金标样例须对下列 7 项打出「需关注」：价款与支付、违约责任、格式条款/明显单方不公平、主体、标的、适用法律、签署与印章；「管辖与争议」可通过。
+采购金标：上述 7 项须为「需关注」；「管辖与争议」可通过。
+
+## API 速查
+
+- `POST /api/upload` — 文件 + `category`（`procurement` \| `nda`）  
+- `GET /api/review/{id}` — 审查结果  
+- `POST /api/ask` — `{ review_id, item_id, question }`（仅需关注）  
+- `GET /health`
 
 ## 项目结构
 
 ```
-app/
-  main.py              # FastAPI
-  api/routes.py        # upload / review / ask
-  services/extract.py  # 文本抽取
-  services/checklist.py
-  services/llm_ask.py  # 智谱 GLM + 可选 xAI Grok
-  services/grok.py     # 兼容 re-export
-  graph/pipeline.py    # LangGraph
-  static/              # 三屏前端
-config/                # YAML 清单
-fixtures/              # 采购样例 + NDA 范本
+app/           # FastAPI + 清单引擎 + 追问 + 三屏静态页
+config/        # 采购 / NDA 清单 YAML
+fixtures/      # 采购样例、换措辞对抗样例、NDA 模板
+scripts/       # demo_procurement.sh
 tests/
 ```
