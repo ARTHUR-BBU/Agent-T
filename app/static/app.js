@@ -67,7 +67,12 @@
       return `<span class="empty">暂无原文摘句</span>`;
     }
     const kws = keywordsForHighlight(hits || [], quote);
-    if (!kws.length) return escapeHtml(quote);
+    if (!kws.length) {
+      return (
+        `<span class="quote-miss muted">未在原文定位到关键词</span>` +
+        `<div class="quote-plain">${escapeHtml(quote)}</div>`
+      );
+    }
 
     // Build a simple non-overlapping highlighter
     const ranges = [];

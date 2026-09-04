@@ -82,6 +82,10 @@ pytest -q
 - `POST /api/ask` — `{ review_id, item_id, question }`（仅需关注）  
 - `GET /health`
 
+## 设计变量
+
+界面色板/字号见 [`docs/design-tokens.md`](docs/design-tokens.md)（阳仔视觉标准 v0.1）。
+
 ## 项目结构
 
 ```
