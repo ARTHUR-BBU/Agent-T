@@ -169,46 +169,119 @@
 
   function renderResults(data) {
     const items = data.items || [];
+    const blinds = (data.blind_enabled && (data.blind_candidates || []).length)
+      ? (data.blind_candidates || [])
+      : [];
     const nAtt = items.filter((i) => i.status === "需关注").length;
     const nPass = items.filter((i) => i.status === "通过").length;
+    const nBlind = blinds.length;
+    let metaExtra = `需关注 ${nAtt} 项 · 已通过 ${nPass} 项`;
+    if (nBlind > 0) {
+      metaExtra += ` · 补盲候选 ${nBlind} 项`;
+    }
     $("results-meta").innerHTML =
       `<strong>${escapeHtml(data.filename || "")}</strong>` +
       ` · ${escapeHtml(data.category_label || data.category || "")}` +
-      `<br/>需关注 ${nAtt} 项 · 已通过 ${nPass} 项`;
+      `<br/>${metaExtra}`;
     const list = $("item-list");
     list.innerHTML = "";
     state.selectedItemId = null;
     $("item-detail").classList.add("hidden");
 
     items.forEach((item) => {
-      const li = document.createElement("li");
-      li.className = `item ${statusClass(item.status)}`;
-      li.dataset.itemId = item.id;
-      li.setAttribute("role", "button");
-      li.tabIndex = 0;
-
-      const head = document.createElement("div");
-      head.className = "item-head";
-      head.innerHTML =
-        `<span class="item-name">${escapeHtml(item.name)}</span>` +
-        `<span class="tag ${statusClass(item.status)}">${escapeHtml(statusLabel(item.status))}</span>`;
-      li.appendChild(head);
-
-      li.addEventListener("click", () => selectItem(item));
-      li.addEventListener("keydown", (ev) => {
-        if (ev.key === "Enter" || ev.key === " ") {
-          ev.preventDefault();
-          selectItem(item);
-        }
-      });
-      list.appendChild(li);
+      list.appendChild(buildItemRow(item, { blind: false }));
     });
+
+    blinds.forEach((item) => {
+      list.appendChild(buildItemRow(item, { blind: true }));
+    });
+
+    // Surface skip messages (e.g. 缺少原文依据) without fake 需关注 rows
+    let skipEl = document.getElementById("blind-skip-note");
+    if (!skipEl) {
+      skipEl = document.createElement("p");
+      skipEl.id = "blind-skip-note";
+      skipEl.className = "blind-skip-note hidden";
+      list.parentNode.insertBefore(skipEl, list.nextSibling);
+    }
+    const skips = (data.blind_enabled && (data.blind_skipped_messages || []).length)
+      ? data.blind_skipped_messages
+      : [];
+    if (skips.length) {
+      skipEl.textContent = skips.join("；");
+      skipEl.classList.remove("hidden");
+    } else {
+      skipEl.textContent = "";
+      skipEl.classList.add("hidden");
+    }
+  }
+
+  function buildItemRow(item, opts) {
+    const isBlind = !!(opts && opts.blind);
+    const li = document.createElement("li");
+    li.className = isBlind
+      ? "item blind-candidate"
+      : `item ${statusClass(item.status)}`;
+    li.dataset.itemId = isBlind ? `blind:${item.id}` : item.id;
+    li.dataset.blind = isBlind ? "1" : "0";
+    li.setAttribute("role", "button");
+    li.tabIndex = 0;
+
+    const head = document.createElement("div");
+    head.className = "item-head";
+
+    const nameSpan = document.createElement("span");
+    nameSpan.className = "item-name";
+    nameSpan.textContent = item.name || "";
+
+    const badges = document.createElement("span");
+    badges.className = "item-badges";
+
+    const statusTag = document.createElement("span");
+    statusTag.className = `tag ${statusClass(item.status)}`;
+    statusTag.textContent = statusLabel(item.status);
+    badges.appendChild(statusTag);
+
+    if (!isBlind && item.status === "需关注") {
+      const ruleBadge = document.createElement("span");
+      ruleBadge.className = "source-badge rule";
+      ruleBadge.textContent = "规则";
+      badges.appendChild(ruleBadge);
+    }
+    if (isBlind) {
+      const blindBadge = document.createElement("span");
+      blindBadge.className = "source-badge blind";
+      blindBadge.textContent = "补盲";
+      badges.appendChild(blindBadge);
+    }
+
+    head.appendChild(nameSpan);
+    head.appendChild(badges);
+    li.appendChild(head);
+
+    if (isBlind) {
+      const cap = document.createElement("div");
+      cap.className = "item-caption";
+      cap.textContent = "候选，需人工确认";
+      li.appendChild(cap);
+    }
+
+    const viewItem = { ...item, _blind: isBlind };
+    li.addEventListener("click", () => selectItem(viewItem));
+    li.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        selectItem(viewItem);
+      }
+    });
+    return li;
   }
 
   function selectItem(item) {
-    state.selectedItemId = item.id;
+    const selKey = item._blind ? `blind:${item.id}` : item.id;
+    state.selectedItemId = selKey;
     document.querySelectorAll(".item").forEach((el) => {
-      el.classList.toggle("selected", el.dataset.itemId === item.id);
+      el.classList.toggle("selected", el.dataset.itemId === selKey);
     });
 
     const detail = $("item-detail");
@@ -225,7 +298,8 @@
       quoteEl.textContent = "暂无原文摘句";
     }
 
-    if (item.status === "需关注") {
+    // Blind candidates need human confirm; do not offer rule-style ask as if stamped
+    if (item.status === "需关注" && !item._blind) {
       actions.classList.remove("hidden");
       $("detail-ask").onclick = () => openAsk(item);
     } else {
