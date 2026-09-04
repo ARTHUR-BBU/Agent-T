@@ -200,7 +200,7 @@ textarea { resize: vertical; min-height: 88px; }
   border-bottom: 1px solid var(--color-divider);
   cursor: pointer;
   background: var(--color-surface);
-  transition: background 0.12s ease;
+  transition: background 150ms ease;
 }
 .item:last-child { border-bottom: none; }
 .item:hover { background: #FAFAFA; }
@@ -325,4 +325,41 @@ mark.kw,
   color: var(--color-text-primary);
   font-size: 17px;
   font-weight: 600;
+}
+
+
+/* —— UI polish v2 —— */
+.quote-miss {
+  display: block;
+  font: var(--type-caption);
+  color: var(--color-text-tertiary);
+  margin-bottom: var(--space-1);
+}
+.quote-plain {
+  margin-top: var(--space-1);
+}
+#ask-unavailable {
+  font: var(--type-body);
+  color: var(--color-text-secondary);
+  background: var(--color-attention-bg);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-input);
+  padding: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.tag.pass,
+.tag.notfound,
+.tag.na {
+  opacity: 0.92;
+}
+.item:not(.attention) {
+  /* 非需关注不抢戏 */
+  box-shadow: none;
+}
+* {
+  /* 禁止弹跳类动画 */
+  animation: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
 }
