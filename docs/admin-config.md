@@ -26,7 +26,7 @@
 当前已有：
 
 - `config/checklist_procurement.yaml` → 采购合同  
-- `config/checklist_nda.yaml` → 保密协议  
+- `config/checklist_nda.yaml` → 保密协议（NDA）  
 
 新增品类：复制一份 YAML、改 `category`/`label`/条目即可，无需改 UI 大框架。
 
@@ -70,12 +70,18 @@
 | 采购金标（原金） | `fixtures/procurement_sample.txt` |
 | 同风险换说法 | `fixtures/procurement_paraphrase.txt` |
 | 对抗换说法 | `fixtures/procurement_adversarial_2.txt`、`_3.txt` |
-| NDA 样例 | `fixtures/nda_public_template.txt` |
-| 断言 | `tests/test_procurement_gold.py`、`test_procurement_checklist.py`、`test_procurement_paraphrase.py`、`test_procurement_adversarial.py` |
+| NDA 公开范本（多数可通过） | `fixtures/nda_public_template.txt` |
+| NDA 风险金标 | `fixtures/nda_gold_risks.txt` |
+| NDA 对抗换说法 | `fixtures/nda_adversarial.txt` |
+| 断言 | `tests/test_procurement_gold.py`、`test_procurement_checklist.py`、`test_procurement_paraphrase.py`、`test_procurement_adversarial.py`、`test_nda_gold.py` |
 
 采购金标期望：下列 7 项为「需关注」，「管辖与争议」可为「通过」——
 
 价款与支付、违约责任、格式条款/明显单方不公平、主体、标的、适用法律、签署与印章。
+
+NDA 12 项（`config/checklist_nda.yaml`，品类名「保密协议（NDA）」）：主体（谁跟谁签）、保密范围与义务（什么算秘密、要怎么守）、价款与支付（**始终本类不适用**）、协议期限（这份协议管多久）、保密存续期（秘密要守到哪一天）、违约责任（违约怎么赔）、格式条款 / 单方不公平（有没有一边倒）、知识产权归属（成果/秘密相关权利归谁）、管辖与争议（吵起来找谁管）、解除与终止（怎么收场）、适用法律（按哪国/哪地法律）、签署与印章（谁有权签字、章齐不齐）。
+
+NDA 红线（风险金标 / 对抗样例须为「需关注」，不得「通过」）：缺适用法律（仅有管辖不够）、缺保密存续期或「永久」一刀切、知产归接收方、明显单方不公平、缺签署印章。
 
 ### 6. 是否开通「问清楚一点」+ 模型 Key（翻译 + 参谋，不盖章）
 
