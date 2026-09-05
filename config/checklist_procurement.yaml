@@ -2,9 +2,35 @@
 # 规则优先用 any_of 同义/近义组，避免单点关键词脆弱匹配
 category: procurement
 label: 采购合同
+# M3.5 评分卡分段与权重（法务老钱意见书 docs/m3.5-legal-scorecard-opinion.md）
+# 权重合计 100；NA 段权重从分母剔除后线性归一取整
+scorecard:
+  segments:
+    - key: A
+      name: 主体资格（谁跟谁签、有没有权签）
+      weight: 12
+    - key: B
+      name: 核心内容（买什么、啥时候完成）
+      weight: 24
+    - key: C
+      name: 价款与支付（钱怎么付、留不留后手）
+      weight: 14
+    - key: D
+      name: 违约与退出（违约怎么赔、怎么收场）
+      weight: 16
+    - key: E
+      name: 公平性与权利归属（有没有一边倒、东西归谁）
+      weight: 14
+    - key: F
+      name: 争议与法律适用（吵起来找谁管、按哪国法）
+      weight: 10
+    - key: G
+      name: 程序与形式（章齐不齐、要件全不全）
+      weight: 10
 items:
   - id: subject
     name: 主体
+    segment: A
     description: 合同主体是否完整、清晰（名称、角色、授权等）
     rules:
       need_attention:
@@ -30,6 +56,7 @@ items:
 
   - id: subject_matter
     name: 标的
+    segment: B
     description: 采购标的是否明确、规格数量是否可验收
     rules:
       need_attention:
@@ -59,6 +86,7 @@ items:
 
   - id: payment
     name: 价款与支付
+    segment: C
     description: 价款构成与付款节奏是否合理（先验收后付款、质保金等）
     rules:
       need_attention:
@@ -86,6 +114,7 @@ items:
 
   - id: term
     name: 期限
+    segment: B
     description: 交付/履行期限是否明确
     rules:
       pass:
@@ -100,6 +129,7 @@ items:
 
   - id: breach
     name: 违约责任
+    segment: D
     description: 违约责任是否对等、可执行
     rules:
       need_attention:
@@ -124,6 +154,7 @@ items:
 
   - id: confidentiality
     name: 保密
+    segment: E
     description: 是否约定保密义务（采购合同可较简）
     rules:
       pass:
@@ -136,6 +167,7 @@ items:
 
   - id: ip
     name: 知识产权归属
+    segment: E
     description: 知识产权归属是否约定
     rules:
       pass:
@@ -149,6 +181,7 @@ items:
 
   - id: jurisdiction
     name: 管辖与争议
+    segment: F
     description: 争议解决与管辖法院是否明确
     rules:
       pass:
@@ -164,6 +197,7 @@ items:
 
   - id: termination
     name: 解除/终止
+    segment: D
     description: 解除与终止条件是否约定
     rules:
       pass:
@@ -177,6 +211,7 @@ items:
 
   - id: unfair_terms
     name: 格式条款/明显单方不公平
+    segment: E
     description: 是否存在签收即验收、免质保、不得以发票拒付等单方不公平条款
     rules:
       need_attention:
@@ -201,6 +236,7 @@ items:
 
   - id: governing_law
     name: 适用法律
+    segment: F
     description: 是否明确适用法律
     # 采购合同缺少适用法律 → 需关注（非仅未找到）
     missing_as: 需关注
@@ -217,6 +253,7 @@ items:
 
   - id: signature
     name: 签署与印章
+    segment: G
     description: 签署方式是否完整（签字+盖章）
     rules:
       need_attention:

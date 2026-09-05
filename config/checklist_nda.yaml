@@ -3,9 +3,36 @@
 # 规则优先用 any_of 同义/近义组，避免单点关键词脆弱匹配
 category: nda
 label: 保密协议（NDA）
+# M3.5 评分卡分段与权重（法务老钱意见书 docs/m3.5-legal-scorecard-opinion.md）
+# C 段（价款）本类不适用；权重已按 NA 归一预计算，合计 100
+scorecard:
+  segments:
+    - key: A
+      name: 主体资格（谁跟谁签、有没有权签）
+      weight: 14
+    - key: B
+      name: 核心内容（守什么秘密、管多久）
+      weight: 28
+    - key: C
+      name: 价款与支付（钱怎么付、留不留后手）
+      weight: 0
+      na: true
+    - key: D
+      name: 违约与退出（违约怎么赔、怎么收场）
+      weight: 18
+    - key: E
+      name: 公平性与权利归属（有没有一边倒、东西归谁）
+      weight: 16
+    - key: F
+      name: 争议与法律适用（吵起来找谁管、按哪国法）
+      weight: 12
+    - key: G
+      name: 程序与形式（章齐不齐、要件全不全）
+      weight: 12
 items:
   - id: subject
     name: 主体（谁跟谁签）
+    segment: A
     description: 合同主体是否完整、清晰（谁跟谁签）
     rules:
       need_attention:
@@ -30,6 +57,7 @@ items:
 
   - id: confidentiality_scope
     name: 保密范围与义务（什么算秘密、要怎么守）
+    segment: B
     description: 保密信息范围与保密义务是否闭环（什么算秘密、要怎么守）
     rules:
       pass:
@@ -42,12 +70,14 @@ items:
 
   - id: payment
     name: 价款与支付
+    segment: C
     description: NDA 通常不涉及对价；本类不适用，不按「未找到」报警
     na: true
     na_reason: 本类无对价，不按缺项报警
 
   - id: agreement_term
     name: 协议期限（这份协议管多久）
+    segment: B
     description: 协议本身有效期是否明确（与保密存续期分开看）
     rules:
       pass:
@@ -64,6 +94,7 @@ items:
 
   - id: confidentiality_duration
     name: 保密存续期（秘密要守到哪一天——和协议期限分开看）
+    segment: B
     description: 保密义务存续期是否明确、合理（与协议期限分开；禁止「永久」一刀切）
     missing_as: 需关注
     missing_note: 全文未找到保密存续期约定（秘密要守到哪一天不明确）
@@ -97,6 +128,7 @@ items:
 
   - id: breach
     name: 违约责任（违约怎么赔）
+    segment: D
     description: 违约责任是否约定、可执行
     rules:
       need_attention:
@@ -120,6 +152,7 @@ items:
 
   - id: unfair_terms
     name: 格式条款 / 单方不公平（有没有一边倒）
+    segment: E
     description: 是否存在明显单方不公平条款
     rules:
       need_attention:
@@ -149,6 +182,7 @@ items:
 
   - id: ip
     name: 知识产权归属（成果/秘密相关权利归谁）
+    segment: E
     description: 知识产权归属是否约定；知产归接收方须需关注
     rules:
       need_attention:
@@ -180,6 +214,7 @@ items:
 
   - id: jurisdiction
     name: 管辖与争议（吵起来找谁管）
+    segment: F
     description: 争议解决与管辖是否明确
     rules:
       pass:
@@ -195,6 +230,7 @@ items:
 
   - id: termination
     name: 解除与终止（怎么收场）
+    segment: D
     description: 解除与终止条件是否约定
     rules:
       pass:
@@ -211,6 +247,7 @@ items:
 
   - id: governing_law
     name: 适用法律（按哪国/哪地法律）
+    segment: F
     description: 是否明确适用法律（仅有管辖无适用法律 → 需关注）
     missing_as: 需关注
     missing_note: 全文检索未找到适用法律条款（未写明适用哪国/哪地法律）；仅有管辖约定不够
@@ -228,6 +265,7 @@ items:
 
   - id: signature
     name: 签署与印章（谁有权签字、章齐不齐）
+    segment: G
     description: 签署方式是否完整（签字+盖章）；缺失须需关注
     missing_as: 需关注
     missing_note: 全文未找到签署与印章约定（签署要件缺失）
