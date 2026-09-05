@@ -318,7 +318,8 @@ def test_core_cap_message_names_items():
 # ---------- postprocess 数值健壮性 ----------
 
 def test_segment_score_invalid_values_clamped():
-    """模型给非数值/越界分段分：非数值回退满分，负数钳 0，超满分钳满分."""
+    """模型给非数值/越界分段分：非数值按 0 计（与缺失对齐，乱答不给满分），
+    负数钳 0，超满分钳满分."""
     items = []
     segments = [
         {"key": "A", "name": "A", "weight": 10, "na": False},
@@ -330,7 +331,7 @@ def test_segment_score_invalid_values_clamped():
     )
     final = scorecard.postprocess(payload, items, segments)
     by_key = {s["key"]: s["score"] for s in final["segments"]}
-    assert by_key["A"] == 10  # 非数值 → 回退满分
+    assert by_key["A"] == 0   # 非数值 → 0（沉默≠满分，乱答也不给满分）
     assert by_key["B"] == 0   # 负数 → 0
     assert by_key["C"] == 10  # 超满分 → 满分
 

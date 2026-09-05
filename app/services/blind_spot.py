@@ -121,6 +121,9 @@ def normalize_candidates(
         seen_ids.add(cid)
         # 候选说明也过禁语表：候选方向是报风险，但同责任敞口不例外（肉饼审计 P2）
         note = scorecard.scrub_forbidden(note)
+        if not note.strip("【已过滤】").strip():
+            # 整句被禁语清洗打空 → 回退默认文案，不给用户看裸标记（肉饼终验 P3-b）
+            note = ""
         candidate = {
             "id": cid,
             "name": base.get("name") or name,

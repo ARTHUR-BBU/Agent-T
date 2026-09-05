@@ -289,7 +289,8 @@ def postprocess(
             try:
                 score = int(round(float(model_seg["score"])))
             except (TypeError, ValueError):
-                score = weight
+                # 非数值与缺失同责：按 0 计（沉默≠满分，乱答也不给满分）
+                score = 0
             score = max(0, min(weight, score))
 
         # 扣分下限（不依赖模型自觉）
