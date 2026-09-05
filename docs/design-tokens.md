@@ -22,6 +22,7 @@
 | `--color-attention-bar` | `#FF9F0A` | 规则「需关注」左侧 3px 条 |
 | `--color-blind` | `#AF52DE` | 补盲候选左侧条 / 描边徽章 |
 | `--color-blind-bg` | `#F9F0FF` | 补盲候选行底 |
+| `--color-aside-bg` | `#FAFAFA` | 评分卡等「参考层」底色（M3.5，阳仔） |
 
 ## 字号 `--type-*`
 
@@ -31,6 +32,7 @@
 | `--type-body` | 400 / 17px |
 | `--type-caption` | 400 / 13px |
 | `--type-label` | 600 / 13px |
+| `--type-score-value` | 600 / 22px / 1.2（M3.5 总分数字，tertiary 灰，禁彩色） |
 
 ## 圆角 / 间距 / 控件
 
@@ -41,6 +43,7 @@
 | `--space-1`…`--space-4` | 8 / 16 / 24 / 32 |
 | `--row-height` | 52px |
 | `--btn-height` | 44px |
+| `--btn-height-sm` | 36px（M3.5 复制等次级小按钮） |
 
 ## 动效
 

@@ -104,17 +104,40 @@ NDA 红线（风险金标 / 对抗样例须为「需关注」，不得「通过�
 
 | 开关概念 | 默认 | 开启后做什么 | 绝不能做什么 |
 |----------|------|--------------|--------------|
-| **补盲候选** | **开**（`BLIND_SPOT_ENABLED=true`，亦接受 `1`/`yes`） | 规则未标「需关注」的空隙项上，模型可提出「候选需关注」供人确认；**须引用原文**；无引用则跳过并提示「缺少原文依据，已跳过」 | 自动改写检查单已打标签；自动盖「通过/没问题」；无引用仍展示假「需关注」行 |
+| **补盲候选** | **开**（`BLIND_SPOT_ENABLED=true`，亦接受 `1`/`yes`） | 对「未找到」条目和**评分卡点名的缺口**条目（M3.5 定向化），模型可提出「候选需关注」供人确认；**须引用原文**；无引用则跳过并提示「缺少原文依据，已跳过」 | 自动改写检查单已打标签；自动盖「通过/没问题」；无引用仍展示假「需关注」行 |
 | **自主研判** | 关 | 在补盲之上，给出更完整的参考意见（仍是候选） | 覆盖检查单状态；当终审盖章 |
 
 环境变量（见 `.env.example`）：
 
 | 变量 | 默认 | 说明 |
 |------|------|------|
-| `BLIND_SPOT_ENABLED` | `true` | 关（`false`/`0`/`no`）时行为与纯规则完全一致，界面零「补盲」文案 |
-| 追问用 LLM Key | （空） | 无 Key 时补盲跳过（`blind_skipped_reason=no_llm_key`），清单规则仍照常 |
+| `BLIND_SPOT_ENABLED` | `true` | 关（`false`/`0`/`no`）时无补盲候选、界面零「补盲」文案；**评分卡照常出分** |
+| 追问用 LLM Key | （空） | 无 Key 时评分与补盲都跳过（`reason=no_llm_key`），清单规则仍照常 |
 
-实现位置：`app/services/blind_spot.py`（审查流水线在 `run_checklist` 之后最多一次批量 LLM 调用）。候选挂在审查结果的 `blind_candidates`，**只加分不减分**，不改规则条目的 `status`。
+实现位置：`app/services/model_review.py`（审查流水线在 `run_checklist` 之后**最多一次批量 LLM 调用**，同时产出评分卡与补盲候选）。候选挂在审查结果的 `blind_candidates`，**只加分不减分**，不改规则条目的 `status`。
+
+---
+
+## 二点五、模型评分卡（M3.5，纯参考层）
+
+规则打标之后，模型对整份规则结果 + 合同给出百分制评分卡：总分 + 一句话总评 + 7 段分段评语。
+
+| 管理员动作 | 改哪里 |
+|------------|--------|
+| 分段定义 / 权重 | 各 `config/checklist_*.yaml` 的 `scorecard:` 段（权重合计 100，NA 段 weight 0 + `na: true`） |
+| 条目归段 | 条目上的 `segment:` 字段（A~G，见 `docs/m3.5-legal-scorecard-opinion.md`） |
+| 禁语清单 | `config/scorecard_forbidden.yaml`（A~E 五类，命中重试一次，再命中降级为仅展示分数） |
+
+硬性门禁（代码强制，不依赖模型自觉，`app/services/scorecard.py`）：
+
+1. **有规则结果才出分**；无 Key 明确「评分暂未开通」，规则结果照常
+2. 任一「需关注」→ 总分上限 89；B/D 段（核心内容/违约与退出）有「需关注」→ 上限 74
+3. 段内每个「需关注」扣 ≥ 段权重 40%、每个「未找到」扣 ≥ 60%
+4. 总分 = 分段分重算合计，**不采信模型报的总分**
+5. 评语未点名所有非「通过」项 → 降级为仅展示分数
+6. 分数是纯参考信息：**不参与、不改变任何规则档位**，界面灰底展示并常显免责句
+
+专业依据与 cap 阈值 rationale：`docs/m3.5-legal-scorecard-opinion.md`（法务老钱意见书）。
 
 另两项二期占位（本期不做管理页）：
 
@@ -131,9 +154,11 @@ NDA 红线（风险金标 / 对抗样例须为「需关注」，不得「通过�
 | 改检查项 / N/A | 同上 `items` |
 | 加强同义词打标 | 同上 `rules` + 必要时 `app/services/checklist.py` |
 | 改政策摘句 | 同上 `policies` |
+| 改评分卡分段/权重/归段 | 同上 `scorecard:` 段与 `items[].segment`（M3.5） |
+| 改评分禁语 | `config/scorecard_forbidden.yaml`（M3.5） |
 | 加金标/对抗样例 | `fixtures/` + `tests/` |
-| 开通追问 | `.env`（见 `.env.example`）与 `app/services/llm_ask.py` |
-| 开关补盲 | `.env` → `BLIND_SPOT_ENABLED`（默认 true；候选仅，不盖章） |
+| 开通追问/评分 | `.env`（见 `.env.example`）与 `app/services/llm_ask.py` |
+| 开关补盲 | `.env` → `BLIND_SPOT_ENABLED`（默认 true；候选仅，不盖章；评分不受影响） |
 
 改完规则后请跑：
 

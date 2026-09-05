@@ -183,6 +183,7 @@
       `<strong>${escapeHtml(data.filename || "")}</strong>` +
       ` · ${escapeHtml(data.category_label || data.category || "")}` +
       `<br/>${metaExtra}`;
+    renderScorecard(data);
     const list = $("item-list");
     list.innerHTML = "";
     state.selectedItemId = null;
@@ -214,6 +215,57 @@
       skipEl.textContent = "";
       skipEl.classList.add("hidden");
     }
+  }
+
+  /** M3.5 评分卡：参考层。不可用时整卡不渲染（无 Key 在 meta 加一行灰字）。 */
+  function renderScorecard(data) {
+    const card = $("score-card");
+    const sc = data.scorecard || {};
+    if (!sc.available || typeof sc.total !== "number") {
+      card.classList.add("hidden");
+      card.removeAttribute("data-reason");
+      if (sc.reason === "no_llm_key") {
+        const note = document.createElement("span");
+        note.className = "score-unavailable";
+        note.textContent = " · 评分暂未开通（其余逐条结果不受影响）";
+        $("results-meta").appendChild(note);
+      }
+      return;
+    }
+    card.classList.remove("hidden");
+    $("score-total").textContent = String(sc.total);
+    const tier = sc.tier || {};
+    $("score-grade").textContent = [tier.label, tier.hint].filter(Boolean).join("：");
+    $("score-summary").textContent = sc.summary || "";
+    $("score-disclaimer").textContent =
+      sc.disclaimer || "模型评分仅供参考，以逐条规则结论为准";
+    const capsEl = $("score-caps");
+    const caps = sc.caps_applied || [];
+    if (caps.length) {
+      capsEl.textContent = caps.join("；");
+      capsEl.classList.remove("hidden");
+    } else {
+      capsEl.textContent = "";
+      capsEl.classList.add("hidden");
+    }
+    const breakdown = $("score-breakdown");
+    breakdown.innerHTML = "";
+    (sc.segments || []).forEach((seg) => {
+      const li = document.createElement("li");
+      li.className = "score-seg";
+      if (seg.na) {
+        li.innerHTML =
+          `<span class="score-seg-name">${escapeHtml(seg.name)}</span>` +
+          `<span class="score-seg-score">—</span>` +
+          `<span class="score-seg-note">本类不适用</span>`;
+      } else {
+        li.innerHTML =
+          `<span class="score-seg-name">${escapeHtml(seg.name)}</span>` +
+          `<span class="score-seg-score">${seg.score}/${seg.weight}</span>` +
+          `<span class="score-seg-note">${escapeHtml(seg.comment || "")}</span>`;
+      }
+      breakdown.appendChild(li);
+    });
   }
 
   function buildItemRow(item, opts) {
@@ -262,7 +314,13 @@
     if (isBlind) {
       const cap = document.createElement("div");
       cap.className = "item-caption";
-      cap.textContent = "候选，需人工确认";
+      // M3.5：评分卡点名的候选走文案区分，不加第三种颜色（阳仔决策）
+      cap.textContent = item.named_by_scorecard
+        ? "候选，需人工确认 · 来自评分卡点名"
+        : "候选，需人工确认";
+      if (item.named_by_scorecard) {
+        li.dataset.scored = "1";
+      }
       li.appendChild(cap);
     }
 
@@ -394,6 +452,7 @@
       .map(String)
       .join("\n");
     const rewrite = (answer && answer["建议怎么改"]) || "";
+    const rewriteDraft = (answer && answer["改写稿"]) || "";
     const extra = [answer && answer["原文在哪"], answer && answer["还想问"]].filter(Boolean).map(String).join("\n");
     let html = "";
     html += `<p class="detail-label">人话解释</p>`;
@@ -406,10 +465,56 @@
     }
     html += `<p class="detail-label">建议改法</p>`;
     html += `<div class="detail-note">${escapeHtml(rewrite || "暂无")}</div>`;
+    if (rewriteDraft) {
+      // M3.5 建议改写稿：可粘贴，但必须对照原文核对（阳仔交互 + 九哥文案）
+      html += `<div class="rewrite-block">`;
+      html += `<p class="detail-label">建议改写稿</p>`;
+      html += `<div id="ask-rewrite-text" class="rewrite-text detail-quote">${escapeHtml(rewriteDraft)}</div>`;
+      html += `<div class="rewrite-actions">`;
+      html += `<button type="button" class="rewrite-copy" id="btn-copy-rewrite">复制改写稿</button>`;
+      html += `<span class="rewrite-provenance">改写自上方原文摘句</span>`;
+      html += `</div>`;
+      html += `<p class="rewrite-hint">复制前先对照原文核一遍（确认意思没跑偏）</p>`;
+      html += `</div>`;
+    }
     if (extra) {
       html += `<p class="detail-label">补充</p><div class="detail-note">${escapeHtml(extra)}</div>`;
     }
     box.innerHTML = html;
+
+    const copyBtn = $("btn-copy-rewrite");
+    if (copyBtn) {
+      copyBtn.addEventListener("click", () => copyRewrite(copyBtn, rewriteDraft));
+    }
+  }
+
+  async function copyRewrite(btn, text) {
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch (e) {
+      // 兼容非安全上下文（如局域网 http 访问）
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        copied = document.execCommand("copy");
+      } catch (e2) {
+        copied = false;
+      }
+      document.body.removeChild(ta);
+    }
+    const original = "复制改写稿";
+    btn.textContent = copied ? "已复制 · 请核对后使用" : "复制失败，请手动选择复制";
+    btn.classList.add("copied");
+    setTimeout(() => {
+      btn.textContent = original;
+      btn.classList.remove("copied");
+    }, 2000);
   }
 
   function escapeHtml(s) {

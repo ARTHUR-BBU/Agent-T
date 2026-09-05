@@ -46,6 +46,20 @@
       <div id="results-error" class="card error hidden"></div>
       <div id="results-body" class="hidden">
         <div class="meta card" id="results-meta"></div>
+        <!-- M3.5 评分卡：参考层（灰底、无彩色），规则清单仍是唯一权威层 -->
+        <div class="card score-card hidden" id="score-card">
+          <div class="score-head">
+            <span class="score-value"><span id="score-total">–</span><span class="score-unit">/100</span></span>
+            <span class="score-grade" id="score-grade"></span>
+          </div>
+          <p class="score-summary" id="score-summary"></p>
+          <p class="score-caps hidden" id="score-caps"></p>
+          <p class="score-disclaimer" id="score-disclaimer">模型评分仅供参考，以逐条规则结论为准</p>
+          <details class="score-details">
+            <summary>分段明细（7 段）</summary>
+            <ul class="score-breakdown" id="score-breakdown"></ul>
+          </details>
+        </div>
         <div class="legend card">
           <span class="tag pass">通过</span>
           <span class="tag attention">需关注</span>

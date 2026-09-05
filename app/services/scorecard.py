@@ -31,12 +31,12 @@ logger = logging.getLogger(__name__)
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
 FORBIDDEN_PATH = CONFIG_DIR / "scorecard_forbidden.yaml"
 
-# 展示档位（纯参考，非规则状态；边界话术归九哥）
+# 展示档位（纯参考，非规则状态；文案九哥定稿 2026-09-05）
 TIERS = [
-    {"min": 90, "label": "基本没毛病", "hint": "按流程走"},
-    {"min": 70, "label": "有几处要留心", "hint": "谈一谈再签"},
-    {"min": 50, "label": "有实质风险", "hint": "改完再说"},
-    {"min": 0, "label": "风险很大", "hint": "别急着签"},
+    {"min": 90, "label": "基本没毛病", "hint": "这版没发现实质风险，按你的流程走就行"},
+    {"min": 70, "label": "有几处要留心", "hint": "多是能补正的地方，谈一谈再签更稳"},
+    {"min": 50, "label": "有实质风险", "hint": "核心条款有硬伤，先改完再谈签的事"},
+    {"min": 0, "label": "风险很大", "hint": "多处理念都偏了，先缓一缓（找人看看再定）"},
 ]
 
 # 硬性封顶（老钱意见书第三节）
@@ -49,8 +49,8 @@ DEDUCTION_NOT_FOUND = 0.6
 
 MAX_CONTRACT_CHARS = 12000
 
-# D 类反向必备项：免责句（措辞待九哥定稿后可只改这里）
-DISCLAIMER = "本评分由模型生成，仅供参考，不构成法律意见，请结合原文自行判断。"
+# D 类反向必备项：免责句（九哥定稿 2026-09-05）
+DISCLAIMER = "以上都是机器给的参考意见，签之前建议找懂行的人再看一眼。"
 
 _forbidden_cache: Optional[dict[str, list[str]]] = None
 
@@ -234,6 +234,8 @@ def postprocess(
     core_attention = False
     out_segments: list[dict[str, Any]] = []
     caps_applied: list[str] = []
+    all_attention_names: list[str] = []
+    core_attention_names: list[str] = []
 
     for seg in segments:
         key = str(seg["key"])
@@ -290,12 +292,14 @@ def postprocess(
 
         if seg_attention_names:
             any_attention = True
+            all_attention_names.extend(seg_attention_names)
             if key in CORE_SEGMENTS:
                 core_attention = True
+                core_attention_names.extend(seg_attention_names)
 
     total = sum(s["score"] for s in out_segments)
 
-    # 硬性封顶（代码强制）
+    # 硬性封顶（代码强制）；封顶消息带条款名（九哥定稿：多项渲染为【XX】【YY】）
     cap: Optional[int] = None
     if any_attention:
         cap = CAP_ANY_ATTENTION
@@ -303,8 +307,14 @@ def postprocess(
         cap = min(cap or 100, CAP_CORE_ATTENTION)
     if cap is not None and total > cap:
         total = cap
+        names = (
+            core_attention_names
+            if cap == CAP_CORE_ATTENTION and core_attention_names
+            else all_attention_names
+        )
+        name_block = "".join(f"【{n}】" for n in names)
         caps_applied.append(
-            f"因存在需关注项，总分已按上限 {cap} 封顶"
+            f"因存在{name_block}需关注项，总分已按上限 {cap} 封顶（失分不能互相抵扣）"
         )
 
     summary = scrub_forbidden(str(sc.get("summary") or "")).strip()
