@@ -104,3 +104,66 @@ def test_prefers_zhipu_over_xai(monkeypatch):
             policies=[],
         )
     assert client.post.call_args.args[0] == llm_ask._zhipu_chat_url()
+
+
+def test_rewrite_field_passes_through(monkeypatch):
+    """M3.5 改写稿：模型返回新字段时透传给前端."""
+    monkeypatch.setenv("ZHIPU_API_KEY", "zk")
+    payload = {
+        "风险等级": "中",
+        "这条在查啥": "付款",
+        "原文在哪": "「签约即付全款」",
+        "问题是啥": "付款节奏失衡",
+        "建议怎么改": "改为验收后付款",
+        "改写稿": "货物经甲方验收合格后 10 个工作日内，甲方向乙方支付合同总价款的 90%；其余 10% 作为质保金，质保期满后支付。",
+        "还想问": "质保期多久？",
+    }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = "{}"
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": json.dumps(payload, ensure_ascii=False)}}]
+    }
+    with patch("app.services.llm_ask.httpx.Client") as Client:
+        client = Client.return_value.__enter__.return_value
+        client.post.return_value = mock_resp
+        result = llm_ask.ask_about_item(
+            question="怎么改？",
+            item={"id": "pay", "name": "价款", "status": "需关注", "note": "", "quote": "签约即付全款"},
+            contract_text="签约即付全款。",
+            policies=[],
+        )
+    assert result["ok"] is True
+    assert "质保金" in result["answer"]["改写稿"]
+
+
+def test_rewrite_banned_stamp_scrubbed(monkeypatch):
+    """改写稿不得宣称「已无风险/已合规」——命中必须过滤."""
+    monkeypatch.setenv("ZHIPU_API_KEY", "zk")
+    payload = {
+        "风险等级": "中",
+        "这条在查啥": "付款",
+        "原文在哪": "「签约即付全款」",
+        "问题是啥": "付款节奏失衡",
+        "建议怎么改": "改为验收后付款",
+        "改写稿": "验收后付款。已无风险，已合规。",
+        "还想问": "",
+    }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = "{}"
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": json.dumps(payload, ensure_ascii=False)}}]
+    }
+    with patch("app.services.llm_ask.httpx.Client") as Client:
+        client = Client.return_value.__enter__.return_value
+        client.post.return_value = mock_resp
+        result = llm_ask.ask_about_item(
+            question="怎么改？",
+            item={"id": "pay", "name": "价款", "status": "需关注", "note": "", "quote": "签约即付全款"},
+            contract_text="签约即付全款。",
+            policies=[],
+        )
+    rewrite = result["answer"]["改写稿"]
+    assert "已无风险" not in rewrite
+    assert "已合规" not in rewrite
