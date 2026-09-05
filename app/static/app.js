@@ -318,9 +318,6 @@
       cap.textContent = item.named_by_scorecard
         ? "候选，需人工确认 · 来自评分卡点名"
         : "候选，需人工确认";
-      if (item.named_by_scorecard) {
-        li.dataset.scored = "1";
-      }
       li.appendChild(cap);
     }
 

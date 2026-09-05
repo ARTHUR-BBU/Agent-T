@@ -256,12 +256,16 @@ def postprocess(
             )
             continue
 
-        model_score = model_segments.get(key, {}).get("score", weight)
-        try:
-            score = int(round(float(model_score)))
-        except (TypeError, ValueError):
-            score = weight
-        score = max(0, min(weight, score))
+        model_seg = model_segments.get(key) or {}
+        if "score" not in model_seg:
+            # 沉默≠满分：模型漏报分段按 0 计（肉饼审计：不得向上偏置）
+            score = 0
+        else:
+            try:
+                score = int(round(float(model_seg["score"])))
+            except (TypeError, ValueError):
+                score = weight
+            score = max(0, min(weight, score))
 
         # 扣分下限（不依赖模型自觉）
         seg_items = [iid for iid, sk in seg_of_item.items() if sk == key]

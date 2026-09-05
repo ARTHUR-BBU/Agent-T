@@ -113,3 +113,40 @@ def test_pipeline_error_reason_is_error_not_no_rule_results():
     out = node_model_review({"error": "解析失败"})
     assert out["scorecard"]["available"] is False
     assert out["scorecard"]["reason"] == "error"
+
+
+# ---------- 肉饼第二轮补充 ----------
+
+def test_banned_echo_longest_first_no_dangling():
+    """「无风险」不得先于「已无风险」命中：复合禁语不得碎成「已【已过滤】」."""
+    from app.services import llm_ask
+
+    assert llm_ask._scrub_banned_echo("已无风险") == "【已过滤】"
+    assert "已【已过滤】" not in llm_ask._scrub_banned_echo("改后已无风险，已无风险已合规。")
+
+
+def test_missing_segment_defaults_zero_not_full_marks():
+    """模型漏报分段 → 该段 0 分，不得默认满分（沉默≠满分）."""
+    items = []
+    segments = scorecard.load_scorecard_config("procurement")["segments"]
+    payload = _model_payload(90, {"A": 12}, summary="只报了 A 段。")  # B~G 全漏
+    final = scorecard.postprocess(payload, items, segments)
+    by_key = {s["key"]: s["score"] for s in final["segments"]}
+    assert by_key["A"] == 12
+    for k in ("B", "C", "D", "E", "F", "G"):
+        assert by_key[k] == 0, f"漏报段 {k} 应按 0 计，实际 {by_key[k]}"
+
+
+def test_blind_candidate_note_scrubbed():
+    """补盲候选的 note 也过禁语表（同责任敞口）."""
+    from app.services.blind_spot import normalize_candidates
+
+    gaps = [
+        {"id": "p1", "name": "管辖与争议", "status": "通过", "category_na": False},
+    ]
+    raw = [
+        {"item_id": "p1", "name": "管辖与争议", "note": "整体看本合同没有问题，但管辖可再谈。", "quote": "双方协商解决。"},
+    ]
+    candidates, _skipped = normalize_candidates(raw, "……双方协商解决。……", gaps)
+    assert len(candidates) == 1
+    assert "本合同没有问题" not in candidates[0]["note"]

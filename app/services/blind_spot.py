@@ -19,6 +19,7 @@ import os
 import re
 from typing import Any
 
+from app.services import scorecard
 from app.services.checklist import STATUS_ATTENTION, STATUS_NA, STATUS_NOT_FOUND, STATUS_PASS
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,8 @@ def normalize_candidates(
             continue
 
         seen_ids.add(cid)
+        # 候选说明也过禁语表：候选方向是报风险，但同责任敞口不例外（肉饼审计 P2）
+        note = scorecard.scrub_forbidden(note)
         candidate = {
             "id": cid,
             "name": base.get("name") or name,

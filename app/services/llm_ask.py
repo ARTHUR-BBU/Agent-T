@@ -111,7 +111,8 @@ def _scrub_banned_echo(text: str) -> str:
     if not text:
         return text
     out = text
-    for w in BANNED_ECHO:
+    # 最长优先：短词先替换会把复合禁语切碎（「已无风险」→「已【已过滤】」残留悬空字）
+    for w in sorted(BANNED_ECHO, key=len, reverse=True):
         # 连同紧随的标点一起替换：连续禁语（夹标点）折叠后只留一个标记
         out = re.sub(re.escape(w) + r"[\s，。、；：！？!?,.;:\"'“”‘’]{0,2}", "【已过滤】", out)
     out = re.sub(r"(?:【已过滤】\s*){2,}", "【已过滤】", out)
