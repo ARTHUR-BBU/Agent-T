@@ -2,7 +2,7 @@
 # 价款与支付对本类始终「本类不适用」，不按「未找到」报警
 # 规则优先用 any_of 同义/近义组，避免单点关键词脆弱匹配
 category: nda
-label: 保密协议
+label: 保密协议（NDA）
 items:
   - id: subject
     name: 主体（谁跟谁签）
@@ -96,7 +96,7 @@ items:
         - pattern: "保密期限|保密存续|永久保密"
 
   - id: breach
-    name: 违约责任
+    name: 违约责任（违约怎么赔）
     description: 违约责任是否约定、可执行
     rules:
       need_attention:
@@ -119,7 +119,7 @@ items:
         - pattern: "违约"
 
   - id: unfair_terms
-    name: 格式条款 / 单方不公平
+    name: 格式条款 / 单方不公平（有没有一边倒）
     description: 是否存在明显单方不公平条款
     rules:
       need_attention:
@@ -148,7 +148,7 @@ items:
             - "本协议"
 
   - id: ip
-    name: 知识产权归属
+    name: 知识产权归属（成果/秘密相关权利归谁）
     description: 知识产权归属是否约定；知产归接收方须需关注
     rules:
       need_attention:
@@ -179,7 +179,7 @@ items:
         - pattern: "知识产权|著作权|专利"
 
   - id: jurisdiction
-    name: 管辖与争议
+    name: 管辖与争议（吵起来找谁管）
     description: 争议解决与管辖是否明确
     rules:
       pass:
@@ -194,7 +194,7 @@ items:
         - pattern: "争议|纠纷|管辖|仲裁|诉讼"
 
   - id: termination
-    name: 解除与终止
+    name: 解除与终止（怎么收场）
     description: 解除与终止条件是否约定
     rules:
       pass:
@@ -210,7 +210,7 @@ items:
         - pattern: "解除|终止"
 
   - id: governing_law
-    name: 适用法律
+    name: 适用法律（按哪国/哪地法律）
     description: 是否明确适用法律（仅有管辖无适用法律 → 需关注）
     missing_as: 需关注
     missing_note: 全文检索未找到适用法律条款（未写明适用哪国/哪地法律）；仅有管辖约定不够
@@ -227,7 +227,7 @@ items:
         - pattern: "适用法律"
 
   - id: signature
-    name: 签署与印章
+    name: 签署与印章（谁有权签字、章齐不齐）
     description: 签署方式是否完整（签字+盖章）；缺失须需关注
     missing_as: 需关注
     missing_note: 全文未找到签署与印章约定（签署要件缺失）

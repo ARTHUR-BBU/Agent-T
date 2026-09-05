@@ -36,13 +36,13 @@ EXPECTED_NAMES = {
     "payment": "价款与支付",
     "agreement_term": "协议期限（这份协议管多久）",
     "confidentiality_duration": "保密存续期（秘密要守到哪一天——和协议期限分开看）",
-    "breach": "违约责任",
-    "unfair_terms": "格式条款 / 单方不公平",
-    "ip": "知识产权归属",
-    "jurisdiction": "管辖与争议",
-    "termination": "解除与终止",
-    "governing_law": "适用法律",
-    "signature": "签署与印章",
+    "breach": "违约责任（违约怎么赔）",
+    "unfair_terms": "格式条款 / 单方不公平（有没有一边倒）",
+    "ip": "知识产权归属（成果/秘密相关权利归谁）",
+    "jurisdiction": "管辖与争议（吵起来找谁管）",
+    "termination": "解除与终止（怎么收场）",
+    "governing_law": "适用法律（按哪国/哪地法律）",
+    "signature": "签署与印章（谁有权签字、章齐不齐）",
 }
 
 # Red lines that must NOT be 通过 on risk fixtures
