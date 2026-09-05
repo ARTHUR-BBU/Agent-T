@@ -7,7 +7,8 @@ from pathlib import Path
 import pytest
 
 from app.services.checklist import run_checklist
-from app.services.blind_spot import annotate_rule_items, run_blind_spot_pass
+from app.services.blind_spot import annotate_rule_items
+from app.services.model_review import run_model_review
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "fixtures"
@@ -182,18 +183,25 @@ def test_blind_spot_does_not_overwrite_nda_rule_tags(gold_text, monkeypatch):
 
     def chat(_system, _user):
         return json.dumps(
-            [
-                {
-                    "item_id": att["id"],
-                    "name": att["name"],
-                    "note": "试图覆盖规则标签",
-                    "quote": snippet if snippet in gold_text else gold_text[10:40],
-                }
-            ],
+            {
+                "scorecard": {
+                    "summary": "汇总。",
+                    "segments": [{"key": "A", "score": 14, "comment": "ok"}],
+                    "gap_item_ids": [att["id"]],
+                },
+                "candidates": [
+                    {
+                        "item_id": att["id"],
+                        "name": att["name"],
+                        "note": "试图覆盖规则标签",
+                        "quote": snippet if snippet in gold_text else gold_text[10:40],
+                    }
+                ],
+            },
             ensure_ascii=False,
         )
 
-    out = run_blind_spot_pass(text=gold_text, items=items, chat_fn=chat)
+    out = run_model_review(text=gold_text, items=items, category="nda", chat_fn=chat)
     assert all(c["id"] != att["id"] for c in out["blind_candidates"])
     still = next(i for i in items if i["id"] == att["id"])
     assert still["status"] == STATUS_ATTENTION

@@ -1,12 +1,15 @@
-"""Optional 补盲 (blind-spot) pass: LLM proposes 候选需关注 with quotes only.
+"""补盲 (blind-spot) v2: targeted candidate proposals with quotes only.
 
-Iron rules:
-- Default checklist path unchanged (rules mark 通过/需关注/未找到/不适用).
-- Blind only proposes candidates for gaps (not already 需关注 by rules).
-- Never overwrite rule statuses; additive only.
+M3.5 changes (定向补盲):
+- Trigger surface narrowed: only 「未找到」 items + items the scorecard names
+  as gaps (表述弱/评分点名缺口). No longer sweeps every 「通过」 item.
+- Still additive only: candidates never touch rule statuses.
 - No quote → skip with message 「缺少原文依据，已跳过」.
-- Switch via BLIND_SPOT_ENABLED (default true; also 1/yes). When off: zero candidates,
-  no 补盲 strings in payload.
+- Switch via BLIND_SPOT_ENABLED (default true; also 1/yes). When off: zero
+  candidates, no 补盲 strings in payload; scorecard still runs.
+
+The single merged LLM call lives in model_review.py; this module holds the
+candidate normalization/validation helpers.
 """
 from __future__ import annotations
 
@@ -14,20 +17,14 @@ import json
 import logging
 import os
 import re
-from typing import Any, Optional
+from typing import Any
 
-from app.services import llm_ask
+from app.services import scorecard
+from app.services.checklist import STATUS_ATTENTION, STATUS_NA, STATUS_NOT_FOUND, STATUS_PASS
 
 logger = logging.getLogger(__name__)
 
 SKIP_NO_QUOTE = "缺少原文依据，已跳过"
-STATUS_ATTENTION = "需关注"
-STATUS_PASS = "通过"
-STATUS_NOT_FOUND = "未找到"
-STATUS_NA = "本类不适用"
-
-# Gaps where blind may propose candidates (never rewrite existing 需关注 / N/A)
-_GAP_STATUSES = {STATUS_PASS, STATUS_NOT_FOUND}
 
 
 def is_blind_spot_enabled() -> bool:
@@ -50,122 +47,43 @@ def annotate_rule_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def run_blind_spot_pass(
-    *,
-    text: str,
+def select_target_gaps(
     items: list[dict[str, Any]],
-    policies: list[str] | None = None,
-    chat_fn: Optional[Any] = None,
-) -> dict[str, Any]:
-    """Run at most one batched LLM call for blind candidates.
+    named_item_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """定向补盲 v2：候选只允许落在这些空隙条目上。
 
-    Returns:
-      {
-        "blind_candidates": [...],
-        "blind_skipped_messages": [...],  # e.g. 缺少原文依据
-        "blind_skipped_reason": str | None,
-        "blind_enabled": bool,
-      }
+    - 「未找到」条目：始终是靶点（缺项是硬信号）。
+    - 「通过」条目：仅当评分卡点名（表述弱/缺口）时才是靶点。
+    - 需关注 / 本类不适用：永远不是靶点（不重报、不覆盖）。
     """
-    if not is_blind_spot_enabled():
-        return {
-            "blind_candidates": [],
-            "blind_skipped_messages": [],
-            "blind_skipped_reason": None,
-            "blind_enabled": False,
-        }
-
-    zhipu = llm_ask._zhipu_key()
-    xai = llm_ask._xai_key()
-    if not zhipu and not xai and chat_fn is None:
-        return {
-            "blind_candidates": [],
-            "blind_skipped_messages": [],
-            "blind_skipped_reason": "no_llm_key",
-            "blind_enabled": True,
-        }
-
-    gaps = [
-        it
-        for it in items
-        if it.get("status") in _GAP_STATUSES and not it.get("category_na")
-    ]
-    if not gaps:
-        return {
-            "blind_candidates": [],
-            "blind_skipped_messages": [],
-            "blind_skipped_reason": None,
-            "blind_enabled": True,
-        }
-
-    system = _build_system_prompt(policies or [])
-    user = _build_user_prompt(text or "", gaps)
-
-    try:
-        if chat_fn is not None:
-            raw = chat_fn(system, user)
-        elif zhipu:
-            raw = llm_ask._chat_zhipu(zhipu, system, user)
-        else:
-            raw = llm_ask._chat_xai(xai, system, user)  # type: ignore[arg-type]
-    except Exception as exc:  # noqa: BLE001
-        logger.exception("Blind-spot LLM error")
-        return {
-            "blind_candidates": [],
-            "blind_skipped_messages": [],
-            "blind_skipped_reason": f"llm_error:{exc}",
-            "blind_enabled": True,
-        }
-
-    return _normalize_llm_result(raw, text or "", gaps)
+    named = {str(i) for i in (named_item_ids or [])}
+    gaps: list[dict[str, Any]] = []
+    for it in items:
+        if it.get("category_na") or it.get("status") == STATUS_NA:
+            continue
+        st = it.get("status")
+        if st == STATUS_NOT_FOUND:
+            gaps.append(it)
+        elif st == STATUS_PASS and str(it.get("id")) in named:
+            gaps.append(it)
+    return gaps
 
 
-def _build_system_prompt(policies: list[str]) -> str:
-    policy_block = "\n".join(f"- {p}" for p in policies) or "- （无额外政策）"
-    return f"""你是合同审查「补盲」助手。规则引擎已打过标签；你只能对「规则未标需关注」的空隙项提出「候选需关注」。
-
-硬性规则：
-1. 只输出 JSON 数组，不要 markdown 围栏。
-2. 每项必须含：item_id（须来自输入列表）、name、note、quote。
-3. quote 必须是合同原文中可核对的连续摘录；没有原文依据就不要输出该项。
-4. 禁止改写或覆盖规则引擎已有结论；禁止说「模型已判定通过/需关注」。
-5. 只报真实风险候选；拿不准就省略。
-
-政策参考：
-{policy_block}
-"""
-
-
-def _build_user_prompt(text: str, gaps: list[dict[str, Any]]) -> str:
-    body = text if len(text) <= 12000 else text[:12000] + "\n…(截断)"
-    gap_lines = []
-    for g in gaps:
-        gap_lines.append(
-            f"- id={g.get('id')} name={g.get('name')} status={g.get('status')} note={g.get('note') or ''}"
-        )
-    gaps_block = "\n".join(gap_lines)
-    return f"""以下条目规则引擎标为「通过」或「未找到」（非需关注）。若你发现风险且能引用原文，请提出候选需关注。
-
-空隙条目：
-{gaps_block}
-
-合同全文：
-{body}
-
-只输出 JSON 数组，元素形如：
-{{"item_id":"...","name":"...","note":"...","quote":"..."}}
-无候选则输出 []。
-"""
-
-
-def _normalize_llm_result(
-    raw: str,
+def normalize_candidates(
+    raw: str | list[Any],
     text: str,
     gaps: list[dict[str, Any]],
-) -> dict[str, Any]:
+    named_source_ids: set[str] | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Validate model candidates against targeted gaps.
+
+    Returns (candidates, skipped_messages). Additive only: never rewrites
+    rule statuses; fake quotes are dropped.
+    """
     gap_by_id = {str(g.get("id")): g for g in gaps}
     gap_by_name = {str(g.get("name")): g for g in gaps}
-    parsed = _parse_candidates(raw)
+    parsed = raw if isinstance(raw, list) else _parse_candidates(raw)
 
     candidates: list[dict[str, Any]] = []
     skipped: list[str] = []
@@ -201,25 +119,27 @@ def _normalize_llm_result(
             continue
 
         seen_ids.add(cid)
-        candidates.append(
-            {
-                "id": cid,
-                "name": base.get("name") or name,
-                "status": STATUS_ATTENTION,
-                "note": note or "规则未标需关注，模型提出候选风险",
-                "quote": quote,
-                "tag_source": "blind",
-                "needs_confirm": True,
-                "hits": [],
-            }
-        )
+        # 候选说明也过禁语表：候选方向是报风险，但同责任敞口不例外（肉饼审计 P2）
+        note = scorecard.scrub_forbidden(note)
+        if not note.strip("【已过滤】").strip():
+            # 整句被禁语清洗打空 → 回退默认文案，不给用户看裸标记（肉饼终验 P3-b）
+            note = ""
+        candidate = {
+            "id": cid,
+            "name": base.get("name") or name,
+            "status": STATUS_ATTENTION,
+            "note": note or "规则未标需关注，模型提出候选风险",
+            "quote": quote,
+            "tag_source": "blind",
+            "needs_confirm": True,
+            "hits": [],
+        }
+        # 评分卡点名的候选带独立标记（不改 tag_source 枚举）
+        if named_source_ids and cid in named_source_ids:
+            candidate["named_by_scorecard"] = True
+        candidates.append(candidate)
 
-    return {
-        "blind_candidates": candidates,
-        "blind_skipped_messages": skipped,
-        "blind_skipped_reason": None,
-        "blind_enabled": True,
-    }
+    return candidates, skipped
 
 
 def _quote_supported(text: str, quote: str) -> bool:

@@ -41,6 +41,10 @@
   --space-4: 32px;
   --row-height: 52px;
   --btn-height: 44px;
+  --btn-height-sm: 36px;
+  /* M3.5 评分卡（参考层）：灰底旁注，不做彩色结论 */
+  --color-aside-bg: #FAFAFA;
+  --type-score-value: 600 22px/1.2 "PingFang SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -415,4 +419,122 @@ mark.kw,
   font: var(--type-caption);
   color: var(--color-text-tertiary);
   padding: 0 var(--space-2) var(--space-2);
+}
+
+/* ---------- M3.5 评分卡（参考层：灰底、无彩色、默认折叠） ---------- */
+.score-card {
+  background: var(--color-aside-bg);
+}
+/* 评分暂未开通的灰字注脚（肉饼审查 P3-2：不能渲染成正文黑） */
+.score-unavailable {
+  font: var(--type-caption);
+  color: var(--color-text-tertiary);
+}
+.score-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+.score-value {
+  font: var(--type-score-value);
+  color: var(--color-text-tertiary);
+}
+.score-value .score-unit {
+  font: var(--type-caption);
+}
+.score-grade {
+  font: var(--type-label);
+  color: var(--color-text-secondary);
+}
+.score-summary {
+  margin: var(--space-1) 0 0;
+  font: var(--type-body);
+  color: var(--color-text-primary);
+}
+.score-caps {
+  margin: 6px 0 0;
+  font: var(--type-caption);
+  color: var(--color-text-secondary);
+}
+.score-disclaimer {
+  margin: 6px 0 0;
+  font: var(--type-caption);
+  color: var(--color-text-tertiary);
+}
+.score-details {
+  margin-top: var(--space-1);
+  border-top: 1px solid var(--color-divider);
+}
+.score-details summary {
+  font: var(--type-label);
+  color: var(--color-text-secondary);
+  padding: var(--space-1) 0;
+  cursor: pointer;
+}
+.score-breakdown {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.score-seg {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: var(--space-1);
+  padding: 6px 0;
+  border-top: 1px solid var(--color-divider);
+  font: var(--type-caption);
+}
+.score-seg:first-child {
+  border-top: none;
+}
+.score-seg-name {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+.score-seg-score {
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+.score-seg-note {
+  color: var(--color-text-secondary);
+}
+
+/* ---------- M3.5 建议改写稿（复用 quote 面板视觉） ---------- */
+.rewrite-block {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--color-divider);
+  padding-top: var(--space-2);
+}
+.rewrite-text {
+  white-space: pre-wrap;
+}
+.rewrite-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+  flex-wrap: wrap;
+}
+.rewrite-copy {
+  height: var(--btn-height-sm);
+  border: 1px solid var(--color-divider);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  padding: 0 12px;
+  border-radius: var(--radius-btn);
+  font: var(--type-label);
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+.rewrite-copy.copied {
+  color: var(--color-text-secondary);
+}
+.rewrite-provenance {
+  font: var(--type-caption);
+  color: var(--color-text-secondary);
+}
+.rewrite-hint {
+  margin: 6px 0 0;
+  font: var(--type-caption);
+  color: var(--color-text-tertiary);
 }

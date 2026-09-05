@@ -3,7 +3,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from app.api.schemas import AskRequest, AskResponse, ReviewSummary, UploadResponse
+from app.api.schemas import (
+    AskRequest,
+    AskResponse,
+    ReviewSummary,
+    ScorecardInfo,
+    UploadResponse,
+)
 from app.graph.pipeline import run_review
 from app.services import llm_ask
 from app.services.checklist import list_categories
@@ -36,6 +42,7 @@ async def upload(
         category_label=category,
         status="processing",
         items=[],
+        scorecard={},
         blind_candidates=[],
         blind_skipped_messages=[],
         blind_skipped_reason=None,
@@ -60,6 +67,7 @@ async def upload(
                 rid,
                 status="done",
                 items=result.get("items") or [],
+                scorecard=result.get("scorecard") or {},
                 blind_candidates=result.get("blind_candidates") or [],
                 blind_skipped_messages=result.get("blind_skipped_messages") or [],
                 blind_skipped_reason=result.get("blind_skipped_reason"),
@@ -89,6 +97,7 @@ def get_review(review_id: str):
         category_label=row.get("category_label") or "",
         status=row.get("status") or "pending",
         items=row.get("items") or [],
+        scorecard=ScorecardInfo(**(row.get("scorecard") or {})),
         blind_candidates=row.get("blind_candidates") or [],
         blind_skipped_messages=row.get("blind_skipped_messages") or [],
         blind_skipped_reason=row.get("blind_skipped_reason"),

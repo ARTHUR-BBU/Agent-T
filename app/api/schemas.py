@@ -31,6 +31,31 @@ class BlindCandidate(BaseModel):
     hits: list[str] = Field(default_factory=list)
     tag_source: Literal["blind"] = "blind"
     needs_confirm: bool = True
+    named_by_scorecard: bool = False
+
+
+class ScoreSegment(BaseModel):
+    key: str
+    name: str
+    weight: int = 0
+    score: int = 0
+    comment: str = ""
+    na: bool = False
+
+
+class ScorecardInfo(BaseModel):
+    """M3.5 模型评分卡 — advisory only，永不改规则档位。"""
+
+    available: bool = False
+    reason: Optional[str] = None
+    total: Optional[int] = None
+    tier: Optional[dict[str, Any]] = None
+    summary: str = ""
+    segments: list[ScoreSegment] = Field(default_factory=list)
+    caps_applied: list[str] = Field(default_factory=list)
+    disclaimer: str = ""
+    advisory_only: bool = True
+    degraded: bool = False
 
 
 class ReviewSummary(BaseModel):
@@ -40,6 +65,7 @@ class ReviewSummary(BaseModel):
     category_label: str
     status: Literal["pending", "processing", "done", "error"] = "pending"
     items: list[ChecklistItemResult] = Field(default_factory=list)
+    scorecard: ScorecardInfo = Field(default_factory=ScorecardInfo)
     blind_candidates: list[BlindCandidate] = Field(default_factory=list)
     blind_skipped_messages: list[str] = Field(default_factory=list)
     blind_skipped_reason: Optional[str] = None

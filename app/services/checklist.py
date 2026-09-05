@@ -64,6 +64,8 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
     base = {
         "id": item["id"],
         "name": item["name"],
+        # M3.5 评分卡分段（scorecard.py 按 segment 归项扣分/封顶）
+        "segment": item.get("segment", ""),
         "note": "",
         "quote": "",
         "hits": [],
