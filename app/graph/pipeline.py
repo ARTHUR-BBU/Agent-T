@@ -59,7 +59,8 @@ def node_model_review(state: ReviewState) -> ReviewState:
     """
     if state.get("error"):
         return {
-            "scorecard": {"available": False, "reason": "no_rule_results"},
+            # 解析已失败，与「有规则结果才出分」的 no_rule_results 门禁区分开（肉饼审查 P3-4）
+            "scorecard": {"available": False, "reason": "error"},
             "blind_candidates": [],
             "blind_skipped_messages": [],
             "blind_skipped_reason": None,

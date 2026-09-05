@@ -425,6 +425,11 @@ mark.kw,
 .score-card {
   background: var(--color-aside-bg);
 }
+/* 评分暂未开通的灰字注脚（肉饼审查 P3-2：不能渲染成正文黑） */
+.score-unavailable {
+  font: var(--type-caption);
+  color: var(--color-text-tertiary);
+}
 .score-head {
   display: flex;
   align-items: baseline;

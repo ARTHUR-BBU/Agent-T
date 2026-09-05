@@ -33,7 +33,8 @@ FORBIDDEN_PATH = CONFIG_DIR / "scorecard_forbidden.yaml"
 
 # 展示档位（纯参考，非规则状态；文案九哥定稿 2026-09-05）
 TIERS = [
-    {"min": 90, "label": "基本没毛病", "hint": "这版没发现实质风险，按你的流程走就行"},
+    # 90+ 档措辞不盖章、不省略人工动作（肉饼审查 P2-1：与 A 类禁语同向的表述系统自己也不许用）
+    {"min": 90, "label": "基本没毛病", "hint": "这版没发现实质风险，逐条结果请照常过一遍"},
     {"min": 70, "label": "有几处要留心", "hint": "多是能补正的地方，谈一谈再签更稳"},
     {"min": 50, "label": "有实质风险", "hint": "核心条款有硬伤，先改完再谈签的事"},
     {"min": 0, "label": "风险很大", "hint": "多处理念都偏了，先缓一缓（找人看看再定）"},
@@ -155,7 +156,7 @@ def build_system_prompt(segments: list[dict[str, Any]], policies: list[str]) -> 
   "scorecard": {{
     "summary": "一句话总评（≤60字，说人话，不盖章）",
     "segments": [
-      {{"key":"A","score":整数,"comment":"该段一句话评语，须点名该段内的需关注/未找到项"}}
+      {{"key":"A","score":整数,"comment":"该段一句话评语，须点名该段内的需关注/未找到项","gap_item_ids":["该段内表述弱/有缺口条目的id，没有则[]"]}}
     ]
   }},
   "candidates": [
@@ -163,6 +164,7 @@ def build_system_prompt(segments: list[dict[str, Any]], policies: list[str]) -> 
   ]
 }}
 
+segments[].gap_item_ids 说明：该段内你认为「表述弱、有缺口、值得补盲」的条目 id（含规则已标「通过」但表述单薄的项），没有则输出 []。系统会把点名条目纳入定向补盲，供人工确认——这只是点名，不改规则档位。
 candidates 说明：对「规则未标需关注、但你发现真实风险且能引用原文」的条目提出候选；quote 必须是合同原文连续摘录，没有原文依据就不要输出该项；无候选输出 []。禁止改写规则已有结论。"""
 
 
@@ -235,7 +237,8 @@ def postprocess(
     out_segments: list[dict[str, Any]] = []
     caps_applied: list[str] = []
     all_attention_names: list[str] = []
-    core_attention_names: list[str] = []
+    # 「未找到」比「需关注」更重，同触发封顶（肉饼审查 P2-1：否则带未找到的合同可能比带需关注的分还高）
+    all_hard_names: list[str] = []
 
     for seg in segments:
         key = str(seg["key"])
@@ -264,19 +267,22 @@ def postprocess(
         seg_items = [iid for iid, sk in seg_of_item.items() if sk == key]
         deduction = 0
         seg_attention_names: list[str] = []
+        seg_hard_names: list[str] = []
         for iid in seg_items:
             st = status_of_item.get(iid)
             if st == STATUS_ATTENTION:
                 deduction += DEDUCTION_ATTENTION * weight
                 seg_attention_names.append(str(name_of_item.get(iid) or iid))
+                seg_hard_names.append(str(name_of_item.get(iid) or iid))
             elif st == STATUS_NOT_FOUND:
                 deduction += DEDUCTION_NOT_FOUND * weight
+                seg_hard_names.append(str(name_of_item.get(iid) or iid))
         floor = max(0, int(round(weight - deduction)))
         score = min(score, floor)
 
         comment = str(model_segments.get(key, {}).get("comment") or "")
-        if seg_attention_names and not comment:
-            comment = "存在需关注项：" + "、".join(seg_attention_names)
+        if seg_hard_names and not comment:
+            comment = "存在需关注/未找到项：" + "、".join(seg_hard_names)
         comment = scrub_forbidden(comment)
 
         out_segments.append(
@@ -290,16 +296,16 @@ def postprocess(
             }
         )
 
-        if seg_attention_names:
+        if seg_hard_names:
             any_attention = True
             all_attention_names.extend(seg_attention_names)
+            all_hard_names.extend(seg_hard_names)
             if key in CORE_SEGMENTS:
                 core_attention = True
-                core_attention_names.extend(seg_attention_names)
 
     total = sum(s["score"] for s in out_segments)
 
-    # 硬性封顶（代码强制）；封顶消息带条款名（九哥定稿：多项渲染为【XX】【YY】）
+    # 硬性封顶（代码强制）；封顶消息点名全部硬伤条款（九哥定稿【XX】【YY】；P2-2：不只列核心段）
     cap: Optional[int] = None
     if any_attention:
         cap = CAP_ANY_ATTENTION
@@ -307,14 +313,9 @@ def postprocess(
         cap = min(cap or 100, CAP_CORE_ATTENTION)
     if cap is not None and total > cap:
         total = cap
-        names = (
-            core_attention_names
-            if cap == CAP_CORE_ATTENTION and core_attention_names
-            else all_attention_names
-        )
-        name_block = "".join(f"【{n}】" for n in names)
+        name_block = "".join(f"【{n}】" for n in all_hard_names)
         caps_applied.append(
-            f"因存在{name_block}需关注项，总分已按上限 {cap} 封顶（失分不能互相抵扣）"
+            f"因存在{name_block}需关注/未找到项，总分已按上限 {cap} 封顶（失分不能互相抵扣）"
         )
 
     summary = scrub_forbidden(str(sc.get("summary") or "")).strip()

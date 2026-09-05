@@ -112,8 +112,9 @@ def _scrub_banned_echo(text: str) -> str:
         return text
     out = text
     for w in BANNED_ECHO:
-        out = out.replace(w, "【已过滤】")
-    out = re.sub(r"【已过滤】(【已过滤】)+", "【已过滤】", out)
+        # 连同紧随的标点一起替换：连续禁语（夹标点）折叠后只留一个标记
+        out = re.sub(re.escape(w) + r"[\s，。、；：！？!?,.;:\"'“”‘’]{0,2}", "【已过滤】", out)
+    out = re.sub(r"(?:【已过滤】\s*){2,}", "【已过滤】", out)
     return out
 
 
