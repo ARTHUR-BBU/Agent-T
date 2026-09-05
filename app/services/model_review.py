@@ -57,6 +57,10 @@ def run_model_review(
         return result
 
     segments = scorecard.load_scorecard_config(category)["segments"]
+    if not segments:
+        # 旧品类没配 scorecard: 块 → 评分未开通，且不浪费 LLM 调用
+        result["scorecard"] = scorecard.unavailable("no_scorecard_config")
+        return result
     system = scorecard.build_system_prompt(segments, policies or [])
     user = scorecard.build_user_prompt(text or "", items)
 

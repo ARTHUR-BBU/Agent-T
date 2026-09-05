@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.services import model_review
+from app.services import blind_spot, model_review
 from app.services.blind_spot import (
     SKIP_NO_QUOTE,
     annotate_rule_items,
@@ -229,6 +229,72 @@ def test_never_overwrite_rule_attention(monkeypatch):
     out = run_model_review(text=text, items=items, chat_fn=chat)
     assert all(c["id"] != att["id"] for c in out["blind_candidates"])
     assert next(i for i in items if i["id"] == att["id"])["status"] == "需关注"
+
+
+def test_quote_tolerates_whitespace_and_newlines():
+    """容差边界：quote 与原文只差空白/换行/全角空格时必须放行（跨行摘录常见）."""
+    body = "第一条 甲方应当\n在三日内付款。\n第二条 乙方负责安装。"
+    assert blind_spot._quote_supported(body, "第一条 甲方应当在三日内付款。")
+    assert blind_spot._quote_supported("甲乙双方经协商一致签订本合同。", "甲乙双方　经协商一致签订本合同")
+
+
+def test_quote_ellipsis_across_real_text_rejected():
+    """容差边界：… 省略号抹平后仍必须连续命中原文，省略号不能当通配符用."""
+    body = "壹、货物说明与对价（略）贰、结算与交付"
+    assert not blind_spot._quote_supported(body, "壹、货物说明…贰、结算与交付")
+
+
+def test_quote_too_short_rejected():
+    """容差边界：过短（压缩后 <6 字）且非原文直录的 quote 不得放行."""
+    body = "本契约一式两份，双方各执一份，签署后生效。"
+    assert not blind_spot._quote_supported(body, "签约即生效")  # 5 字，且不在原文
+    assert blind_spot._quote_supported(body, "一式两份，双方各执一份")  # 原文直录放行
+
+
+def test_candidate_by_name_fallback_and_named_flag():
+    """模型只给 name 不给 item_id 时按名称落靶；评分卡点名 → named_by_scorecard=True."""
+    gaps = [{"id": "term", "name": "期限", "status": "未找到"}]
+    candidates, skipped = blind_spot.normalize_candidates(
+        [{"name": "期限", "note": "缺少履约期限", "quote": "签署后生效"}],
+        "本契约自签署后生效。",
+        gaps,
+        named_source_ids={"term"},
+    )
+    assert skipped == []
+    assert len(candidates) == 1
+    assert candidates[0]["id"] == "term"
+    assert candidates[0]["named_by_scorecard"] is True
+
+
+def test_candidate_duplicates_dedup():
+    """同一靶点多条候选只保留第一条，不重复轰炸."""
+    gaps = [{"id": "term", "name": "期限", "status": "未找到"}]
+    rows = [
+        {"item_id": "term", "name": "期限", "note": "a", "quote": "签署后生效"},
+        {"item_id": "term", "name": "期限", "note": "b", "quote": "签署后生效"},
+    ]
+    candidates, _ = blind_spot.normalize_candidates(rows, "本契约签署后生效。", gaps, set())
+    assert len(candidates) == 1
+
+
+def test_candidate_unknown_item_dropped_silently():
+    """模型编造清单里不存在的条目 → 直接丢弃，不发明清单行、不产生跳过消息."""
+    gaps = [{"id": "term", "name": "期限", "status": "未找到"}]
+    candidates, skipped = blind_spot.normalize_candidates(
+        [{"item_id": "ghost", "name": "幽灵条款", "note": "n", "quote": "签署后生效"}],
+        "本契约签署后生效。",
+        gaps,
+        set(),
+    )
+    assert candidates == []
+    assert skipped == []
+
+
+def test_unnamed_notfound_item_is_always_targeted():
+    """定向补盲 v2：未找到条目不需要评分卡点名，天然是靶点."""
+    items = [{"id": "t", "name": "期限", "status": "未找到"}]
+    gaps = select_target_gaps(items, named_item_ids=[])
+    assert [g["id"] for g in gaps] == ["t"]
 
 
 def test_annotate_rule_tag_source():

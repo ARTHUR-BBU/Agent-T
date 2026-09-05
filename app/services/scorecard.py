@@ -189,6 +189,16 @@ def build_user_prompt(text: str, items: list[dict[str, Any]]) -> str:
 
 # ---------- parsing & post-processing ----------
 
+def _get_scorecard(obj: dict[str, Any]) -> Any:
+    """兼容模型输出的键名大小写（ScoreCard / Scorecard 等）."""
+    if "scorecard" in obj:
+        return obj["scorecard"]
+    for k, v in obj.items():
+        if isinstance(k, str) and k.lower() == "scorecard":
+            return v
+    return None
+
+
 def parse_model_payload(raw: str) -> Optional[dict[str, Any]]:
     """Parse the combined {scorecard, candidates} payload. None on failure."""
     if not raw:
@@ -197,17 +207,28 @@ def parse_model_payload(raw: str) -> Optional[dict[str, Any]]:
     fence = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", text)
     if fence:
         text = fence.group(1).strip()
+
+    def _accept(o: Any) -> Optional[dict[str, Any]]:
+        if isinstance(o, dict):
+            sc = _get_scorecard(o)
+            if isinstance(sc, dict):
+                o["scorecard"] = sc  # 归一化为小写键，下游 postprocess 统一读取
+                return o
+        return None
+
     try:
         obj = json.loads(text)
-        if isinstance(obj, dict) and isinstance(obj.get("scorecard"), dict):
-            return obj
+        accepted = _accept(obj)
+        if accepted is not None:
+            return accepted
     except json.JSONDecodeError:
         m = re.search(r"\{[\s\S]*\}", text)
         if m:
             try:
                 obj = json.loads(m.group(0))
-                if isinstance(obj, dict) and isinstance(obj.get("scorecard"), dict):
-                    return obj
+                accepted = _accept(obj)
+                if accepted is not None:
+                    return accepted
             except json.JSONDecodeError:
                 return None
     return None
@@ -222,6 +243,10 @@ def postprocess(
 
     The model's numbers are treated as an upper bound only — never trusted.
     """
+    if not segments:
+        # 旧品类缺 scorecard: 块：不出假分（否则恒 0 分 +「风险很大」误导用户）
+        return unavailable("no_scorecard_config")
+
     sc = payload.get("scorecard") or {}
     model_segments = {
         str(s.get("key")): s for s in (sc.get("segments") or []) if isinstance(s, dict)

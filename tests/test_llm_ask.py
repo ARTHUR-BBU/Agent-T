@@ -137,6 +137,66 @@ def test_rewrite_field_passes_through(monkeypatch):
     assert "质保金" in result["answer"]["改写稿"]
 
 
+def test_rubber_stamp_answer_replaced_with_guardrail_line(monkeypatch):
+    """模型对需关注条目盖章（没问题/可以通过）→ 问题是啥必须替换为守门话术."""
+    monkeypatch.setenv("ZHIPU_API_KEY", "zk")
+    payload = {
+        "风险等级": "低",
+        "这条在查啥": "付款",
+        "原文在哪": "「签约即付全款」",
+        "问题是啥": "没问题，可以通过，无需修改。",
+        "建议怎么改": "不需要改",
+        "改写稿": "",
+        "还想问": "",
+    }
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = "{}"
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": json.dumps(payload, ensure_ascii=False)}}]
+    }
+    with patch("app.services.llm_ask.httpx.Client") as Client:
+        client = Client.return_value.__enter__.return_value
+        client.post.return_value = mock_resp
+        result = llm_ask.ask_about_item(
+            question="这条有问题吗？",
+            item={"id": "pay", "name": "价款", "status": "需关注", "note": "", "quote": "签约即付全款"},
+            contract_text="签约即付全款。",
+            policies=[],
+        )
+    assert result["ok"] is True
+    answer = result["answer"]
+    assert "没问题" not in (answer["问题是啥"] or "")
+    assert "该条已标为需关注" in answer["问题是啥"]
+    # raw_text 也要过滤，不能把盖章话术原样回显给前端
+    assert "没问题" not in (result["raw_text"] or "")
+
+
+def test_empty_rubber_stamp_question_field_gets_default(monkeypatch):
+    """问题是啥 被禁语过滤清空后，必须回填守话术，不允许空字符串糊弄过去."""
+    monkeypatch.setenv("ZHIPU_API_KEY", "zk")
+    payload = {k: "" for k in llm_ask.OUTPUT_FIELDS}
+    # 「已合规」只命中 BANNED_ECHO（改写稿防线），不触发盖章替换；
+    # 整字段被清成【已过滤】→ 必须回填守门话术，而不是把过滤标记甩给用户
+    payload["问题是啥"] = "已合规"
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.text = "{}"
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": json.dumps(payload, ensure_ascii=False)}}]
+    }
+    with patch("app.services.llm_ask.httpx.Client") as Client:
+        client = Client.return_value.__enter__.return_value
+        client.post.return_value = mock_resp
+        result = llm_ask.ask_about_item(
+            question="?",
+            item={"id": "a", "name": "a", "status": "需关注", "note": "", "quote": "q"},
+            contract_text="t",
+            policies=[],
+        )
+    assert result["answer"]["问题是啥"] == "该条已标为需关注，不能视为安全通过，请结合原文复核。"
+
+
 def test_rewrite_banned_stamp_scrubbed(monkeypatch):
     """改写稿不得宣称「已无风险/已合规」——命中必须过滤."""
     monkeypatch.setenv("ZHIPU_API_KEY", "zk")
