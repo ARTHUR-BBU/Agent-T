@@ -207,6 +207,42 @@ def test_proportional_termination_penalty_not_flagged():
     )
 
 
+# ---------- 小智娘终验 P1×2：unless 全文域逃逸（引擎已收窄为邻近窗口） ----------
+
+def test_lessor_title_risk_not_washed_by_distant_boilerplate():
+    """直捕句「未取得产权人书面同意对外转租」+ 全文远处的转租限制 boilerplate：
+    unless 只在正向命中邻近窗口生效，真风险不得被无关条款洗白."""
+    text = (
+        "出租方（甲方）：某某贸易有限公司。乙方：某某科技有限公司。\n"
+        "甲方未取得产权人书面同意对外转租，现出租上述房屋。\n"
+        "租赁期限自2026年10月1日起至2027年9月30日止。月租金1万元，押二付三。\n"
+        "乙方承租后应合法使用房屋。装修由乙方自行承担费用。维修由甲方负责。\n"
+        "未经甲方书面同意，乙方不得擅自转租、转借房屋。\n"
+        "争议向法院起诉。本合同适用中华人民共和国法律。双方签字并加盖公章。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["lessor_title"]["status"] == "需关注", (
+        f"远端 boilerplate 不应洗白真风险：{by_id['lessor_title']['status']} {by_id['lessor_title']['note']}"
+    )
+
+
+def test_early_term_risk_not_washed_by_escalation_clause():
+    """目标句「中途解约赔偿未履行租期租金总额」+ 全文远处的「每年递增5%」：
+    递增条款的百分号不得经 unless 全文域放空退出权风险."""
+    text = (
+        "出租方（甲方）：某某置业有限公司，法定代表人：张三，住所：某某市某某区某某路1号。\n"
+        "承租方（乙方）：某某科技有限公司。甲方系房屋产权人，持不动产权证，依法出租。\n"
+        "租赁期限自2026年10月1日起至2028年9月30日止。租金每年递增5%。\n"
+        "月租金首年5万元，押二付三。装修归乙方所有。维修由甲方负责。\n"
+        "乙方中途解约的，应赔偿按未履行租期计算的租金总额。\n"
+        "争议向法院起诉。本合同适用中华人民共和国法律。双方签字并加盖公章。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["early_termination"]["status"] == "需关注", (
+        f"递增%不应洗白退出权风险：{by_id['early_termination']['status']} {by_id['early_termination']['note']}"
+    )
+
+
 # ---------- 肉饼终验：subject 经营场所单证必须需关注 ----------
 
 def test_subject_with_only_business_address_flagged():

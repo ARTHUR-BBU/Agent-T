@@ -118,7 +118,7 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
 
     # 1) need_attention first (highest priority)
     for rule in rules.get("need_attention") or []:
-        if _rule_matches(text, rule) and not _negative_evidence(text, rule):
+        if _rule_matches(text, rule) and _unless_holds(text, rule):
             quote = _extract_quote_from_rule(text, rule)
             hits = _extract_hits_from_rule(text, rule)
             return {
@@ -131,7 +131,7 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
 
     # 2) pass
     for rule in rules.get("pass") or []:
-        if _rule_matches(text, rule) and not _negative_evidence(text, rule):
+        if _rule_matches(text, rule) and _unless_holds(text, rule):
             quote = _extract_quote_from_rule(text, rule)
             hits = _extract_hits_from_rule(text, rule)
             return {
@@ -156,6 +156,37 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
         "quote": "",
         "hits": [],
     }
+
+
+_UNLESS_WINDOW = 60
+
+
+def _unless_holds(text: str, rule: dict[str, Any]) -> bool:
+    """unless/none_of 只在与正向命中邻近的局部窗口（±60 字符）内生效。
+
+    旧实现是全文域：合同任意位置的保护性表述会放空风险句——租赁终验实测
+    「甲方未取得产权人书面同意对外转租」被全文另一处的「乙方不得擅自转租」
+    boilerplate 洗成通过（小智娘 2026-09-06 P1 根因）。规则没有 unless/none_of
+    时行为完全不变。
+    """
+    if rule.get("unless") is None and rule.get("none_of") is None:
+        return True
+    return not _negative_evidence(_match_neighborhood(text, rule), rule)
+
+
+def _match_neighborhood(text: str, rule: dict[str, Any]) -> str:
+    """第一个正向命中的邻近窗口；定位不到具体位置（复杂 all_of）时回退全文。"""
+    top = {k: rule[k] for k in ("pattern", "any_of", "all_of") if k in rule}
+    for pattern in _patterns_from_spec(top):
+        try:
+            m = re.search(pattern, text)
+        except re.error:
+            continue
+        if m:
+            lo = max(0, m.start() - _UNLESS_WINDOW)
+            hi = min(len(text), m.end() + _UNLESS_WINDOW)
+            return text[lo:hi]
+    return text
 
 
 def _patterns_from_spec(spec: Any) -> list[str]:
