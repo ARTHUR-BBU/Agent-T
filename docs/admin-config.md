@@ -15,18 +15,19 @@
 
 ## 一、事前必配（一期）
 
-### 1. 品类开关（采购 / NDA）
+### 1. 品类开关（采购 / NDA / 租赁）
 
 | 做什么 | 仓库里的位置 |
 |--------|----------------|
 | 启用哪些合同品类 | `config/checklist_*.yaml` 的 `category` / `label` |
-| 上传时选品类 | API `POST /api/upload` 的 `category`（`procurement` \| `nda`） |
+| 上传时选品类 | API `POST /api/upload` 的 `category`（`procurement` \| `nda` \| `lease`） |
 | 品类列表接口 | `app/services/checklist.py` → `list_categories()`（扫描 `config/checklist_*.yaml`） |
 
 当前已有：
 
 - `config/checklist_procurement.yaml` → 采购合同  
 - `config/checklist_nda.yaml` → 保密协议（NDA）  
+- `config/checklist_lease.yaml` → 租赁合同（承租方视角，法务依据见 `docs/lease-category-legal-opinion.md`）  
 
 新增品类：复制一份 YAML、改 `category`/`label`/条目即可，无需改 UI 大框架。
 

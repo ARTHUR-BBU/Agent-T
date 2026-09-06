@@ -1,0 +1,157 @@
+"""租赁品类金标测试（承租方视角）。
+
+断言来源：docs/lease-category-legal-opinion.md §六（法务老钱 2026-09-06）。
+- 规则层：各 fixture 的档位必须命中预期（漏报/误报都算失败）
+- 评分层：模型谎报满分时，代码重算 + 封顶必须压住（≤74 / ≤89 / ≤66）
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from app.services import scorecard
+from app.services.blind_spot import annotate_rule_items
+from app.services.checklist import run_checklist
+from app.services.model_review import run_model_review
+
+ROOT = Path(__file__).resolve().parents[1]
+LEASE = ROOT / "fixtures"
+
+
+def _items(name: str) -> dict[str, dict]:
+    text = (LEASE / name).read_text(encoding="utf-8")
+    result = run_checklist(text, category="lease")
+    return {it["id"]: it for it in result["items"]}
+
+
+def _model_full_marks():
+    """模型给满分的 payload（total 自称 100、各段满分），供封顶测试。"""
+    segments = scorecard.load_scorecard_config("lease")["segments"]
+    return json.dumps(
+        {
+            "scorecard": {
+                "total": 100,
+                "summary": "条款完备，可以放心签署。",
+                "segments": [
+                    {"key": s["key"], "score": s["weight"]} for s in segments
+                ],
+            },
+            "candidates": [],
+        },
+        ensure_ascii=False,
+    )
+
+
+def _capped_total(name: str) -> int:
+    """模型满分 + 代码重算/封顶后的总分。"""
+    text = (LEASE / name).read_text(encoding="utf-8")
+    items = annotate_rule_items(run_checklist(text, "lease")["items"])
+    segments = scorecard.load_scorecard_config("lease")["segments"]
+    hard_names = "、".join(
+        i["name"] for i in items if i["status"] != "通过" and not i.get("category_na")
+    )
+
+    def chat(_system, _user):
+        return _model_full_marks()
+
+    # 评语点名全部硬伤（空评语段由代码自动补点名，不触发降级）
+    payload = json.loads(_model_full_marks())
+    payload["scorecard"]["segments"][0]["comment"] = "点名：" + hard_names
+    out = run_model_review(
+        text=text, items=items, policies=[], category="lease",
+        chat_fn=lambda s, u: json.dumps(payload, ensure_ascii=False),
+    )
+    sc = out["scorecard"]
+    assert sc["available"] is True
+    total_sum = sum(s["score"] for s in sc["segments"])
+    # 封顶触发时 total = min(分段和, cap)，故只断言 total 不超过分段和（封顶测试断言上限值）
+    assert sc["total"] <= total_sum, "总分必须由分段重算（封顶只降不升）"
+    return sc["total"]
+
+
+# ---------- 断言 1：退出权绑死（≤74，D 段核心封顶） ----------
+
+def test_early_termination_binding_gold():
+    by_id = _items("lease_early_term.txt")
+    assert by_id["early_termination"]["status"] == "需关注", "剩余租期全额违约金必须需关注"
+    # 单风险隔离：其余风险项保持通过，证明封顶确实由 early_termination 触发
+    for iid in ("deposit", "maintenance", "rent_payment", "governing_law", "signature"):
+        assert by_id[iid]["status"] == "通过", f"{iid} 应通过，实际 {by_id[iid]['status']}"
+    assert _capped_total("lease_early_term.txt") <= 74
+
+
+# ---------- 断言 2：押金没收 + 断水断电催租（≤89） ----------
+
+def test_deposit_and_cut_utilities_gold():
+    by_id = _items("lease_deposit_late.txt")
+    flagged = {
+        iid for iid in ("rent_payment", "deposit")
+        if by_id[iid]["status"] == "需关注"
+    }
+    assert flagged, "押金不予退还 + 逾期断水断电至少一项需关注"
+    assert _capped_total("lease_deposit_late.txt") <= 89
+
+
+# ---------- 断言 4：维修义务倒挂（≤89） ----------
+
+def test_maintenance_inverted_gold():
+    by_id = _items("lease_maintenance.txt")
+    assert by_id["maintenance"]["status"] == "需关注", "一切维修归乙方必须需关注"
+    assert _capped_total("lease_maintenance.txt") <= 89
+
+
+# ---------- 断言 5：同构回归（管辖有/适用法律无 + 仅盖章无签字） ----------
+
+def test_governing_law_and_signature_gold():
+    by_id = _items("lease_sample.txt")
+    assert by_id["jurisdiction"]["status"] == "通过", "有管辖条款应通过"
+    assert by_id["governing_law"]["status"] == "需关注", "仅有管辖无适用法律必须需关注"
+    assert by_id["signature"]["status"] == "需关注", "仅盖章无签字必须需关注"
+
+
+# ---------- 断言 6：四连压力测试（≤66） ----------
+
+def test_lease_four_risk_rules_flag():
+    by_id = _items("lease_four_risk.txt")
+    for iid in ("early_termination", "deposit", "renovation", "maintenance"):
+        assert by_id[iid]["status"] == "需关注", f"{iid} 漏报"
+    assert by_id["governing_law"]["status"] == "需关注", "缺适用法律必须需关注"
+    assert by_id["signature"]["status"] == "需关注", "仅盖章必须需关注"
+    # D 段三项全挂 + E/F/G 失分
+    core_flagged = [
+        i for i in by_id.values()
+        if i.get("segment") in ("B", "D") and i["status"] in ("需关注", "未找到")
+    ]
+    assert core_flagged, "D 段无靶点，封顶逻辑不会触发"
+
+
+def test_lease_four_risk_capped_66():
+    total = _capped_total("lease_four_risk.txt")
+    assert total <= 66, f"四连压力封顶 66 失效，实际 {total}"
+    assert total != 100
+
+
+# ---------- 防误报：良性合同不得误杀 ----------
+
+def test_lease_sample_benign_items_pass():
+    by_id = _items("lease_sample.txt")
+    for iid in ("subject", "lessor_title", "lease_term", "delivery_acceptance",
+                "use_restriction", "rent_payment", "deposit", "renovation",
+                "maintenance", "subletting", "early_termination"):
+        assert by_id[iid]["status"] == "通过", (
+            f"{iid} 在良性合同上被误杀：{by_id[iid]['status']} {by_id[iid]['note']}"
+        )
+
+
+def test_lease_renovation_negation_not_flagged():
+    """「退租无需恢复原状」是承租方友好条款，不得命中恢复原状负担模式（开发狗调优）。"""
+    by_id = _items("lease_early_term.txt")
+    assert by_id["renovation"]["status"] == "通过"
+
+
+# ---------- 评分卡配置自检 ----------
+
+def test_lease_scorecard_config_valid():
+    segments = scorecard.load_scorecard_config("lease")["segments"]
+    assert [s["key"] for s in segments] == ["A", "B", "C", "D", "E", "F", "G"]
+    assert sum(s["weight"] for s in segments) == 100, "七段权重必须合计 100（无 NA 段直加）"

@@ -143,6 +143,10 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
             }
 
     # 3) not found / missing
+    # 语义（老钱意见书 L-2，2026-09-06）：rules.not_found 块是文档性配置，不参与判定——
+    # 「未找到」的真实触发条件是 need_attention 与 pass 词表均未命中。
+    # 因此 pass 词表必须足够宽（覆盖合同高频必备词），否则正常合同会被误判
+    # 「未找到」并触发 89 封顶；missing_as 决定缺项档位（默认「未找到」，可设「需关注」加严）。
     missing_as = item.get("missing_as", STATUS_NOT_FOUND)
     missing_note = item.get("missing_note", "未在合同中找到相关约定")
     return {
