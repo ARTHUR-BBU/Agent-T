@@ -191,9 +191,6 @@ def test_report_control_characters_stripped_not_fatal():
 
 # ---------- API 层：下载端点 ----------
 
-
-# ---------- API 层：下载端点 ----------
-
 def test_api_report_download_after_upload():
     files = {"file": ("procurement_sample.txt", FIXTURE.read_bytes(), "text/plain")}
     rid = client.post("/api/upload", files=files, data={"category": "procurement"}).json()[
