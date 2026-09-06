@@ -1,6 +1,7 @@
 """API routers: upload / review / ask / report."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -20,6 +21,8 @@ from app.services.checklist import list_categories
 from app.services.store import store
 
 router = APIRouter(prefix="/api")
+
+logger = logging.getLogger(__name__)
 
 
 @router.get("/categories")
@@ -127,8 +130,10 @@ def download_report(review_id: str):
     except ImportError:
         # python-docx 缺失时不裸抛，给出可操作的错误
         raise HTTPException(status_code=503, detail="服务器未安装 python-docx，无法生成报告")
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"报告生成失败：{exc}")
+    except Exception:  # noqa: BLE001
+        # 异常详情只进服务端日志，不回给客户端（防泄露路径/实现细节，肉饼审计 P2-1）
+        logger.exception("报告生成失败 review_id=%s", review_id)
+        raise HTTPException(status_code=500, detail="报告生成失败，请稍后重试")
 
     base = Path(row.get("filename") or "合同").stem or "合同"
     filename = f"审查报告-{base}-{review_id}.docx"

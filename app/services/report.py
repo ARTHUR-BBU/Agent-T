@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import io
+import re
 from typing import Any
 
 # 免责句兜底：评分卡未生成（无 Key / 降级）时报告也必须带免责声明
@@ -23,10 +24,27 @@ _ATTENTION = "需关注"
 _NOT_FOUND = "未找到"
 _NA = "本类不适用"
 
+# python-docx(lxml) 遇控制字符直接抛错：合同原文经 errors='replace'/pypdf/docling
+# 提取后可能残留 \x0b\x0c 等，不清洗则该条审查的报告导出永久 500（肉饼审计 P1）
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize(value: Any) -> Any:
+    """递归清洗字符串中的控制字符（单点收口：所有入 docx 的数据都过这里）."""
+    if isinstance(value, str):
+        return _CONTROL_CHARS.sub("", value)
+    if isinstance(value, dict):
+        return {k: _sanitize(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize(v) for v in value]
+    return value
+
 
 def build_report_docx(row: dict[str, Any]) -> bytes:
     """从 store 行拼装报告，返回 docx 字节流。纯展示，无 LLM 调用。"""
     from docx import Document
+
+    row = _sanitize(row)
 
     doc = Document()
     _cover(doc, row)

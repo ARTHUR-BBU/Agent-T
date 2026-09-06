@@ -171,6 +171,27 @@ def test_report_minimal_row_no_crash():
     assert DEFAULT_DISCLAIMER in text
 
 
+def test_report_control_characters_stripped_not_fatal():
+    """肉饼 P1：quote/note/文件名含控制字符（\x0b\x0c 等）不得让导出 500，
+    也不得把控制字符写进 docx（lxml 会炸）——清洗后照常出报告."""
+    row = _full_row()
+    row["filename"] = "采购\x0c合同v3.docx"
+    row["items"][0]["note"] = "签约即付全款\x0b，无质保金。"
+    row["items"][0]["quote"] = "合同签订后\x00三日内支付全款。"
+    row["blind_candidates"][0]["note"] = "仅有盖章栏\x1f无签字栏。"
+    row["policies"][0] = "政策一：先验收后付款\x7f。"
+    data = build_report_docx(row)  # 不抛即通过第一关
+    text = _doc_text(data)
+    assert "签约即付全款，无质保金" in text, "清洗只删控制字符，正文要保留"
+    assert "合同签订后三日内支付全款" in text
+    assert "仅有盖章栏无签字栏" in text
+    for ch in ("\x00", "\x0b", "\x0c", "\x1f", "\x7f"):
+        assert ch not in text
+
+
+# ---------- API 层：下载端点 ----------
+
+
 # ---------- API 层：下载端点 ----------
 
 def test_api_report_download_after_upload():
@@ -206,3 +227,19 @@ def test_api_report_not_done_409():
 
     rid2 = store.create(filename="x.txt", category="procurement", status="error", error="解析失败")
     assert client.get(f"/api/review/{rid2}/report").status_code == 409
+
+
+def test_api_report_500_returns_fixed_message(monkeypatch):
+    """肉饼 P2-1：生成器内部异常时 detail 必须是固定文案，异常串（可能含
+    服务器路径/实现细节）只进日志不回客户端."""
+    from app.api import routes as routes_module
+
+    def boom(_row):
+        raise OSError("/srv/secret/path 缺盘")
+
+    monkeypatch.setattr(routes_module.report_service, "build_report_docx", boom)
+    rid = store.create(filename="x.txt", category="procurement", status="done")
+    r = client.get(f"/api/review/{rid}/report")
+    assert r.status_code == 500
+    assert r.json()["detail"] == "报告生成失败，请稍后重试"
+    assert "/srv/secret/path" not in r.text
