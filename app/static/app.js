@@ -183,6 +183,12 @@
       `<strong>${escapeHtml(data.filename || "")}</strong>` +
       ` · ${escapeHtml(data.category_label || data.category || "")}` +
       `<br/>${metaExtra}`;
+
+    // M4：审查完成后开放报告导出（GET /api/review/{id}/report）
+    if (data.id) {
+      $("btn-export-report").href = `/api/review/${data.id}/report`;
+      $("report-actions").classList.remove("hidden");
+    }
     renderScorecard(data);
     const list = $("item-list");
     list.innerHTML = "";
