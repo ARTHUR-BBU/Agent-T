@@ -12,6 +12,8 @@ import io
 import re
 from typing import Any
 
+from app.services.scorecard import scrub_forbidden
+
 # 免责句兜底：评分卡未生成（无 Key / 降级）时报告也必须带免责声明
 DEFAULT_DISCLAIMER = (
     "本报告由系统自动生成，仅供签约前自查参考，不构成法律意见。"
@@ -38,6 +40,15 @@ def _sanitize(value: Any) -> Any:
     if isinstance(value, list):
         return [_sanitize(v) for v in value]
     return value
+
+
+def _scrub(text: Any) -> str:
+    """自由文本字段的禁语二次清洗（纵深防御，肉饼/小智娘 M4 审计共同建议）。
+
+    生成层（scorecard/blind_spot）已有一道清洗；报告是印给客户看的文书，
+    这里对模型的自由文本字段再过一遍——确定性替换，不是新判断，红线1不受影响。
+    """
+    return scrub_forbidden(str(text or ""))
 
 
 def build_report_docx(row: dict[str, Any]) -> bytes:
@@ -97,7 +108,7 @@ def _conclusion(doc: Any, row: dict[str, Any]) -> None:
         label = tier.get("label") or ""
         doc.add_paragraph(f"参考评分：{sc['total']}/100（{label}）" if label else f"参考评分：{sc['total']}/100")
         if sc.get("summary"):
-            doc.add_paragraph(str(sc["summary"]))
+            doc.add_paragraph(_scrub(sc["summary"]))
         for cap in sc.get("caps_applied") or []:
             doc.add_paragraph(str(cap), style="List Bullet")
         doc.add_paragraph("评分由模型生成、仅供排序参考，各项结论以逐条规则结果为准。")
@@ -124,7 +135,7 @@ def _attention_table(doc: Any, row: dict[str, Any]) -> None:
         cells = table.add_row().cells
         cells[0].text = it.get("name") or ""
         cells[1].text = it.get("status") or ""
-        cells[2].text = it.get("note") or ""
+        cells[2].text = _scrub(it.get("note"))
 
 
 def _item_details(doc: Any, row: dict[str, Any]) -> None:
@@ -138,7 +149,7 @@ def _item_details(doc: Any, row: dict[str, Any]) -> None:
         return
     for it in shown:
         doc.add_heading(f"【{it.get('status') or '未判定'}】{it.get('name') or ''}", level=2)
-        doc.add_paragraph(it.get("note") or "（无说明）")
+        doc.add_paragraph(_scrub(it.get("note")) or "（无说明）")
         quote = it.get("quote") or ""
         p = doc.add_paragraph()
         run = p.add_run("原文摘句：")
@@ -159,7 +170,7 @@ def _blind_candidates(doc: Any, row: dict[str, Any]) -> None:
         name = it.get("name") or ""
         marker = "· 来自评分卡点名" if it.get("named_by_scorecard") else ""
         doc.add_heading(f"候选｜{name}{marker}", level=2)
-        doc.add_paragraph(it.get("note") or "（无说明）")
+        doc.add_paragraph(_scrub(it.get("note")) or "（无说明）")
         quote = it.get("quote") or ""
         p = doc.add_paragraph()
         run = p.add_run("原文摘句：")
@@ -174,7 +185,7 @@ def _policy_quotes(doc: Any, row: dict[str, Any]) -> None:
         doc.add_paragraph("本次审查未引用政策条款。")
         return
     for policy in policies:
-        doc.add_paragraph(str(policy), style="List Bullet")
+        doc.add_paragraph(_scrub(policy), style="List Bullet")
 
 
 def _appendix(doc: Any, row: dict[str, Any]) -> None:
@@ -192,7 +203,7 @@ def _appendix(doc: Any, row: dict[str, Any]) -> None:
 
 def _footer(doc: Any, row: dict[str, Any]) -> None:
     sc = row.get("scorecard") or {}
-    disclaimer = str(sc.get("disclaimer") or "").strip() or DEFAULT_DISCLAIMER
+    disclaimer = _scrub(sc.get("disclaimer")).strip() or DEFAULT_DISCLAIMER
     doc.add_paragraph()
     p = doc.add_paragraph()
     run = p.add_run(disclaimer)
