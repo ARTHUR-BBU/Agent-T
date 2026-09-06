@@ -33,6 +33,8 @@ items:
   - id: subject
     name: 主体（谁跟谁签）
     segment: A
+    # 完备型兜底：补全信息常在签署页（远超 unless 窗口），unless 未放行时先查 pass 全文
+    pass_fulltext_fallback: true
     description: 合同主体是否完整、清晰（谁跟谁签）
     rules:
       need_attention:

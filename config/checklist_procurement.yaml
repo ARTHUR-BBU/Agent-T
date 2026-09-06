@@ -32,6 +32,8 @@ items:
     name: 主体
     segment: A
     description: 合同主体是否完整、清晰（名称、角色、授权等）
+    # 完备型兜底：补全信息常在签署页（远超 unless 窗口），unless 未放行时先查 pass 全文
+    pass_fulltext_fallback: true
     rules:
       need_attention:
         # 仅有公司主体称谓，缺少完整身份信息

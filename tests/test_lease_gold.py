@@ -243,6 +243,51 @@ def test_early_term_risk_not_washed_by_escalation_clause():
     )
 
 
+# ---------- 小智娘终验 P2：完备型主体信息的签署页兜底 ----------
+
+_LEASE_SUBJECT_FALLBACK_TEXT = """租赁合同
+
+出租方（甲方）：某某置业有限公司。承租方（乙方）：某某科技有限公司。
+
+第一条 房屋位于某某区某某路，月租金五万元，用途为办公。
+第二条 交付标准为带装修。租赁期限自2026年10月1日起至2028年9月30日止。
+本合同项下租金按季度支付，押二付三，乙方应按时支付租金。房屋维修由甲方负责，自然损耗除外。经甲方书面同意乙方可转租。装修归乙方所有，退租无需恢复原状。乙方提前退租的，违约金按未履行部分租金的百分之二十计算。
+争议向法院起诉。本合同适用中华人民共和国法律。
+
+落款：
+甲方（盖章）：某某置业有限公司
+法定代表人（签字）：张三，住所：某某市某某区某某路1号，统一社会信用代码：91110000XXXXXXXXXX
+乙方（盖章）：某某科技有限公司
+法定代表人（签字）：李四
+"""
+
+
+def test_subject_completion_in_signature_page_passes():
+    """头部只写公司名、完整身份信息在签署页（>60 字外）：subject 必须通过，
+    不得打出「未见法定代表人」的与事实相反的 note（pass_fulltext_fallback 兜底）."""
+    by_id = {
+        i["id"]: i
+        for i in run_checklist(_LEASE_SUBJECT_FALLBACK_TEXT, "lease")["items"]
+    }
+    assert by_id["subject"]["status"] == "通过", (
+        f"签署页补全应兜底为通过：{by_id['subject']['status']} {by_id['subject']['note']}"
+    )
+
+
+def test_subject_missing_completion_still_flagged():
+    """真缺失（全文无法定代表人/信用代码/住所）：完备型兜底不得放过漏报."""
+    text = (
+        "出租方（甲方）：某某置业有限公司。承租方（乙方）：某某科技有限公司。\n"
+        "租赁期限自2026年10月1日起至2027年9月30日止。月租金1万元，押二付三。\n"
+        "甲方系房屋产权人，依法出租。争议向法院起诉。\n"
+        "本合同适用中华人民共和国法律。双方签字并加盖公章。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["subject"]["status"] == "需关注", (
+        f"真缺失必须需关注：{by_id['subject']['status']} {by_id['subject']['note']}"
+    )
+
+
 # ---------- 肉饼终验：subject 经营场所单证必须需关注 ----------
 
 def test_subject_with_only_business_address_flagged():

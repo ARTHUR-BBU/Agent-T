@@ -115,10 +115,17 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
         }
 
     rules = item.get("rules") or {}
+    # 完备型检查项开关（小智娘租赁终验 P2，2026-09-06）：subject 类 unless 是
+    # 「命中词附近有没有补全信息」的邻近判定，补全信息（法定代表人/信用代码）
+    # 常落在签署页（>60 字外）。开启后，unless 窗口未放行时先查 pass 词表全文——
+    # 命中即通过，不再按「未见补全」定需关注（避免 note 与事实相反）。
+    pass_fulltext_fallback = bool(item.get("pass_fulltext_fallback"))
 
     # 1) need_attention first (highest priority)
     for rule in rules.get("need_attention") or []:
         if _rule_matches(text, rule) and _unless_holds(text, rule):
+            if pass_fulltext_fallback and _pass_matches(rules, text):
+                break  # 补全信息在全文存在：完备型误报，交由 pass 定「通过」
             quote = _extract_quote_from_rule(text, rule)
             hits = _extract_hits_from_rule(text, rule)
             return {
@@ -161,6 +168,14 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
 _UNLESS_WINDOW = 60
 
 
+def _pass_matches(rules: dict[str, Any], text: str) -> bool:
+    """pass 词表全文域匹配（供 pass_fulltext_fallback 完备型兜底用）。"""
+    for rule in rules.get("pass") or []:
+        if _rule_matches(text, rule):
+            return True
+    return False
+
+
 def _unless_holds(text: str, rule: dict[str, Any]) -> bool:
     """unless/none_of 只在与正向命中邻近的局部窗口（±60 字符）内生效。
 
@@ -175,7 +190,13 @@ def _unless_holds(text: str, rule: dict[str, Any]) -> bool:
 
 
 def _match_neighborhood(text: str, rule: dict[str, Any]) -> str:
-    """第一个正向命中的邻近窗口；定位不到具体位置（复杂 all_of）时回退全文。"""
+    """第一个正向命中的邻近窗口。
+
+    注意（小智娘终验 P3②，2026-09-06）：_patterns_from_spec 会把 all_of 拆平，
+    本函数锚定的是第一个可匹配 conjunct 的位置——all_of 联合命中区间可能更宽，
+    「定位不到即回退全文」的安全网实际不存在（当前三品类无 all_of+unless 组合，
+    零影响）。若未来引入该组合，需改为各 conjunct 命中区间的最小共同邻域。
+    """
     top = {k: rule[k] for k in ("pattern", "any_of", "all_of") if k in rule}
     for pattern in _patterns_from_spec(top):
         try:

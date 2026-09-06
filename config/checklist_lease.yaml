@@ -31,6 +31,9 @@ items:
     name: 主体
     segment: A
     description: 合同主体是否完整、清晰（名称、角色、授权等）
+    # 完备型兜底：补全信息（法定代表人/信用代码）常在签署页（远超 unless 窗口），
+    # unless 窗口未放行时先查 pass 词表全文，命中即通过（小智娘租赁终验 P2）
+    pass_fulltext_fallback: true
     rules:
       need_attention:
         - any_of:
@@ -50,8 +53,9 @@ items:
             - "法定代表人"
             - "统一社会信用代码"
             - "住所[:：]|注册地址"
-            # 与 unless 对称（肉饼审计 P2：只写经营场所的合同应落需关注而非未找到）
-            - "经营场所"
+            # 「经营场所」不进 pass（原为对 unless 的对称补位，pass_fulltext_fallback
+            # 落地后它会把只写经营场所的合同洗成通过）：它是弱地址信号，
+            # 只写经营场所的合同应直接落需关注（肉饼终验点3）
       not_found:
         - pattern: "甲方|乙方|出租方|承租方|出租人|承租人"
 
