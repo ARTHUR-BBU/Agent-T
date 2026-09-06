@@ -100,7 +100,9 @@ def _conclusion(doc: Any, row: dict[str, Any]) -> None:
     unknown = 0
     for it in items:
         status = it.get("status")
-        if status in counts:
+        # isinstance 守卫（小智娘 P2-1）：list/dict 等不可哈希脏值走从严分支，
+        # 不能在 dict 成员判断上 TypeError 炸 500——fail-closed 而非 fail-loud
+        if isinstance(status, str) and status in counts:
             counts[status] += 1
         else:
             # 未知/变体档位不许静默吞掉（遗留项①，肉饼 P2-2）：计数守恒，
@@ -112,7 +114,7 @@ def _conclusion(doc: Any, row: dict[str, Any]) -> None:
         + (f" · 无法识别档位 {unknown} 项" if unknown else "")
     )
     if unknown:
-        doc.add_paragraph(f"另有 {unknown} 项档位无法识别，已按「需关注」从严处理，请人工复核。")
+        doc.add_paragraph("上述无法识别档位已按「需关注」从严处理，请人工复核。")
 
     sc = row.get("scorecard") or {}
     if sc.get("available") and isinstance(sc.get("total"), (int, float)):

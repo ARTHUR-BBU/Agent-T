@@ -21,17 +21,12 @@ from app.main import app
 from app.services import llm_ask, scorecard
 from app.services.blind_spot import annotate_rule_items
 from app.services.checklist import run_checklist
-from app.services.model_review import run_model_review
 
 ROOT = Path(__file__).resolve().parents[1]
 FOUR_RISK = ROOT / "fixtures" / "procurement_four_risk.txt"
 SAMPLE = ROOT / "fixtures" / "procurement_sample.txt"
 
 client = TestClient(app)
-
-
-def _payload(raw_dict):
-    return json.dumps(raw_dict, ensure_ascii=False)
 
 
 def _model_payload(total, seg_scores, summary="汇总。", comments=None, candidates=None):
@@ -45,14 +40,6 @@ def _model_payload(total, seg_scores, summary="汇总。", comments=None, candid
         "scorecard": {"summary": summary, "segments": segs},
         "candidates": candidates or [],
     }
-
-
-def _chat_returning(raw_dict, calls):
-    def chat(_system, _user):
-        calls.append(_user)
-        return _payload(raw_dict)
-
-    return chat
 
 
 # ---------- API 层：scorecard 结构出参完整 ----------
