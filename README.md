@@ -24,10 +24,10 @@ cp .env.example .env
 # Coding 套餐保持 ZHIPU_API_BASE=https://open.bigmodel.cn/api/coding/paas/v4
 ```
 
-4. 启动：
+4. 启动（**必须带 `--env-file`**，否则 `.env` 不会生效、Key 不被读取）：
 
 ```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --env-file .env
 ```
 
 5. 浏览器打开 <http://localhost:8000>
