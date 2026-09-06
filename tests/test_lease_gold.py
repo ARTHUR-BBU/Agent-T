@@ -157,6 +157,56 @@ def test_lease_scorecard_config_valid():
     assert sum(s["weight"] for s in segments) == 100, "七段权重必须合计 100（无 NA 段直加）"
 
 
+# ---------- 小智娘终验：新规则的三处误伤修复 ----------
+
+def test_protective_sublease_boilerplate_not_flagged():
+    """「未经产权人同意，乙方不得转租」是转租须经同意的保护性条款（民法典716
+    默认安排），不是权属缺陷信号，不得命中 lessor_title 需关注."""
+    text = (
+        "出租方（甲方）：某某置业有限公司，法定代表人：张三，住所：某某市某某区某某路1号。\n"
+        "承租方（乙方）：某某科技有限公司。甲方系房屋产权人，持不动产权证，依法出租。\n"
+        "租赁期限自2026年10月1日起至2027年9月30日止。月租金1万元，押二付三。\n"
+        "未经产权人同意，乙方不得转租。\n"
+        "争议向法院起诉。本合同适用中华人民共和国法律。双方签字并加盖公章。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["lessor_title"]["status"] == "通过", (
+        f"保护性 boilerplate 被误伤：{by_id['lessor_title']['status']} {by_id['lessor_title']['note']}"
+    )
+
+
+def test_prohibited_utility_cutoff_not_flagged():
+    """「甲方不得对房屋断水断电」是承租方友好条款，不得命中 rent_payment 需关注."""
+    text = (
+        "出租方（甲方）：某某置业有限公司，法定代表人：张三，住所：某某市某某区某某路1号。\n"
+        "承租方（乙方）：某某科技有限公司。甲方系房屋产权人，持不动产权证，依法出租。\n"
+        "租赁期限自2026年10月1日起至2027年9月30日止。月租金1万元，押二付三。\n"
+        "租赁期满乙方可续租。装修归乙方所有。维修由甲方负责。违约金按未履行部分租金的百分之二十计算。\n"
+        "甲方不得对房屋断水断电，不得以任何方式影响乙方正常经营。\n"
+        "争议向法院起诉。本合同适用中华人民共和国法律。双方签字并加盖公章。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["rent_payment"]["status"] == "通过", (
+        f"禁止断水断电被误伤：{by_id['rent_payment']['status']} {by_id['rent_payment']['note']}"
+    )
+
+
+def test_proportional_termination_penalty_not_flagged():
+    """「中途解约违约金按未履行部分租金 20%」是合理比例违约金，不构成剥夺退出权."""
+    text = (
+        "出租方（甲方）：某某置业有限公司，法定代表人：张三，住所：某某市某某区某某路1号。\n"
+        "承租方（乙方）：某某科技有限公司。甲方系房屋产权人，持不动产权证，依法出租。\n"
+        "租赁期限自2026年10月1日起至2027年9月30日止。月租金1万元，押二付三。\n"
+        "租赁期满乙方可续租。装修归乙方所有。维修由甲方负责。\n"
+        "乙方中途解约的，违约金按未履行部分租金的百分之二十计算。\n"
+        "争议向法院起诉。本合同适用中华人民共和国法律。双方签字并加盖公章。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["early_termination"]["status"] == "通过", (
+        f"比例违约金被误伤：{by_id['early_termination']['status']} {by_id['early_termination']['note']}"
+    )
+
+
 # ---------- 肉饼终验：subject 经营场所单证必须需关注 ----------
 
 def test_subject_with_only_business_address_flagged():
