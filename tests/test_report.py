@@ -127,6 +127,26 @@ def test_report_blind_candidates_marked_needs_confirm():
     assert "仅有盖章栏无签字栏" in text
 
 
+def test_report_free_text_fields_scrub_forbidden():
+    """禁语纵深防御（小智娘 xz2a/2b 钉住的 P3 → 已修转正）：
+    summary/条目 note/候选 note 里的禁语不得原样印进报告."""
+    row = _full_row()
+    row["scorecard"] = {
+        "available": True, "reason": None, "total": 95,
+        "tier": {"label": "基本可控", "hint": ""},
+        "summary": "本合同没有问题，可以放心签署。",
+        "segments": [], "caps_applied": [],
+        "disclaimer": "", "advisory_only": True,
+    }
+    row["items"][0]["note"] = "虽有提示但可以忽略。"
+    row["blind_candidates"][0]["note"] = "问题不大。"
+    text = _doc_text(build_report_docx(row))
+    for banned in ("本合同没有问题", "可以放心签署", "虽有提示但可以忽略", "问题不大"):
+        assert banned not in text, f"禁语「{banned}」经报告回显"
+    assert "【已过滤】" in text, "清洗必须留痕，不能静默删句"
+    assert DEFAULT_DISCLAIMER in text, "卡内 disclaimer 被清空时落默认句"
+
+
 def test_report_never_contains_full_text():
     """合同全文不写入报告——只允许原文摘句（泄露面控制）."""
     text = _doc_text(build_report_docx(_full_row()))
