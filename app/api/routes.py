@@ -1,7 +1,12 @@
-"""API routers: upload / review / ask."""
+"""API routers: upload / review / ask / report."""
 from __future__ import annotations
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+import logging
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import quote
+
+from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 
 from app.api.schemas import (
     AskRequest,
@@ -11,11 +16,13 @@ from app.api.schemas import (
     UploadResponse,
 )
 from app.graph.pipeline import run_review
-from app.services import llm_ask
+from app.services import llm_ask, report as report_service
 from app.services.checklist import list_categories
 from app.services.store import store
 
 router = APIRouter(prefix="/api")
+
+logger = logging.getLogger(__name__)
 
 
 @router.get("/categories")
@@ -40,6 +47,7 @@ async def upload(
         filename=filename,
         category=category,
         category_label=category,
+        created_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
         status="processing",
         items=[],
         scorecard={},
@@ -105,6 +113,38 @@ def get_review(review_id: str):
         error=row.get("error"),
         text_preview=row.get("text_preview") or "",
         ask_available=bool(llm_ask.get_api_key()),
+    )
+
+
+@router.get("/review/{review_id}/report")
+def download_report(review_id: str):
+    """M4 导出审查报告（docx）。纯展示层：汇总 store 既有结果，无 LLM 调用。"""
+    row = store.get(review_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="审查记录不存在")
+    if (row.get("status") or "pending") != "done":
+        raise HTTPException(status_code=409, detail="审查尚未完成，暂不能导出报告")
+
+    try:
+        data = report_service.build_report_docx(row)
+    except ImportError:
+        # python-docx 缺失时不裸抛，给出可操作的错误
+        raise HTTPException(status_code=503, detail="服务器未安装 python-docx，无法生成报告")
+    except Exception:  # noqa: BLE001
+        # 异常详情只进服务端日志，不回给客户端（防泄露路径/实现细节，肉饼审计 P2-1）
+        logger.exception("报告生成失败 review_id=%s", review_id)
+        raise HTTPException(status_code=500, detail="报告生成失败，请稍后重试")
+
+    base = Path(row.get("filename") or "合同").stem or "合同"
+    filename = f"审查报告-{base}-{review_id}.docx"
+    headers = {
+        # ASCII 兜底 + RFC 5987 中文文件名
+        "Content-Disposition": f"attachment; filename=\"report.docx\"; filename*=UTF-8''{quote(filename)}"
+    }
+    return Response(
+        content=data,
+        media_type=report_service.DOCX_MEDIA_TYPE,
+        headers=headers,
     )
 
 

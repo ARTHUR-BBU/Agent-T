@@ -80,6 +80,7 @@ pytest -q
 
 - `POST /api/upload` — 文件 + `category`（`procurement` \| `nda`）  
 - `GET /api/review/{id}` — 审查结果  
+- `GET /api/review/{id}/report` — 导出审查报告（docx，M4）  
 - `POST /api/ask` — `{ review_id, item_id, question }`（仅需关注）  
 - `GET /health`
 

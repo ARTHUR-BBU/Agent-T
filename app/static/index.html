@@ -46,6 +46,10 @@
       <div id="results-error" class="card error hidden"></div>
       <div id="results-body" class="hidden">
         <div class="meta card" id="results-meta"></div>
+        <!-- M4 审查报告导出：与页面同源的 store 数据，无二次 LLM 调用 -->
+        <div class="report-actions hidden" id="report-actions">
+          <a class="rewrite-copy report-link" id="btn-export-report" download>导出报告（Word）</a>
+        </div>
         <!-- M3.5 评分卡：参考层（灰底、无彩色），规则清单仍是唯一权威层 -->
         <div class="card score-card hidden" id="score-card">
           <div class="score-head">
