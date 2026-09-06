@@ -237,13 +237,18 @@ def test_api_report_unknown_id_404():
 
 
 def test_api_report_not_done_409():
-    """审查未完成（processing/error）不能导出半成品报告."""
+    """审查未完成（processing/error）不能导出半成品报告；
+    失败态与进行中文案必须区分（遗留项③：失败不能说成「尚未完成」）."""
     rid = store.create(filename="x.txt", category="procurement", status="processing")
     r = client.get(f"/api/review/{rid}/report")
     assert r.status_code == 409
+    assert r.json()["detail"] == "审查尚未完成，暂不能导出报告"
 
     rid2 = store.create(filename="x.txt", category="procurement", status="error", error="解析失败")
-    assert client.get(f"/api/review/{rid2}/report").status_code == 409
+    r2 = client.get(f"/api/review/{rid2}/report")
+    assert r2.status_code == 409
+    assert r2.json()["detail"] == "审查失败，请重新上传合同后再导出报告"
+    assert "失败" in r2.json()["detail"], "error 态必须让用户知道该重传，而不是继续等"
 
 
 def test_api_report_500_returns_fixed_message(monkeypatch):

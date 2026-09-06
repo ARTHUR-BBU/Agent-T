@@ -39,7 +39,32 @@ def load_checklist(category: str) -> dict[str, Any]:
         path = CONFIG_DIR / "checklist_procurement.yaml"
         if not path.exists():
             raise FileNotFoundError(f"No checklist config for category={category}")
-    return _load_yaml(path)
+    cfg = _load_yaml(path)
+    _validate_segment_mapping(cfg, category)
+    return cfg
+
+
+def _validate_segment_mapping(cfg: dict[str, Any], category: str) -> None:
+    """配置校验（遗留项⑤）：item.segment 必须指向 scorecard 分段定义里存在的 key。
+
+    写错分段名时宁可启动/审查即报错，也不能让评分卡把该条静默丢进 0 分段
+    或归错权重（fail fast）。没有 scorecard 块的旧品类配置跳过校验（评分未开通）。
+    """
+    segments = (cfg.get("scorecard") or {}).get("segments") or []
+    if not segments:
+        return
+    valid = {str(s.get("key")) for s in segments if s.get("key")}
+    bad = sorted(
+        {
+            str(i.get("segment"))
+            for i in cfg.get("items", [])
+            if i.get("segment") and str(i.get("segment")) not in valid
+        }
+    )
+    if bad:
+        raise ValueError(
+            f"品类 {category} 配置错误：item.segment 引用了不存在的评分卡分段 {bad}（可用分段：{sorted(valid)}）"
+        )
 
 
 def run_checklist(text: str, category: str = "procurement") -> dict[str, Any]:

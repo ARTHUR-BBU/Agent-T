@@ -122,7 +122,11 @@ def download_report(review_id: str):
     row = store.get(review_id)
     if not row:
         raise HTTPException(status_code=404, detail="审查记录不存在")
-    if (row.get("status") or "pending") != "done":
+    status = row.get("status") or "pending"
+    if status == "error":
+        # 失败态不能说成「尚未完成」——掩盖失败会让用户空等（遗留项③，肉饼 P3）
+        raise HTTPException(status_code=409, detail="审查失败，请重新上传合同后再导出报告")
+    if status != "done":
         raise HTTPException(status_code=409, detail="审查尚未完成，暂不能导出报告")
 
     try:
