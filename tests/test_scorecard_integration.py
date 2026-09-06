@@ -21,17 +21,12 @@ from app.main import app
 from app.services import llm_ask, scorecard
 from app.services.blind_spot import annotate_rule_items
 from app.services.checklist import run_checklist
-from app.services.model_review import run_model_review
 
 ROOT = Path(__file__).resolve().parents[1]
 FOUR_RISK = ROOT / "fixtures" / "procurement_four_risk.txt"
 SAMPLE = ROOT / "fixtures" / "procurement_sample.txt"
 
 client = TestClient(app)
-
-
-def _payload(raw_dict):
-    return json.dumps(raw_dict, ensure_ascii=False)
 
 
 def _model_payload(total, seg_scores, summary="汇总。", comments=None, candidates=None):
@@ -45,14 +40,6 @@ def _model_payload(total, seg_scores, summary="汇总。", comments=None, candid
         "scorecard": {"summary": summary, "segments": segs},
         "candidates": candidates or [],
     }
-
-
-def _chat_returning(raw_dict, calls):
-    def chat(_system, _user):
-        calls.append(_user)
-        return _payload(raw_dict)
-
-    return chat
 
 
 # ---------- API 层：scorecard 结构出参完整 ----------
@@ -145,8 +132,8 @@ def test_api_scorecard_keys_absent_in_llm_response_defaults_safe(monkeypatch):
 # ---------- 漏报压力：缺争议解决条款的四连风险 ----------
 
 def test_four_risk_missing_dispute_clause_rules_flag():
-    """四连风险（付款苛刻 + 违约金上限过低/单方免责 + 单方不公平 + 缺争议解决条款）：
-    规则层必须打出 payment/breach/unfair_terms 需关注，jurisdiction 未找到，B/D 段有靶点."""
+    """缺争议解决条款 fixture 的规则层独有断言（遗留项⑥去重后保留的增量）：
+    封顶 74 的模型侧测试已并入 test_scorecard.py 的 FOUR_RISK 参数化列表。"""
     text = FOUR_RISK.read_text(encoding="utf-8")
     items = annotate_rule_items(run_checklist(text, "procurement")["items"])
     by_id = {i["id"]: i for i in items}
@@ -159,36 +146,6 @@ def test_four_risk_missing_dispute_clause_rules_flag():
         if i.get("segment") in ("B", "D") and i["status"] in ("需关注", "未找到")
     ]
     assert core_flagged, "B/D 段无任何靶点，评分封顶逻辑不会触发"
-
-
-def test_four_risk_missing_dispute_clause_model_full_marks_capped_74(monkeypatch):
-    """模型对四连风险合同给满分并自称 100 分，代码重算 + 封顶后 total ≤ 74."""
-    monkeypatch.setenv("BLIND_SPOT_ENABLED", "true")
-    text = FOUR_RISK.read_text(encoding="utf-8")
-    items = annotate_rule_items(run_checklist(text, "procurement")["items"])
-    segments = scorecard.load_scorecard_config("procurement")["segments"]
-    names = [i["name"] for i in items if i["status"] != "通过" and not i.get("category_na")]
-    payload = _model_payload(
-        100, {s["key"]: s["weight"] for s in segments},
-        summary="条款完备，可以放心签署。",
-        comments={"A": "点名：" + "、".join(names)},
-    )
-    # 模型在 payload 里自称 total=100
-    payload["scorecard"]["total"] = 100
-    calls: list = []
-    out = run_model_review(
-        text=text, items=items, policies=[], category="procurement",
-        chat_fn=_chat_returning(payload, calls),
-    )
-    sc = out["scorecard"]
-    assert sc["available"] is True
-    assert sc["total"] == sum(s["score"] for s in sc["segments"]), "总分必须由分段重算"
-    assert sc["total"] <= 74, f"四连风险封顶 74 失效，实际 {sc['total']}"
-    assert sc["total"] != 100
-    by_key = {s["key"]: s for s in sc["segments"]}
-    assert by_key["B"]["score"] < by_key["B"]["weight"], "B 段未找到项扣分下限未生效"
-    assert by_key["D"]["score"] < by_key["D"]["weight"], "D 段需关注项扣分下限未生效"
-    assert "可以放心签署" not in sc["summary"], "整体性背书不得原样回显"
 
 
 # ---------- 边界与健壮性 ----------

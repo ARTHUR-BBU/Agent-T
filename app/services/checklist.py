@@ -39,7 +39,41 @@ def load_checklist(category: str) -> dict[str, Any]:
         path = CONFIG_DIR / "checklist_procurement.yaml"
         if not path.exists():
             raise FileNotFoundError(f"No checklist config for category={category}")
-    return _load_yaml(path)
+    cfg = _load_yaml(path)
+    _validate_segment_mapping(cfg, category)
+    return cfg
+
+
+def _validate_segment_mapping(cfg: dict[str, Any], category: str) -> None:
+    """配置校验（遗留项⑤ + 老钱 L-1 加严 + 小智娘 P2-2）：声明了 scorecard 块时——
+
+    1. 分段 key 不得重复（重复分段 postprocess 会把 total 相加出 >100 的荒谬分）；
+    2. 每个 item 必须有 segment 且指向存在的分段 key——缺失、None、0、"" 等
+       falsy 值同责 fail-fast（静默退出评分会让扣分下限/封顶/补点名全部漏掉该项）。
+
+    没有 scorecard 块的旧品类配置跳过校验（评分未开通是合法态）。
+    """
+    segments = (cfg.get("scorecard") or {}).get("segments") or []
+    if not segments:
+        return
+    keys = [str(s.get("key")) for s in segments if s.get("key")]
+    dupes = sorted({k for k in keys if keys.count(k) > 1})
+    if dupes:
+        raise ValueError(f"品类 {category} 配置错误：评分卡分段 key 重复 {dupes}（重复分段会导致总分异常）")
+    valid = sorted(set(keys))
+    bad = sorted(
+        {
+            repr(i.get("segment"))
+            for i in cfg.get("items", [])
+            # 缺失/None/falsy（0、false、""）同责：静默退出评分是漏封顶通道（老钱 L-1）；
+            # 数字 key 保留 str 强转语义（YAML 两侧一致归一，小智娘测试钉死）
+            if i.get("segment") is None or str(i.get("segment")) not in valid
+        }
+    )
+    if bad:
+        raise ValueError(
+            f"品类 {category} 配置错误：item.segment 缺失或引用了不存在的评分卡分段 {bad}（可用分段：{valid}）"
+        )
 
 
 def run_checklist(text: str, category: str = "procurement") -> dict[str, Any]:

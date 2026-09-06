@@ -244,11 +244,14 @@ def test_clean_pass_not_degraded(monkeypatch):
 
 
 # ---------- 漏报压力测试（老钱意见书：四连风险合同封顶 74） ----------
+# 遗留项⑥去重：procurement_four_risk.txt（缺争议条款 fixture）从
+# test_scorecard_integration.py 并入本参数化列表，封顶断言统一在这里
 
 FOUR_RISK = [
     ROOT / "fixtures" / "procurement_adversarial_2.txt",
     ROOT / "fixtures" / "procurement_adversarial_3.txt",
     ROOT / "fixtures" / "procurement_paraphrase.txt",
+    ROOT / "fixtures" / "procurement_four_risk.txt",
 ]
 
 

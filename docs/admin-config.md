@@ -160,8 +160,9 @@ NDA 红线（风险金标 / 对抗样例须为「需关注」，不得「通过�
 | 开通追问/评分 | `.env`（见 `.env.example`）与 `app/services/llm_ask.py` |
 | 开关补盲 | `.env` → `BLIND_SPOT_ENABLED`（默认 true；候选仅，不盖章；评分不受影响） |
 
-改完规则后请跑：
+改完规则后请跑（pytest 是 dev 依赖，不在 requirements.txt 里）：
 
 ```bash
+pip install pytest
 pytest -q
 ```

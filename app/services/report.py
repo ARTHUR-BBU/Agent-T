@@ -89,18 +89,32 @@ def _cover(doc: Any, row: dict[str, Any]) -> None:
         p.add_run(str(value))
 
 
+def _known_statuses() -> tuple[str, ...]:
+    return ("通过", _ATTENTION, _NOT_FOUND, _NA)
+
+
 def _conclusion(doc: Any, row: dict[str, Any]) -> None:
     doc.add_heading("一、审查结论汇总", level=1)
     items = row.get("items") or []
-    counts = {s: 0 for s in ("通过", _ATTENTION, _NOT_FOUND, _NA)}
+    counts = {s: 0 for s in _known_statuses()}
+    unknown = 0
     for it in items:
         status = it.get("status")
-        if status in counts:
+        # isinstance 守卫（小智娘 P2-1）：list/dict 等不可哈希脏值走从严分支，
+        # 不能在 dict 成员判断上 TypeError 炸 500——fail-closed 而非 fail-loud
+        if isinstance(status, str) and status in counts:
             counts[status] += 1
+        else:
+            # 未知/变体档位不许静默吞掉（遗留项①，肉饼 P2-2）：计数守恒，
+            # 且从严往风险侧倒，绝不落进「全部通过」的错误背书
+            unknown += 1
     doc.add_paragraph(
         f"共核查 {len(items)} 项：通过 {counts['通过']} · 需关注 {counts[_ATTENTION]}"
         f" · 未找到 {counts[_NOT_FOUND]} · 本类不适用 {counts[_NA]}"
+        + (f" · 无法识别档位 {unknown} 项" if unknown else "")
     )
+    if unknown:
+        doc.add_paragraph("上述无法识别档位已按「需关注」从严处理，请人工复核。")
 
     sc = row.get("scorecard") or {}
     if sc.get("available") and isinstance(sc.get("total"), (int, float)):
@@ -119,9 +133,10 @@ def _conclusion(doc: Any, row: dict[str, Any]) -> None:
 
 def _attention_table(doc: Any, row: dict[str, Any]) -> None:
     doc.add_heading("二、需关注与未找到汇总", level=1)
+    known = _known_statuses()
     hard = [
         it for it in (row.get("items") or [])
-        if it.get("status") in (_ATTENTION, _NOT_FOUND)
+        if it.get("status") in (_ATTENTION, _NOT_FOUND) or it.get("status") not in known
     ]
     if not hard:
         doc.add_paragraph("无——全部适用项均通过。")
@@ -134,7 +149,9 @@ def _attention_table(doc: Any, row: dict[str, Any]) -> None:
     for it in hard:
         cells = table.add_row().cells
         cells[0].text = it.get("name") or ""
-        cells[1].text = it.get("status") or ""
+        status = it.get("status") or ""
+        # 未知档位进表时显式标注从严口径，不让读者误以为档位可信
+        cells[1].text = status if status in (_ATTENTION, _NOT_FOUND) else f"{status or '空'}（按需关注处理）"
         cells[2].text = _scrub(it.get("note"))
 
 

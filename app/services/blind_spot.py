@@ -25,6 +25,9 @@ from app.services.checklist import STATUS_ATTENTION, STATUS_NA, STATUS_NOT_FOUND
 logger = logging.getLogger(__name__)
 
 SKIP_NO_QUOTE = "缺少原文依据，已跳过"
+# 候选摘句长度上限（遗留项②，肉饼审计 P2-3）：规则摘句窗口约 85 字，候选给余量
+# 但不许把整段合同搬进报告——超长截断为前缀加省略号（前缀仍是已验证的原文连续摘录）
+MAX_QUOTE_CHARS = 300
 
 
 def is_blind_spot_enabled() -> bool:
@@ -117,6 +120,8 @@ def normalize_candidates(
         if not _quote_supported(text, quote):
             skipped.append(f"{base.get('name')}: {SKIP_NO_QUOTE}")
             continue
+        if len(quote) > MAX_QUOTE_CHARS:
+            quote = quote[: MAX_QUOTE_CHARS - 1].rstrip() + "…"
 
         seen_ids.add(cid)
         # 候选说明也过禁语表：候选方向是报风险，但同责任敞口不例外（肉饼审计 P2）

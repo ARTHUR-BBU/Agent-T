@@ -71,6 +71,7 @@ bash scripts/demo_procurement.sh
 ## 测试
 
 ```bash
+pip install pytest    # 或 pip install -e ".[dev]"；pytest 不在 requirements.txt 运行时依赖里
 pytest -q
 ```
 
