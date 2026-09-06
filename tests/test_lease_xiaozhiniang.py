@@ -299,8 +299,8 @@ def test_forbidden_two_layers_union_no_escape_lease():
 
 
 def test_forbidden_negation_false_positive_observed():
-    """【P2 误伤已修，转正】check_forbidden 升级为否定感知：命中词紧邻前缀
-    （≤4 字）为否定表述时不算违规——正当风险提示话术不再被反向清洗。
+    """【P2 误伤已修，转正】check_forbidden 升级为否定感知：命中词前 6 字窗口
+    含否定表述时不算违规——正当风险提示话术不再被反向清洗。
     真禁语裸命中不受影响（其余禁语测试钉死）。"""
     for sentence in (
         "并不能说明这份合同无效",

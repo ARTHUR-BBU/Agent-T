@@ -157,6 +157,24 @@ def test_lease_scorecard_config_valid():
     assert sum(s["weight"] for s in segments) == 100, "七段权重必须合计 100（无 NA 段直加）"
 
 
+# ---------- 肉饼终验：subject 经营场所单证必须需关注 ----------
+
+def test_subject_with_only_business_address_flagged():
+    """只见「经营场所」不见法定代表人/信用代码：主体信息不完整必须需关注，
+    不得因 unless/pass 双表同时含「经营场所」而落「通过」（终验点3）."""
+    text = (
+        "出租方（甲方）：某某置业有限公司，经营场所：某某市某某区某某路1号。\n"
+        "承租方（乙方）：某某科技有限公司。\n"
+        "租赁期限自2026年10月1日起至2027年9月30日止。月租金1万元，押二付三。\n"
+        "甲方系房屋产权人，依法出租。争议向法院起诉。\n"
+        "本合同适用中华人民共和国法律。双方签字并加盖公章。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["subject"]["status"] == "需关注", (
+        f"只写经营场所必须需关注，实际 {by_id['subject']['status']}：{by_id['subject']['note']}"
+    )
+
+
 # ---------- 肉饼审计 P1：lessor_title 否定盲区 ----------
 
 def test_lessor_title_negated_consent_flagged():
