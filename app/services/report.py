@@ -167,6 +167,8 @@ def _item_details(doc: Any, row: dict[str, Any]) -> None:
     for it in shown:
         doc.add_heading(f"【{it.get('status') or '未判定'}】{it.get('name') or ''}", level=2)
         doc.add_paragraph(_scrub(it.get("note")) or "（无说明）")
+        # 原文摘句不做禁语清洗——保真是证据义务：清洗合同原文等于篡改证据。
+        # 禁语清洗只作用于模型自由文本（note/summary/comment/policy）。
         quote = it.get("quote") or ""
         p = doc.add_paragraph()
         run = p.add_run("原文摘句：")

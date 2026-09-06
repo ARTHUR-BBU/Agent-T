@@ -15,20 +15,28 @@
 
 ## 一、事前必配（一期）
 
-### 1. 品类开关（采购 / NDA）
+### 1. 品类开关（采购 / NDA / 租赁）
 
 | 做什么 | 仓库里的位置 |
 |--------|----------------|
 | 启用哪些合同品类 | `config/checklist_*.yaml` 的 `category` / `label` |
-| 上传时选品类 | API `POST /api/upload` 的 `category`（`procurement` \| `nda`） |
+| 上传时选品类 | API `POST /api/upload` 的 `category`（`procurement` \| `nda` \| `lease`） |
 | 品类列表接口 | `app/services/checklist.py` → `list_categories()`（扫描 `config/checklist_*.yaml`） |
 
 当前已有：
 
 - `config/checklist_procurement.yaml` → 采购合同  
 - `config/checklist_nda.yaml` → 保密协议（NDA）  
+- `config/checklist_lease.yaml` → 租赁合同（承租方视角，法务依据见 `docs/lease-category-legal-opinion.md`）  
 
 新增品类：复制一份 YAML、改 `category`/`label`/条目即可，无需改 UI 大框架。
+
+> ⚠️ **`pass_fulltext_fallback` 使用守卫**（肉饼备案，2026-09-06）：该开关（unless
+> 窗口未放行时改查 pass 词表全文）**仅限主体信息这类「完备型检查项」**——其 pass
+> 词表必须是「全文出现即意味着信息确实完整」的强 token（法定代表人/统一社会信用
+> 代码/住所）。严禁加到 pass 词表含弱信号或可否定 token 的检查项上（典型反例：
+> lessor_title 的 pass 词「产权人」会被「未经产权人同意」子串命中，加 flag 等于
+> 重开洗白通道）。启用前须逐 token 确认否定上下文不成立。
 
 ### 2. 检查单条目 + 哪些可 N/A
 

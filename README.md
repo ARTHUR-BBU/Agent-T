@@ -79,7 +79,7 @@ pytest -q
 
 ## API 速查
 
-- `POST /api/upload` — 文件 + `category`（`procurement` \| `nda`）  
+- `POST /api/upload` — 文件 + `category`（`procurement` \| `nda` \| `lease`）  
 - `GET /api/review/{id}` — 审查结果  
 - `GET /api/review/{id}/report` — 导出审查报告（docx，M4）  
 - `POST /api/ask` — `{ review_id, item_id, question }`（仅需关注）  
