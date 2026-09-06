@@ -90,15 +90,44 @@ def load_forbidden() -> dict[str, list[str]]:
 
 
 def check_forbidden(text: str) -> list[str]:
-    """Return forbidden phrases found in text (A/C classes matter most)."""
+    """Return forbidden phrases found in text (A/C classes matter most).
+
+    否定感知（小智娘租赁测试 P2）：命中词紧邻前缀是否定时不算违规——
+    「并不能说明这份合同无效」是对风险的正当提示，不能被清洗成【已过滤】
+    反向洗掉审查话术。子串命中 + 前缀非否定才记违规。
+    """
     if not text:
         return []
     hits: list[str] = []
     for _cat, words in load_forbidden().items():
         for w in words:
-            if w in text and w not in hits:
+            if w in text and w not in hits and not _negated_at(text, w):
                 hits.append(w)
     return hits
+
+
+# 命中词前 6 字窗口含这些否定表述时，视为对禁语的否定引用而非违规。
+# 注意：「没有」「不是」不收——它们过短且「没有问题」本身是禁语，会互相干扰漏检。
+_NEGATION_PREFIXES = (
+    "不能", "不会", "无法", "并非", "并不是", "不存在", "不构成", "不代表",
+    "不等于", "未见", "未必", "未发现", "未出现", "不属", "并非没有", "并无",
+)
+
+
+def _negated_at(text: str, word: str) -> bool:
+    """词在文中的每次出现，只要存在非否定上下文的实例即算真命中。
+
+    否定词允许与命中词间隔少量修饰（「并不能说明…无效」），取命中词前 6 字窗口。
+    """
+    start = 0
+    while True:
+        idx = text.find(word, start)
+        if idx < 0:
+            return True  # 所有出现都被否定前缀覆盖
+        window = text[max(0, idx - 6):idx]
+        if not any(p in window for p in _NEGATION_PREFIXES):
+            return False
+        start = idx + 1
 
 
 def scrub_forbidden(text: str) -> str:
@@ -301,6 +330,9 @@ def postprocess(
         for iid in seg_items:
             st = status_of_item.get(iid)
             if st == STATUS_ATTENTION:
+                # 口径备案（肉饼租赁审计 P2，2026-09-06）：missing_as=需关注 的
+                # 加严显示档走本 0.4 扣分档，比默认「未找到」的 0.6 反而轻——
+                # 显示档位与扣分强度耦合倒挂是既有设计，若要归一需法务拍板后统一调整
                 deduction += DEDUCTION_ATTENTION * weight
                 seg_attention_names.append(str(name_of_item.get(iid) or iid))
                 seg_hard_names.append(str(name_of_item.get(iid) or iid))

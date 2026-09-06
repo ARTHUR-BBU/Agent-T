@@ -155,3 +155,60 @@ def test_lease_scorecard_config_valid():
     segments = scorecard.load_scorecard_config("lease")["segments"]
     assert [s["key"] for s in segments] == ["A", "B", "C", "D", "E", "F", "G"]
     assert sum(s["weight"] for s in segments) == 100, "七段权重必须合计 100（无 NA 段直加）"
+
+
+# ---------- 肉饼审计 P1：lessor_title 否定盲区 ----------
+
+def test_lessor_title_negated_consent_flagged():
+    """「未经产权人同意」不得被 unless 的「产权人同意」子串放行（承租方第一硬伤）."""
+    text = (
+        "出租方（甲方）：某某贸易有限公司。乙方：某某科技有限公司。\n"
+        "本合同系转租，出租方未经产权人同意转租。\n"
+        "租赁期限自2026年10月1日起至2027年9月30日止。月租金1万元，押二付三。\n"
+        "争议向法院起诉。本合同适用中华人民共和国法律。双方签字并加盖公章。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["lessor_title"]["status"] == "需关注", (
+        f"未经产权人同意必须需关注，实际 {by_id['lessor_title']['status']}：{by_id['lessor_title']['note']}"
+    )
+
+
+def test_lessor_title_consented_sublease_passes():
+    """真授权的转租保持通过（否定直捕规则不得误伤合法授权链条）."""
+    text = (
+        "出租方（甲方）：某某贸易有限公司，经产权人书面同意对外转租。乙方：某某科技有限公司。\n"
+        "原租赁合同仍然有效。租赁期限自2026年10月1日起至2027年9月30日止。\n"
+        "月租金1万元，押二付三。争议向法院起诉。本合同适用中华人民共和国法律。双方签字并加盖公章。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["lessor_title"]["status"] == "通过", (
+        f"经产权人书面同意应通过，实际 {by_id['lessor_title']['status']}：{by_id['lessor_title']['note']}"
+    )
+
+
+# ---------- 肉饼 P3：8 条新禁语的降级链路回归 ----------
+
+def test_lease_new_forbidden_phrase_degrades_scorecard():
+    """模型 summary 含租赁新禁语（如「递增条款违法」）→ 重试后仍命中 → 降级为仅展示分数，
+    禁语不得回显（机制层已有 test_scorecard 钉死，这里锚定新词表本身）."""
+    text = (LEASE / "lease_sample.txt").read_text(encoding="utf-8")
+    items = annotate_rule_items(run_checklist(text, "lease")["items"])
+    segments = scorecard.load_scorecard_config("lease")["segments"]
+    bad_payload = json.dumps(
+        {
+            "scorecard": {
+                "total": 100,
+                "summary": "租金递增条款违法，可以放心签署。",
+                "segments": [{"key": s["key"], "score": s["weight"]} for s in segments],
+            },
+            "candidates": [],
+        },
+        ensure_ascii=False,
+    )
+    out = run_model_review(
+        text=text, items=items, policies=[], category="lease",
+        chat_fn=lambda s, u: bad_payload,  # 两轮都输出禁语
+    )
+    sc = out["scorecard"]
+    assert sc.get("degraded") is True, "二次命中禁语必须降级"
+    assert "递增条款违法" not in (sc.get("summary") or ""), "禁语不得回显"
