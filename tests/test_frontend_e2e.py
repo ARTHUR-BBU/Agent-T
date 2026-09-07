@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "fixtures" / "lease_sample.txt"
 
 # 本模块内所有用例共享一个无 Key 服务进程（审查同步完成，无需隔离状态）
-_LLM_KEY_VARS = ("ZHIPU_API_KEY", "GLM_API_KEY", "XAI_API_KEY", "GROK_API_KEY")
+_LLM_KEY_VARS = ("DEEPSEEK_API_KEY", "ZHIPU_API_KEY", "GLM_API_KEY", "XAI_API_KEY", "GROK_API_KEY")
 
 
 def _free_port() -> int:

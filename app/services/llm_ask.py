@@ -34,6 +34,24 @@ XAI_CHAT_URL = "https://api.x.ai/v1/chat/completions"
 DEFAULT_GLM_MODEL = "glm-5.2"
 DEFAULT_GROK_MODEL = "grok-2-latest"
 
+# DeepSeek（OpenAI 兼容协议）。优先级最高：GLM Coding Plan 条款限定仅官方指定
+# 工具可用套餐额度（我们的 web 服务属于「工具之外」，实测被降权/超时），
+# DeepSeek 标准计费 API 无此问题且速度快（2026-09-07 接入）
+DEEPSEEK_CHAT_URL_DEFAULT = "https://api.deepseek.com/chat/completions"
+DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
+
+
+def _deepseek_chat_url() -> str:
+    base = (os.getenv("DEEPSEEK_API_BASE") or "").strip()
+    if not base:
+        return DEEPSEEK_CHAT_URL_DEFAULT
+    base = base.rstrip("/")
+    return base if base.endswith("/chat/completions") else f"{base}/chat/completions"
+
+
+def _deepseek_key() -> Optional[str]:
+    return os.getenv("DEEPSEEK_API_KEY") or None
+
 
 class AskAuthProvider(Protocol):
     """Interface stub for future per-user OAuth credentials."""
@@ -48,7 +66,8 @@ class EnvAskAuth:
     def get_api_key(self, user_id: Optional[str] = None) -> Optional[str]:
         _ = user_id
         return (
-            os.getenv("ZHIPU_API_KEY")
+            os.getenv("DEEPSEEK_API_KEY")
+            or os.getenv("ZHIPU_API_KEY")
             or os.getenv("GLM_API_KEY")
             or os.getenv("XAI_API_KEY")
             or os.getenv("GROK_API_KEY")
@@ -148,11 +167,12 @@ def ask_about_item(
             "error": "请输入问题后再追问。",
         }
 
+    deepseek = _deepseek_key()
     zhipu = _zhipu_key()
     xai = _xai_key()
-    # Prefer Zhipu when both present; get_api_key still reports availability
+    # Prefer DeepSeek > Zhipu when multiple present; get_api_key still reports availability
     _ = user_id  # reserved for future OAuth
-    if not zhipu and not xai:
+    if not deepseek and not zhipu and not xai:
         return {
             "ok": False,
             "error": "追问暂未开通",
@@ -168,7 +188,9 @@ def ask_about_item(
     user = _build_user_prompt(q, item, contract_text)
 
     try:
-        if zhipu:
+        if deepseek:
+            raw = _chat_deepseek(deepseek, system, user)
+        elif zhipu:
             raw = _chat_zhipu(zhipu, system, user)
         else:
             raw = _chat_xai(xai, system, user)  # type: ignore[arg-type]
@@ -225,6 +247,35 @@ def _build_user_prompt(question: str, item: dict[str, Any], contract_text: str) 
 合同全文：
 {body}
 """
+
+
+def _chat_deepseek(api_key: str, system: str, user: str) -> str:
+    """DeepSeek（OpenAI 兼容 /chat/completions）。"""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": os.getenv("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL),
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.3,
+    }
+    llm_timeout = float(os.getenv("LLM_TIMEOUT_SECONDS", "180"))
+    with httpx.Client(timeout=llm_timeout) as client:
+        resp = client.post(_deepseek_chat_url(), headers=headers, json=payload)
+        if resp.status_code >= 400:
+            detail = resp.text[:300]
+            raise httpx.HTTPStatusError(
+                f"{resp.status_code} {detail}",
+                request=resp.request,
+                response=resp,
+            )
+        data = resp.json()
+    msg = data["choices"][0]["message"]
+    return (msg.get("content") or "").strip()
 
 
 def _chat_zhipu(api_key: str, system: str, user: str) -> str:

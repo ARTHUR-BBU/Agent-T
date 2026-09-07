@@ -49,9 +49,10 @@ def run_model_review(
         result["scorecard"] = scorecard.unavailable("no_rule_results")
         return result
 
+    deepseek = llm_ask._deepseek_key()
     zhipu = llm_ask._zhipu_key()
     xai = llm_ask._xai_key()
-    if not zhipu and not xai and chat_fn is None:
+    if not deepseek and not zhipu and not xai and chat_fn is None:
         result["scorecard"] = scorecard.unavailable("no_llm_key")
         result["blind_skipped_reason"] = "no_llm_key" if blind_on else None
         return result
@@ -65,7 +66,7 @@ def run_model_review(
     user = scorecard.build_user_prompt(text or "", items)
 
     try:
-        raw = _call_llm(zhipu, xai, system, user, chat_fn)
+        raw = _call_llm(zhipu, xai, system, user, chat_fn, deepseek=deepseek)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Model-review LLM error")
         result["scorecard"] = scorecard.unavailable(f"llm_error:{exc}")
@@ -78,7 +79,7 @@ def run_model_review(
     if payload is None or scorecard.check_forbidden(_scorecard_text(payload)):
         retry_system = system + "\n\n【再次提醒】上一轮输出包含禁止表述或结构错误。重新输出，严禁出现任何整体性背书/推翻规则档位的表述，只输出 JSON。"
         try:
-            raw = _call_llm(zhipu, xai, retry_system, user, chat_fn)
+            raw = _call_llm(zhipu, xai, retry_system, user, chat_fn, deepseek=deepseek)
         except Exception as exc:  # noqa: BLE001
             logger.exception("Model-review retry LLM error")
             result["scorecard"] = scorecard.unavailable(f"llm_error:{exc}")
@@ -144,9 +145,12 @@ def _scorecard_text(payload: Optional[dict[str, Any]]) -> str:
     return " ".join(parts)
 
 
-def _call_llm(zhipu: Optional[str], xai: Optional[str], system: str, user: str, chat_fn: Optional[Any]) -> str:
+def _call_llm(zhipu: Optional[str], xai: Optional[str], system: str, user: str, chat_fn: Optional[Any],
+              deepseek: Optional[str] = None) -> str:
     if chat_fn is not None:
         return chat_fn(system, user)
+    if deepseek:
+        return llm_ask._chat_deepseek(deepseek, system, user)
     if zhipu:
         return llm_ask._chat_zhipu(zhipu, system, user)
     return llm_ask._chat_xai(xai, system, user)  # type: ignore[arg-type]

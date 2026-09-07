@@ -227,3 +227,50 @@ def test_rewrite_banned_stamp_scrubbed(monkeypatch):
     rewrite = result["answer"]["改写稿"]
     assert "已无风险" not in rewrite
     assert "已合规" not in rewrite
+
+
+# ---------- DeepSeek 供应商（2026-09-07 接入，优先级最高） ----------
+
+def test_ask_without_any_key_including_deepseek_returns_not_enabled(monkeypatch):
+    for k in ("DEEPSEEK_API_KEY", "ZHIPU_API_KEY", "GLM_API_KEY", "XAI_API_KEY", "GROK_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    result = llm_ask.ask_about_item(
+        question="风险大吗？",
+        item={"id": "pay", "name": "价款", "status": "需关注", "note": "", "quote": "…"},
+        contract_text="合同全文",
+        policies=[],
+    )
+    assert result["ok"] is False
+    assert result["error"] == "追问暂未开通"
+
+
+def test_deepseek_key_reports_ask_available(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    for k in ("ZHIPU_API_KEY", "GLM_API_KEY", "XAI_API_KEY", "GROK_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
+    assert llm_ask.get_api_key() == "sk-test"
+
+
+def test_call_llm_prefers_deepseek(monkeypatch):
+    from app.services import model_review
+
+    captured = {}
+    monkeypatch.setattr(
+        llm_ask, "_chat_deepseek",
+        lambda key, system, user: (captured.update(key=key) or "{}"),
+    )
+    out = model_review._call_llm(
+        zhipu="zhipu-key", xai=None, system="s", user="u",
+        chat_fn=None, deepseek="sk-test",
+    )
+    assert out == "{}"
+    assert captured["key"] == "sk-test"
+
+
+def test_deepseek_chat_url_normalization(monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_BASE", raising=False)
+    assert llm_ask._deepseek_chat_url() == "https://api.deepseek.com/chat/completions"
+    monkeypatch.setenv("DEEPSEEK_API_BASE", "https://api.deepseek.com/v1")
+    assert llm_ask._deepseek_chat_url() == "https://api.deepseek.com/v1/chat/completions"
+    monkeypatch.setenv("DEEPSEEK_API_BASE", "https://x.example/chat/completions/")
+    assert llm_ask._deepseek_chat_url() == "https://x.example/chat/completions"
