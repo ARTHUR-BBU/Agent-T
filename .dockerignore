@@ -1,0 +1,16 @@
+# 构建镜像绝不带进去的东西（密钥第一）
+.env
+.git
+.venv
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+# 运行不需要、且可能含真实合同语料/内部文档的目录（肉饼审计 P2-1：
+# COPY . . 全仓拷贝会把 fixtures 合同样本带进公开 Space）
+fixtures/
+tests/
+docs/
+scripts/
+README.md

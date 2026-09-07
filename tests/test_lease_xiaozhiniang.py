@@ -33,7 +33,9 @@ ROOT = Path(__file__).resolve().parents[1]
 client = TestClient(app)
 
 D_SEGMENT_ITEMS = ("early_termination", "deposit", "renovation")
-TIGHTENED_MISSING = ("lessor_title", "lease_term", "governing_law", "signature")
+# 老钱裁决一（2026-09-07）：governing_law 租赁品类转 na（纯境内租赁无选法空间）
+TIGHTENED_MISSING = ("lessor_title", "lease_term", "signature")
+NA_ITEMS = ("governing_law",)
 
 
 # ---------- 内联 fixtures ----------
@@ -187,8 +189,9 @@ def test_hard_paraphrase_cap_still_holds_via_not_found():
 # ================= 2. missing_as 加严项回归 =================
 
 def test_minimal_contract_tightened_items_attention():
-    """极简合同下 4 个 missing_as=需关注 加严项必须全部落需关注
-    （lessor_title 是刻意加严：出租权限无法从文本自证）。"""
+    """极简合同下 3 个 missing_as=需关注 加严项必须全部落需关注
+    （lessor_title 是刻意加严：出租权限无法从文本自证；
+    governing_law 已转 na，不在此列——老钱裁决一）。"""
     by_id = _by_id(LEASE_MINIMAL)
     for iid in TIGHTENED_MISSING:
         assert by_id[iid]["status"] == "需关注", (
@@ -197,15 +200,24 @@ def test_minimal_contract_tightened_items_attention():
     assert by_id["lessor_title"]["note"], "加严项缺失时必须带 missing_note 说明"
 
 
+def test_minimal_contract_na_items():
+    """na 项在任何合同上都落「本类不适用」，不参与未找到/需关注计数."""
+    by_id = _by_id(LEASE_MINIMAL)
+    for iid in NA_ITEMS:
+        assert by_id[iid]["status"] == "本类不适用", (
+            f"{iid} 应本类不适用，实际 {by_id[iid]['status']}"
+        )
+
+
 def test_minimal_contract_default_items_not_found():
     """未配置 missing_as 的其余项按默认档位落「未找到」，不冒充加严项。"""
     statuses = {it["id"]: it["status"] for it in run_checklist(LEASE_MINIMAL, "lease")["items"]}
     for iid, status in statuses.items():
-        if iid in TIGHTENED_MISSING:
+        if iid in TIGHTENED_MISSING or iid in NA_ITEMS:
             continue
         assert status == "未找到", f"{iid} 在极简合同下应默认「未找到」，实际 {status}"
-    assert sum(1 for s in statuses.values() if s == "需关注") == 4, (
-        "需关注项必须恰好是 4 个加严项，不得多（误报）也不得少（加严失效）"
+    assert sum(1 for s in statuses.values() if s == "需关注") == 3, (
+        "需关注项必须恰好是 3 个加严项，不得多（误报）也不得少（加严失效）"
     )
 
 
@@ -390,10 +402,12 @@ def test_lease_scorecard_d_weight_20_and_no_na_segment():
 
 
 def test_lease_all_items_mapped_to_segments():
-    """老钱 L-1：每个 item 必须落到已定义分段（load 时已 fail-fast，这里再钉一层语义）。"""
+    """老钱 L-1：每个 item 必须落到已定义分段（load 时已 fail-fast，这里再钉一层语义）。
+    governing_law 自老钱裁决一（2026-09-07）起为品类内 NA 项，其余仍全段适用。"""
     cfg_items = run_checklist(LEASE_BORING, "lease")["items"]
     valid = {"A", "B", "C", "D", "E", "F", "G"}
     assert len(cfg_items) == 14
     for it in cfg_items:
         assert it["segment"] in valid, f"{it['id']} 的 segment {it['segment']!r} 不在七段内"
-    assert not any(it["category_na"] for it in cfg_items), "租赁无 NA 项"
+    na_ids = {it["id"] for it in cfg_items if it["category_na"]}
+    assert na_ids == {"governing_law"}, f"租赁 NA 项应恰好是 governing_law，实际 {na_ids}"

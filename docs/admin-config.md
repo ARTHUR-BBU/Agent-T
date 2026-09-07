@@ -120,6 +120,7 @@ NDA 红线（风险金标 / 对抗样例须为「需关注」，不得「通过�
 | 变量 | 默认 | 说明 |
 |------|------|------|
 | `BLIND_SPOT_ENABLED` | `true` | 关（`false`/`0`/`no`）时无补盲候选、界面零「补盲」文案；**评分卡照常出分** |
+| `BASIC_AUTH_USERNAME` / `BASIC_AUTH_PASSWORD` | （空） | 公网部署的整站访问控制；两项**必须同时配置**（只配一半会拒绝启动），不配置则关闭。部署指引见 `docs/deploy-hf-spaces.md` |
 | 追问用 LLM Key | （空） | 无 Key 时评分与补盲都跳过（`reason=no_llm_key`），清单规则仍照常 |
 
 实现位置：`app/services/model_review.py`（审查流水线在 `run_checklist` 之后**最多一次批量 LLM 调用**，同时产出评分卡与补盲候选）。候选挂在审查结果的 `blind_candidates`，**只加分不减分**，不改规则条目的 `status`。
