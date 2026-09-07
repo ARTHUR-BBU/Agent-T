@@ -75,6 +75,15 @@ pip install pytest    # 或 pip install -e ".[dev]"；pytest 不在 requirements
 pytest -q
 ```
 
+前端 E2E（`tests/test_frontend_e2e.py`，Playwright 真实浏览器，无 Key 模式）：
+
+```bash
+pip install playwright
+playwright install chromium
+```
+
+未安装 Playwright 时该模块整体 skip，不影响其余用例；只装了包但没跑 `playwright install chromium` 则会在 fixture 处报错（而非 skip），两条安装命令都要执行。
+
 采购金标：上述 7 项须为「需关注」；「管辖与争议」可通过。
 
 ## API 速查
@@ -82,6 +91,11 @@ pytest -q
 - `POST /api/upload` — 文件 + `category`（`procurement` \| `nda` \| `lease`）  
 - `GET /api/review/{id}` — 审查结果  
 - `GET /api/review/{id}/report` — 导出审查报告（docx，M4）  
+
+## 部署
+
+公网部署（Hugging Face Spaces 免费，含 Basic Auth 访问控制）见 [docs/deploy-hf-spaces.md](docs/deploy-hf-spaces.md)；
+`BASIC_AUTH_USERNAME` / `BASIC_AUTH_PASSWORD` 同时配置即启用整站认证（不配置则关闭）。
 - `POST /api/ask` — `{ review_id, item_id, question }`（仅需关注）  
 - `GET /health`
 
