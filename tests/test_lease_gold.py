@@ -75,8 +75,9 @@ def test_early_termination_binding_gold():
     by_id = _items("lease_early_term.txt")
     assert by_id["early_termination"]["status"] == "需关注", "剩余租期全额违约金必须需关注"
     # 单风险隔离：其余风险项保持通过，证明封顶确实由 early_termination 触发
-    for iid in ("deposit", "maintenance", "rent_payment", "governing_law", "signature"):
+    for iid in ("deposit", "maintenance", "rent_payment", "signature"):
         assert by_id[iid]["status"] == "通过", f"{iid} 应通过，实际 {by_id[iid]['status']}"
+    assert by_id["governing_law"]["status"] == "本类不适用"
     assert _capped_total("lease_early_term.txt") <= 74
 
 
@@ -100,12 +101,15 @@ def test_maintenance_inverted_gold():
     assert _capped_total("lease_maintenance.txt") <= 89
 
 
-# ---------- 断言 5：同构回归（管辖有/适用法律无 + 仅盖章无签字） ----------
+# ---------- 断言 5：同构回归（管辖有/适用法律 na + 仅盖章无签字） ----------
 
 def test_governing_law_and_signature_gold():
     by_id = _items("lease_sample.txt")
     assert by_id["jurisdiction"]["status"] == "通过", "有管辖条款应通过"
-    assert by_id["governing_law"]["status"] == "需关注", "仅有管辖无适用法律必须需关注"
+    # 老钱裁决一（2026-09-07）：纯境内租赁无选法空间，适用法律转本类不适用
+    assert by_id["governing_law"]["status"] == "本类不适用", (
+        f"governing_law 应本类不适用，实际 {by_id['governing_law']['status']}"
+    )
     assert by_id["signature"]["status"] == "需关注", "仅盖章无签字必须需关注"
 
 
@@ -115,7 +119,7 @@ def test_lease_four_risk_rules_flag():
     by_id = _items("lease_four_risk.txt")
     for iid in ("early_termination", "deposit", "renovation", "maintenance"):
         assert by_id[iid]["status"] == "需关注", f"{iid} 漏报"
-    assert by_id["governing_law"]["status"] == "需关注", "缺适用法律必须需关注"
+    assert by_id["governing_law"]["status"] == "本类不适用"
     assert by_id["signature"]["status"] == "需关注", "仅盖章必须需关注"
     # D 段三项全挂 + E/F/G 失分
     core_flagged = [
@@ -332,6 +336,142 @@ def test_lessor_title_consented_sublease_passes():
     by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
     assert by_id["lessor_title"]["status"] == "通过", (
         f"经产权人书面同意应通过，实际 {by_id['lessor_title']['status']}：{by_id['lessor_title']['note']}"
+    )
+
+
+# ---------- 回放校准（15 份真实合同，2026-09-07）：词表术语缺口修复 ----------
+
+def test_deposit_refuse_return_margin_flagged():
+    """回放 07 漏报修复：「拖欠租金达壹个月…有权拒绝返还保证金」必须需关注."""
+    text = (
+        "出租方（甲方）：某某置业有限公司。承租方（乙方）：某某科技有限公司。\n"
+        "租赁期限自2026年10月1日起至2027年9月30日止。月租金1万元，保证金2万元。\n"
+        "乙方如拖欠租金达壹个月，则甲方有权单方终止合同和收回商铺，并有权拒绝返还保证金。\n"
+        "争议向法院起诉。本合同适用中华人民共和国法律。双方签字并加盖公章。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["deposit"]["status"] == "需关注", (
+        f"拒绝返还保证金必须需关注，实际 {by_id['deposit']['status']}"
+    )
+
+
+def test_deposit_confiscate_earnest_margin_flagged():
+    """回放 11 漏报修复：「没收壹个月租金的履约保证金」必须需关注."""
+    text = (
+        "出租方（甲方）：某某置业有限公司。承租方（乙方）：某某科技有限公司。\n"
+        "履约保证金按壹个月租金标准收取。\n"
+        "乙方无故拖欠租金1个月以上的，甲方有权单方面解除合同，收回房屋，"
+        "没收壹个月租金的履约保证金，并追收所欠费用。\n"
+        "争议向法院起诉。本合同适用中华人民共和国法律。双方签字并加盖公章。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["deposit"]["status"] == "需关注", (
+        f"没收履约保证金必须需关注，实际 {by_id['deposit']['status']}"
+    )
+
+
+def test_earnest_margin_benign_refund_passes():
+    """防误伤：履约保证金正常退还约定必须保持通过."""
+    text = (
+        "出租方（甲方）：某某置业有限公司。承租方（乙方）：某某科技有限公司。\n"
+        "履约保证金按壹个月租金标准收取，甲方收到保证金后向乙方出具收据。\n"
+        "租赁期满，经甲方验收无损坏且无欠款，甲方在乙方办理退房手续时无息退还履约保证金。\n"
+        "争议向法院起诉。本合同适用中华人民共和国法律。双方签字并加盖公章。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["deposit"]["status"] == "通过", (
+        f"保证金正常退还不得误杀，实际 {by_id['deposit']['status']}"
+    )
+
+
+def test_protective_no_refuse_refund_passes():
+    """防误伤（肉饼复审 P2-1）：「甲方不得拒绝返还保证金」是承租方保护条款，
+    不得被保证金直捕模式误伤（与「有权拒绝返还→需关注」成对）."""
+    text = (
+        "出租方（甲方）：某某置业有限公司。承租方（乙方）：某某科技有限公司。\n"
+        "押金2万元。租赁期满，甲方不得拒绝返还保证金，不得没收押金。\n"
+        "争议向法院起诉。本合同适用中华人民共和国法律。双方签字并加盖公章。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["deposit"]["status"] == "通过", (
+        f"保护性「不得拒绝返还」不得误杀，实际 {by_id['deposit']['status']}"
+    )
+
+
+def test_rent_payment_standard_vocab_not_notfound():
+    """回放 08/10 误判修复：「租金标准/支付时间/交纳期限」是有效支付约定，不得未找到."""
+    text = (
+        "出租方（甲方）：某某置业有限公司。承租方（乙方）：某某科技有限公司。\n"
+        "第三条 租金及支付方式。租金标准：每月人民币5000元。\n"
+        "支付时间：乙方应于每期首日前5日支付租金至甲方指定账户。\n"
+        "争议向法院起诉。本合同适用中华人民共和国法律。双方签字并加盖公章。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["rent_payment"]["status"] == "通过", (
+        f"标准支付约定词应通过，实际 {by_id['rent_payment']['status']}"
+    )
+
+
+def test_signature_sign_slash_stamp_passes():
+    """回放 01 误报修复：示范文本「甲方（签名/盖章）」——签名=签署要件等价词，不得报「仅盖章」."""
+    text = (
+        "出租方（甲方）：某某置业有限公司。承租方（乙方）：某某科技有限公司。\n"
+        "租赁期限自2026年10月1日起至2027年9月30日止。月租金1万元，押二付三。\n"
+        "本合同自甲、乙双方签名（盖章）之日起成立并生效。\n"
+        "甲方（签名/盖章）：                乙方（签名/盖章）：\n"
+        "争议向法院起诉。本合同适用中华人民共和国法律。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["signature"]["status"] == "通过", (
+        f"签名/盖章应通过，实际 {by_id['signature']['status']}：{by_id['signature']['note']}"
+    )
+
+
+def test_signature_stamp_only_still_flagged():
+    """回归：仅有盖章、无签字/签名要件时仍必须需关注（F2 修复不得放水）."""
+    text = (
+        "出租方（甲方）：某某置业有限公司。承租方（乙方）：某某科技有限公司。\n"
+        "租赁期限自2026年10月1日起至2027年9月30日止。月租金1万元，押二付三。\n"
+        "本合同经双方盖章后生效。甲方（盖章）：某某置业有限公司 乙方（盖章）：某某科技有限公司。\n"
+        "争议向法院起诉。本合同适用中华人民共和国法律。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["signature"]["status"] == "需关注", (
+        f"仅盖章必须需关注，实际 {by_id['signature']['status']}"
+    )
+
+
+# ---------- 老钱裁决（2026-09-07）：governing_law 转 na + 指印等价 ----------
+
+def test_governing_law_na_regardless_of_content():
+    """纯境内租赁无选法空间（涉外民事关系法律适用法第3条）：适用法律项
+    无论合同写不写都落「本类不适用」，不再是常驻噪音（15 份回放 14/15 误报）。"""
+    for text in (
+        # 写了适用法律的
+        "出租方（甲方）：某某置业有限公司。承租方（乙方）：某某科技有限公司。\n"
+        "本合同适用中华人民共和国法律。双方签字并加盖公章。",
+        # 没写适用法律的
+        "出租方（甲方）：某某置业有限公司。承租方（乙方）：某某科技有限公司。\n"
+        "争议向房屋所在地人民法院起诉。双方签字并加盖公章。",
+    ):
+        by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+        assert by_id["governing_law"]["status"] == "本类不适用", (
+            f"governing_law 应恒为本类不适用，实际 {by_id['governing_law']['status']}"
+        )
+
+
+def test_signature_fingerprint_equivalent():
+    """民法典490条：签名、盖章或按指印三选一等价（老钱裁决二补「按指印/捺印」）."""
+    text = (
+        "出租方（甲方）：张三。承租方（乙方）：李四。\n"
+        "租赁期限自2026年10月1日起至2027年9月30日止。月租金2千元，押一付三。\n"
+        "本合同自双方签字并按指印之日起生效。\n"
+        "甲方（签字按指印）：            乙方（签字）：\n"
+        "争议向法院起诉。本合同适用中华人民共和国法律。"
+    )
+    by_id = {i["id"]: i for i in run_checklist(text, "lease")["items"]}
+    assert by_id["signature"]["status"] == "通过", (
+        f"签字+按指印应通过，实际 {by_id['signature']['status']}：{by_id['signature']['note']}"
     )
 
 

@@ -6,3 +6,11 @@ __pycache__/
 .mypy_cache/
 .env
 .DS_Store
+
+# 商业文库合同语料：版权风险仅本地保留（肉饼审计 2026-09-07 中位方案）
+# 入库仅保留：MANIFEST + 01/02 官方示范文本 + 自写样例
+fixtures/replay/*
+!fixtures/replay/MANIFEST.md
+!fixtures/replay/lease_replay_01.txt
+!fixtures/replay/lease_replay_02.txt
+!fixtures/replay/lease_replay_synthetic.txt
