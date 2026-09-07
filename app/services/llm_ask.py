@@ -241,7 +241,11 @@ def _chat_zhipu(api_key: str, system: str, user: str) -> str:
         "temperature": 0.3,
     }
     url = _zhipu_chat_url()
-    with httpx.Client(timeout=90.0) as client:
+    # glm-5.2 对大合同评分实测可超 90s（6000 字单轮已 31s，12000 字+清单提示更久），
+    # 写死 90s 会把整个同步上传拖到超时降级（2026-09-07 线上事故）；
+    # 超时后走环境变量可调，服务器容器配 LLM_TIMEOUT_SECONDS=240
+    llm_timeout = float(os.getenv("LLM_TIMEOUT_SECONDS", "180"))
+    with httpx.Client(timeout=llm_timeout) as client:
         resp = client.post(url, headers=headers, json=payload)
         if resp.status_code >= 400:
             detail = resp.text[:300]
