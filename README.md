@@ -94,7 +94,7 @@ playwright install chromium
 
 ## 部署
 
-公网部署（Hugging Face Spaces 免费，含 Basic Auth 访问控制）见 [docs/deploy-hf-spaces.md](docs/deploy-hf-spaces.md)；
+公网部署（国内云服务器 Docker，含 Basic Auth 访问控制）见 [docs/deploy-server.md](docs/deploy-server.md)；
 `BASIC_AUTH_USERNAME` / `BASIC_AUTH_PASSWORD` 同时配置即启用整站认证（不配置则关闭）。
 - `POST /api/ask` — `{ review_id, item_id, question }`（仅需关注）  
 - `GET /health`
