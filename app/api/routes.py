@@ -47,6 +47,7 @@ def categories():
 async def upload(
     file: UploadFile = File(...),
     category: str = Form("procurement"),
+    force: bool = Form(False),
 ):
     # 品类必须显式合法（外部审计：未知品类此前会静默回退采购清单）
     valid_categories = {c["id"] for c in list_categories()}
@@ -79,6 +80,11 @@ async def upload(
             precheck_service.run_precheck, contract_text, category
         )
         branch = precheck_service.decide_branch(outcome, category)
+        # force（小智娘门禁 P1）：用户在确认弹窗里已拍板（切换或坚持原品类）。
+        # 不带 force 重传会重跑预审——LLM 持续不同意时用户永远开不了审（死循环）。
+        # force 只跳过 confirm 分支，预审结论仍记录为 suspect 知情提示。
+        if branch["action"] != "proceed" and force and outcome.result is not None:
+            branch = {"action": "proceed", "suspect": True}
         if branch["action"] != "proceed":
             r = outcome.result
             return UploadResponse(

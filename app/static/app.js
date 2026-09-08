@@ -123,6 +123,7 @@
         "用哪套清单审查，决定提示是否切题。";
       $("btn-precheck-switch").textContent = `切换为${categoryLabel(data.suggested_category)}`;
       $("btn-precheck-switch").classList.remove("hidden");
+      $("btn-precheck-keep").textContent = "按原类型继续";
     } else {
       // 支持列表由后端数据渲染（肉饼门禁 P3-2：硬编码在未来加品类时必漂移）
       const supported = (data.supported_categories || [])
@@ -134,12 +135,14 @@
         "因此本次未生成审查报告。未审查不等于没有风险，" +
         "签署前请自行仔细核对，必要时咨询专业律师。";
       $("btn-precheck-switch").classList.add("hidden");
+      // 小智娘门禁 P3-2：无路可走时「按原类型继续」是误导，改文案只收起弹窗
+      $("btn-precheck-keep").textContent = "重新选择类型";
     }
     box.dataset.suggested = data.suggested_category || "";
     box.classList.remove("hidden");
   }
 
-  async function upload(categoryOverride) {
+  async function upload(categoryOverride, force = false) {
     const fileInput = $("file");
     const err = $("upload-error");
     err.classList.add("hidden");
@@ -154,6 +157,9 @@
     const fd = new FormData();
     fd.append("file", fileInput.files[0]);
     fd.append("category", categoryOverride || $("category").value);
+    // 确认弹窗里的拍板必须带 force（小智娘门禁 P1）：
+    // 否则重传会重跑预审，LLM 持续不同意 = 用户永远开不了审
+    if (force) fd.append("force", "1");
     try {
       const res = await fetch("/api/upload", { method: "POST", body: fd });
       const data = await res.json();
@@ -590,13 +596,14 @@
     const sug = $("precheck-confirm").dataset.suggested;
     if (sug) {
       $("category").value = sug;
-      upload(sug);
+      upload(sug, true); // 用户已拍板，带 force 防预审重跑死循环
     }
   });
   $("btn-precheck-keep").addEventListener("click", () => {
     const sug = $("precheck-confirm").dataset.suggested;
     hidePrecheckConfirm();
-    if (sug) upload(); // 坚持按原品类审：用户已确认，直接继续
+    if (sug) upload(undefined, true); // 坚持按原品类审：已确认，force 继续
+    // 无 sug（不支持类）：仅收起弹窗，用户回表单重新选择类型
   });
   $("btn-ask").addEventListener("click", sendAsk);
   $("btn-back-upload").addEventListener("click", () => show("upload"));

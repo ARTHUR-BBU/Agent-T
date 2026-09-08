@@ -65,9 +65,26 @@ def test_missing_confidence_defaults_low_and_extra_fields_stripped():
 
 def test_suggested_outside_whitelist_forced_null_unsupported():
     payload = GOOD | {"suggested_category": "labor"}
-    outcome = run_precheck("合同正文", "lease", chat_fn=_chat_returns(json.dumps(payload), []))
+    calls: list = []
+    outcome = run_precheck("合同正文", "lease", chat_fn=_chat_returns(json.dumps(payload), calls))
     assert outcome.result.suggested_category is None
     assert outcome.result.is_supported is False
+    assert len(calls) == 2, "自洽性矛盾（supported 却给不出合法建议）必须先重试一次"
+
+
+def test_inconsistent_then_consistent_succeeds_on_retry():
+    """P2-2（小智娘门禁）：首轮自洽性矛盾走重试，次轮正常则成功。"""
+    calls: list = []
+
+    def chat(system: str, user: str) -> str:
+        calls.append((system, user))
+        bad = GOOD | {"suggested_category": "labor"}
+        return json.dumps(bad if len(calls) == 1 else GOOD, ensure_ascii=False)
+
+    outcome = run_precheck("合同正文", "lease", chat_fn=chat)
+    assert len(calls) == 2
+    assert outcome.performed and outcome.result.is_supported is True
+    assert outcome.result.suggested_category == "lease"
 
 
 def test_supported_without_valid_suggestion_treated_unsupported():

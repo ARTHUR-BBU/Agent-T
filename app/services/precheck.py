@@ -53,7 +53,8 @@ class PrecheckResult(BaseModel):
 
 class PrecheckOutcome(BaseModel):
     performed: bool = False
-    skip_reason: Optional[str] = None  # no_llm_key / llm_error / parse_failed / disabled
+    # skip_reason: no_llm_key / llm_error / parse_failed / disabled / busy
+    skip_reason: Optional[str] = None
     result: Optional[PrecheckResult] = None
 
 
@@ -90,7 +91,7 @@ def _default_chat_fn() -> Optional[ChatFn]:
     return None
 
 
-def _parse_payload(raw: str) -> Optional[PrecheckResult]:
+def _parse_payload(raw: str, inconsistent_as_unsupported: bool = False) -> Optional[PrecheckResult]:
     text = (raw or "").strip()
     fence = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", text)
     if fence:
@@ -106,11 +107,16 @@ def _parse_payload(raw: str) -> Optional[PrecheckResult]:
     if confidence not in {"high", "medium", "low"}:
         confidence = "low"
 
-    # 白名单校验（注入逃逸防线）：白名单外一律强制 None + 不支持
+    # 白名单校验（注入逃逸防线）：白名单外一律强制 None + 不支持。
+    # 自洽性防线（小智娘门禁 P2-2）：is_supported=true 却给不出合法 suggested
+    # 属于自相矛盾输出——首轮视为解析失败走重试；重试仍矛盾则按不支持处理
+    # （保守死路优于开错尺子）
     supported = supported_category_ids()
     suggested_raw = obj.get("suggested_category")
     suggested = str(suggested_raw).strip() if suggested_raw else None
     if suggested not in supported:
+        if bool(obj.get("is_supported")) and not inconsistent_as_unsupported:
+            return None
         suggested = None
     is_supported = bool(obj.get("is_supported")) and suggested is not None
 
@@ -168,7 +174,9 @@ def run_precheck(
                 logger.exception("Precheck LLM call failed (attempt %s)", attempt)
                 return PrecheckOutcome(skip_reason="llm_error")
 
-            result = _parse_payload(raw)
+            result = _parse_payload(
+                raw, inconsistent_as_unsupported=(attempt == 2)
+            )
             if result is not None:
                 return PrecheckOutcome(performed=True, result=result)
             logger.warning("Precheck payload parse failed (attempt %s)", attempt)

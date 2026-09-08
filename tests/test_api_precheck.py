@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services.precheck import PrecheckOutcome, PrecheckResult
-from tests.helpers import upload_and_wait
+from tests.helpers import upload_and_wait, wait_review_done
 
 ROOT = Path(__file__).resolve().parents[1]
 LEASE_FIXTURE = ROOT / "fixtures" / "lease_sample.txt"
@@ -129,6 +129,54 @@ def test_no_key_degrades_to_normal_upload(monkeypatch):
     )
     review = upload_and_wait(client, str(PROC_FIXTURE), category="procurement")
     assert review["status"] == "done"
+
+
+# ---------- force（小智娘门禁 P1：确认弹窗防死循环） ----------
+
+def test_force_skips_confirm_and_proceeds_with_suspect(monkeypatch):
+    """用户拍板后带 force：不再被预审拦，但预审结论记为 suspect 知情提示。"""
+    _enable(monkeypatch)
+    _mock_precheck(
+        monkeypatch,
+        detected_type="房屋租赁合同",
+        is_supported=True,
+        suggested_category="lease",
+        confidence="high",
+    )
+    r = client.post(
+        "/api/upload",
+        files={"file": ("l.txt", LEASE_FIXTURE.read_bytes(), "text/plain")},
+        data={"category": "procurement", "force": "1"},
+    )
+    body = r.json()
+    assert body["status"] == "uploaded", "force 必须跳过 confirm 分支"
+    assert body["review_id"]
+    review = wait_review_done(client, body["review_id"])
+    assert review["status"] == "done"
+    assert review["precheck"] is not None
+    assert review["precheck"]["suspect"] is True
+    assert review["precheck"]["detected_type"] == "房屋租赁合同"
+    # 档位仍 100% 出自规则
+    attention = [i for i in review["items"] if i["status"] == "需关注"]
+    assert all(i.get("tag_source") == "rule" for i in attention)
+
+
+def test_no_force_still_confirms(monkeypatch):
+    """不带 force 的重传仍走 confirm（force 只由确认弹窗触发）。"""
+    _enable(monkeypatch)
+    _mock_precheck(
+        monkeypatch,
+        detected_type="房屋租赁合同",
+        is_supported=True,
+        suggested_category="lease",
+        confidence="high",
+    )
+    r = client.post(
+        "/api/upload",
+        files={"file": ("l.txt", LEASE_FIXTURE.read_bytes(), "text/plain")},
+        data={"category": "procurement"},
+    )
+    assert r.json()["status"] == "category_confirm"
 
 
 # ---------- suspect 非阻断路径 ----------
