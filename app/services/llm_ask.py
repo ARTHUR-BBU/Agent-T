@@ -38,7 +38,7 @@ DEFAULT_GROK_MODEL = "grok-2-latest"
 # 工具可用套餐额度（我们的 web 服务属于「工具之外」，实测被降权/超时），
 # DeepSeek 标准计费 API 无此问题且速度快（2026-09-07 接入）
 DEEPSEEK_CHAT_URL_DEFAULT = "https://api.deepseek.com/chat/completions"
-DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
+DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
 
 
 def _deepseek_chat_url() -> str:
@@ -125,6 +125,10 @@ def _normalize_question(question: str) -> str:
     return (question or "").strip()
 
 
+# 追问长度上限（外部审计：无上限的长问题直接放大模型费用）
+MAX_QUESTION_CHARS = 500
+
+
 def _scrub_banned_echo(text: str) -> str:
     """Remove inducement rubber-stamp phrases from model output."""
     if not text:
@@ -166,6 +170,11 @@ def ask_about_item(
             "ok": False,
             "error": "请输入问题后再追问。",
         }
+    if len(q) > MAX_QUESTION_CHARS:
+        return {
+            "ok": False,
+            "error": f"问题过长（上限 {MAX_QUESTION_CHARS} 字），请精简后再问。",
+        }
 
     deepseek = _deepseek_key()
     zhipu = _zhipu_key()
@@ -195,9 +204,10 @@ def ask_about_item(
         else:
             raw = _chat_xai(xai, system, user)  # type: ignore[arg-type]
     except Exception as exc:  # noqa: BLE001
+        # 异常详情只进服务端日志，客户端给固定话术（外部审计：exc 可能含
+        # 供应商端点/网络拓扑等内部信息，拼进用户可见错误属信息泄露）
         logger.exception("Ask LLM API error")
-        provider = "智能解释"
-        return {"ok": False, "error": f"{provider} 调用失败: {exc}"}
+        return {"ok": False, "error": "智能解释服务暂时不可用，请稍后重试"}
 
     parsed = _parse_structured(raw)
     if parsed and _is_rubber_stamp(parsed):
@@ -236,7 +246,10 @@ def _build_system_prompt(policies: list[str]) -> str:
 
 
 def _build_user_prompt(question: str, item: dict[str, Any], contract_text: str) -> str:
-    body = contract_text if len(contract_text) <= 12000 else contract_text[:12000] + "\n…(截断)"
+    # 与评分卡同向的头尾采样（小智娘门禁 P3-7：旧版纯头部 12000 截断不一致）
+    from app.services.scorecard import clip_contract_text
+
+    body = clip_contract_text(contract_text)
     return f"""清单项：{item.get('name')}（id={item.get('id')}）
 规则引擎结论：{item.get('status')}
 规则备注：{item.get('note')}

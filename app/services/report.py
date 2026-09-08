@@ -139,7 +139,8 @@ def _attention_table(doc: Any, row: dict[str, Any]) -> None:
         if it.get("status") in (_ATTENTION, _NOT_FOUND) or it.get("status") not in known
     ]
     if not hard:
-        doc.add_paragraph("无——全部适用项均通过。")
+        # 措辞降调（外部审计：关键词初筛系统不应用绝对化表述，防误读为法律结论）
+        doc.add_paragraph("无——规则初筛未命中风险项，请以人工复核为准。")
         return
     table = doc.add_table(rows=1, cols=3)
     table.style = "Table Grid"

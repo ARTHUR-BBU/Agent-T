@@ -547,3 +547,6 @@ mark.kw,
   font: var(--type-caption);
   color: var(--color-text-tertiary);
 }
+
+/* 上传页隐私说明（外部审计 P1：原文发送至第三方模型须明示） */
+.privacy-note { font-size: 12px; color: #8a8aa0; margin-top: 10px; line-height: 1.6; }

@@ -3,18 +3,25 @@
 # 2. 不装 docling（torch 系依赖 2G+，轻量服务器扛不住）：
 #    extract.py 兜底链保证 .docx→python-docx、.pdf→pypdf 照常解析，
 #    仅扫描版 PDF（无文本层）会提示改传文本
-# 运行：docker run -p 8080:8080 -e PORT=8080 -e BASIC_AUTH_USERNAME=... -e BASIC_AUTH_PASSWORD=... -e ZHIPU_API_KEY=...
+# 3. 非 root 运行（外部审计 P3：最小权限）
+# 运行：docker run -p 8080:8080 -e PORT=8080 -e BASIC_AUTH_USERNAME=... -e BASIC_AUTH_PASSWORD=... -e DEEPSEEK_API_KEY=...
 FROM python:3.12-slim
+
+RUN useradd --create-home --uid 1000 appuser
 
 WORKDIR /app
 
-COPY requirements.txt ./
+# 依赖用 lock 文件（requirements-lock.txt，自线上验证环境冻结）——
+# 审计 P3：开放版本范围会导致服务器重建不可复现
+COPY requirements.txt requirements-lock.txt ./
 RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ --upgrade pip && \
     pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ \
-        -r requirements.txt pypdf==6.17.0
+        -r requirements-lock.txt
 
-COPY app ./app
-COPY config ./config
+COPY --chown=appuser:appuser app ./app
+COPY --chown=appuser:appuser config ./config
+
+USER appuser
 
 ENV PORT=8080
 EXPOSE 8080

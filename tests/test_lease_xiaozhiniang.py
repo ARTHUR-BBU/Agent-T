@@ -23,6 +23,7 @@ from docx import Document
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.helpers import wait_review_done
 from app.services import llm_ask, scorecard
 from app.services.blind_spot import annotate_rule_items
 from app.services.checklist import run_checklist
@@ -333,7 +334,7 @@ def test_api_upload_lease_review_report():
     assert r.status_code == 200
     rid = r.json()["review_id"]
 
-    body = client.get(f"/api/review/{rid}").json()
+    body = wait_review_done(client, rid)
     assert body["status"] == "done"
     assert body["category"] == "lease"
     assert body["category_label"] == "租赁合同", "报告封面/列表品类名必须来自 checklist 配置"
@@ -378,7 +379,7 @@ def test_api_lease_with_mocked_llm_scorecard(monkeypatch):
     monkeypatch.setattr(pipeline, "run_model_review", fake_review)
     files = {"file": ("lease_sample.txt", (ROOT / "fixtures" / "lease_sample.txt").read_bytes(), "text/plain")}
     rid = client.post("/api/upload", files=files, data={"category": "lease"}).json()["review_id"]
-    body = client.get(f"/api/review/{rid}").json()
+    body = wait_review_done(client, rid)
 
     assert body["scorecard"]["available"] is True
     assert body["scorecard"]["total"] == 68

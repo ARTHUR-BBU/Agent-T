@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from app.graph import pipeline as pipeline_module
 from app.main import app
+from tests.helpers import wait_review_done
 from app.services import llm_ask, scorecard
 from app.services.blind_spot import annotate_rule_items
 from app.services.checklist import run_checklist
@@ -82,7 +83,7 @@ def test_api_review_scorecard_structure_complete(monkeypatch):
     rid = client.post("/api/upload", files=files, data={"category": "procurement"}).json()[
         "review_id"
     ]
-    body = client.get(f"/api/review/{rid}").json()
+    body = wait_review_done(client, rid)
     assert body["status"] == "done"
 
     sc = body["scorecard"]
@@ -122,7 +123,7 @@ def test_api_scorecard_keys_absent_in_llm_response_defaults_safe(monkeypatch):
     rid = client.post("/api/upload", files=files, data={"category": "procurement"}).json()[
         "review_id"
     ]
-    body = client.get(f"/api/review/{rid}").json()
+    body = wait_review_done(client, rid)
     sc = body["scorecard"]
     assert sc["total"] == 80
     assert sc["tier"] is None  # ScorecardInfo 默认值兜底

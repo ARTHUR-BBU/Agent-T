@@ -37,67 +37,79 @@ def _free_port() -> int:
 
 @pytest.fixture(scope="module")
 def base_url():
-    """拉起无 Key 模式的 uvicorn 子进程（评审行为确定：评分未开通、追问未开通）。"""
-    port = _free_port()
+    """拉起无 Key 模式的 uvicorn 子进程（评审行为确定：评分未开通、追问未开通）。
+    全量回归高负载下偶发启动抖动：失败自动换端口重试（最多 3 次）。"""
     env = {k: v for k, v in os.environ.items() if k not in _LLM_KEY_VARS}
     env["PYTHONPATH"] = str(ROOT)
     env["PYTHONIOENCODING"] = "utf-8"
     env["BLIND_SPOT_ENABLED"] = "true"
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port),
-         "--log-level", "warning"],
-        cwd=str(ROOT), env=env,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
-    url = f"http://127.0.0.1:{port}"
-    # stderr 落临时文件：起不来时留诊断信息（小智娘 P2：DEVNULL 会让失败零线索）
-    log_path = Path(tempfile.gettempdir()) / f"e2e_uvicorn_{port}.log"
-    with log_path.open("w", encoding="utf-8") as log_file:
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port),
-             "--log-level", "warning"],
-            cwd=str(ROOT), env=env,
-            stdout=subprocess.DEVNULL, stderr=log_file,
-        )
-        # 轮询 /health 就绪（uvicorn 启动约 1-2s）
-        import urllib.request
-        deadline = time.time() + 30
-        while time.time() < deadline:
-            try:
-                with urllib.request.urlopen(f"{url}/health", timeout=2) as r:
-                    if r.status == 200:
-                        break
-            except OSError:
-                time.sleep(0.3)
-        else:
-            proc.terminate()
-            pytest.fail(
-                f"E2E 服务进程 30s 内未就绪，uvicorn 日志尾部：\n{log_path.read_text(encoding='utf-8', errors='replace')[-800:]}"
+    import urllib.request
+
+    url = proc = None
+    last_err = ""
+    for attempt in range(3):
+        port = _free_port()
+        url = f"http://127.0.0.1:{port}"
+        # stderr 落临时文件：起不来时留诊断信息（小智娘 P2：DEVNULL 会让失败零线索）
+        log_path = Path(tempfile.gettempdir()) / f"e2e_uvicorn_{port}.log"
+        with log_path.open("w", encoding="utf-8") as log_file:
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "uvicorn", "app.main:app", "--port", str(port),
+                 "--log-level", "warning"],
+                cwd=str(ROOT), env=env,
+                stdout=subprocess.DEVNULL, stderr=log_file,
             )
-        # Key 混入探针（肉饼 P2）：白名单剔除若静默失效，服务会带真实 Key 跑 LLM，
-        # 金标断言与确定性全部作废——这里显式 fail 而不是让用例 flaky
-        import httpx
-        probe = httpx.post(
-            f"{url}/api/upload",
-            files={"file": ("probe.txt", "押金不予退还".encode("utf-8"), "text/plain")},
-            data={"category": "lease"}, timeout=60,
+            # 轮询 /health 就绪（uvicorn 启动约 1-2s）
+            deadline = time.time() + 45
+            ready = False
+            while time.time() < deadline:
+                try:
+                    with urllib.request.urlopen(f"{url}/health", timeout=2) as r:
+                        if r.status == 200:
+                            ready = True
+                            break
+                except OSError:
+                    time.sleep(0.3)
+        if ready:
+            break
+        proc.terminate()
+        proc.wait(timeout=5)
+        last_err = log_path.read_text(encoding="utf-8", errors="replace")[-500:]
+        log_path.unlink(missing_ok=True)
+    else:
+        pytest.fail(
+            f"E2E 服务进程 3 次尝试均未就绪，最后一次 uvicorn 日志尾部：\n{last_err}"
         )
-        try:
-            probe_rid = probe.json()["review_id"]
+    # Key 混入探针（肉饼 P2）：白名单剔除若静默失效，服务会带真实 Key 跑 LLM，
+    # 金标断言与确定性全部作废——这里显式 fail 而不是让用例 flaky
+    import httpx
+    probe = httpx.post(
+        f"{url}/api/upload",
+        files={"file": ("probe.txt", "押金不予退还".encode("utf-8"), "text/plain")},
+        data={"category": "lease"}, timeout=60,
+    )
+    try:
+        probe_rid = probe.json()["review_id"]
+        # 审查为后台任务：轮询到终态再读 scorecard
+        reason = None
+        for _ in range(100):
             body = httpx.get(f"{url}/api/review/{probe_rid}", timeout=10).json()
-            reason = (body.get("scorecard") or {}).get("reason")
-            if reason != "no_llm_key":
-                pytest.fail(f"E2E 环境混入 LLM Key（scorecard reason={reason!r}），结果不可信")
-        except Exception:  # noqa: BLE001
+            if body.get("status") not in ("processing", "pending"):
+                reason = (body.get("scorecard") or {}).get("reason")
+                break
+            time.sleep(0.2)
+        if reason != "no_llm_key":
             proc.terminate()
-            pytest.fail("Key 探针上传失败，E2E 服务异常")
+            pytest.fail(f"E2E 环境混入 LLM Key（scorecard reason={reason!r}），结果不可信")
+    except Exception:  # noqa: BLE001
+        proc.terminate()
+        pytest.fail("Key 探针上传失败，E2E 服务异常")
     yield url
     proc.terminate()
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
         proc.kill()
-    log_path.unlink(missing_ok=True)
 
 
 @pytest.fixture(scope="module")

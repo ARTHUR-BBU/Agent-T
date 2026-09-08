@@ -96,10 +96,13 @@ NDA 红线（风险金标 / 对抗样例须为「需关注」，不得「通过�
 | 做什么 | 仓库里的位置 |
 |--------|----------------|
 | 环境变量模板 | `.env.example` → 复制为 `.env` |
-| Key / 模型 / Base | `ZHIPU_API_KEY` 或 `GLM_API_KEY`；`GLM_MODEL`；`ZHIPU_API_BASE` |
+| Key / 模型 / Base | **首选 `DEEPSEEK_API_KEY`**（`DEEPSEEK_MODEL` 默认 `deepseek-v4-flash`）；备选 `ZHIPU_API_KEY` 或 `GLM_API_KEY`（`GLM_MODEL`；`ZHIPU_API_BASE`）。供应商优先级：DeepSeek > 智谱 > xAI |
 | 可选回退 | `XAI_API_KEY` / `GROK_API_KEY`（一般不用） |
+| 超时 / 存储 | `LLM_TIMEOUT_SECONDS`（默认 180）；`STORE_DB_PATH` / `STORE_TTL_HOURS`（审查记录 SQLite，默认保留 24h） |
 | 追问实现 | `app/services/llm_ask.py` |
 | 无 Key 时 | 界面/接口提示「追问暂未开通」；清单审查照常可跑 |
+
+数据流向备案：配置模型 Key 后，上传合同的文本会发送至所配大模型（DeepSeek/智谱）用于评分、补盲与追问；不配 Key 则纯本地规则审查。上传页已向用户明示。
 
 「问清楚一点」只做：把难懂条款说成人话、必要时翻译。  
 **不做**：改写检查单状态、盖「没问题」章、替管理员拍板。
