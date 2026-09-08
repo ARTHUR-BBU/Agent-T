@@ -36,7 +36,13 @@ def test_upload_and_review():
 
 def test_review_has_scorecard_unavailable_without_key(monkeypatch):
     """M3.5：无 Key 时评分卡字段存在且明确未开通，规则结果照常."""
-    for k in ("ZHIPU_API_KEY", "GLM_API_KEY", "XAI_API_KEY", "GROK_API_KEY"):
+    for k in (
+        "ZHIPU_API_KEY",
+        "GLM_API_KEY",
+        "XAI_API_KEY",
+        "GROK_API_KEY",
+        "DEEPSEEK_API_KEY",
+    ):
         monkeypatch.delenv(k, raising=False)
     files = {"file": ("procurement_sample.txt", FIXTURE.read_bytes(), "text/plain")}
     rid = client.post("/api/upload", files=files, data={"category": "procurement"}).json()[
@@ -124,7 +130,13 @@ def test_review_with_mocked_llm_exposes_full_scorecard_structure(monkeypatch):
 
 
 def test_ask_without_key_clear_message(monkeypatch):
-    for k in ("ZHIPU_API_KEY", "GLM_API_KEY", "XAI_API_KEY", "GROK_API_KEY"):
+    for k in (
+        "ZHIPU_API_KEY",
+        "GLM_API_KEY",
+        "XAI_API_KEY",
+        "GROK_API_KEY",
+        "DEEPSEEK_API_KEY",
+    ):
         monkeypatch.delenv(k, raising=False)
     files = {"file": ("procurement_sample.txt", FIXTURE.read_bytes(), "text/plain")}
     rid = client.post("/api/upload", files=files, data={"category": "procurement"}).json()[

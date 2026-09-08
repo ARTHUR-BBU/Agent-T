@@ -67,9 +67,10 @@ def run_model_review(
 
     try:
         raw = _call_llm(zhipu, xai, system, user, chat_fn, deepseek=deepseek)
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
+        # reason 只给固定码：exc 含供应商 URL/响应体，会经 API 和 docx 报告外泄（肉饼门禁 P2-2）
         logger.exception("Model-review LLM error")
-        result["scorecard"] = scorecard.unavailable(f"llm_error:{exc}")
+        result["scorecard"] = scorecard.unavailable("llm_error")
         return result
 
     payload = scorecard.parse_model_payload(raw)
@@ -80,9 +81,9 @@ def run_model_review(
         retry_system = system + "\n\n【再次提醒】上一轮输出包含禁止表述或结构错误。重新输出，严禁出现任何整体性背书/推翻规则档位的表述，只输出 JSON。"
         try:
             raw = _call_llm(zhipu, xai, retry_system, user, chat_fn, deepseek=deepseek)
-        except Exception as exc:  # noqa: BLE001
+        except Exception:  # noqa: BLE001
             logger.exception("Model-review retry LLM error")
-            result["scorecard"] = scorecard.unavailable(f"llm_error:{exc}")
+            result["scorecard"] = scorecard.unavailable("llm_error")
             return result
         payload = scorecard.parse_model_payload(raw)
         if payload is None:

@@ -271,3 +271,26 @@ def test_ask_prompt_uses_head_tail_clip(monkeypatch):
     )
     prompt = captured["prompt"]
     assert "开头主体。" in prompt and "尾部签字盖章。" in prompt
+
+
+def test_model_review_error_reason_no_exc_leak(monkeypatch):
+    """评分卡 LLM 异常时 reason 只给固定码（肉饼门禁 P2-2）——exc 含供应商
+    URL/响应体，会经 /api/review 返回并印进客户 docx 报告。"""
+    from app.services import model_review
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    monkeypatch.setattr(
+        model_review,
+        "_call_llm",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            RuntimeError("https://api.deepseek.com secret-response-body")
+        ),
+    )
+    items = [{"id": "x", "name": "押金", "status": "需关注", "note": "", "quote": "押金不予退还"}]
+    result = model_review.run_model_review(
+        text="押金不予退还。", items=items, policies=[], category="lease"
+    )
+    sc = result["scorecard"]
+    assert sc["available"] is False
+    assert sc["reason"] == "llm_error", f"reason 不得携带异常详情：{sc['reason']}"
+    assert "deepseek.com" not in (sc["reason"] or "")
