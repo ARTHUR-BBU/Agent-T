@@ -29,6 +29,11 @@ logger = logging.getLogger(__name__)
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
 ALLOWED_SUFFIXES = {".txt", ".md", ".text", ".pdf", ".docx", ".doc"}
 
+# 后台审查并发上限（小智娘门禁 P2-1：无界线程会被脚本刷爆内存与模型费用；
+# 槽位占满直接 429，让用户稍后再试而不是排队堆积）
+MAX_CONCURRENT_REVIEWS = 4
+_review_slots = threading.Semaphore(MAX_CONCURRENT_REVIEWS)
+
 
 @router.get("/categories")
 def categories():
@@ -57,6 +62,10 @@ async def upload(
             detail="不支持的文件类型（支持 .txt / .md / .pdf / .docx / .doc）",
         )
 
+    # 占并发槽位：满则 429（无界线程池被脚本刷 500 次上传 = 500 个 LLM 调用）
+    if not _review_slots.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="当前审查排队已满，请稍后再试")
+
     rid = store.create(
         filename=filename,
         category=category,
@@ -78,35 +87,41 @@ async def upload(
     # 会拖死请求，前端的 processing 轮询此前形同虚设）
     def _run_review_worker(review_id: str, fname: str, content: bytes, cat: str) -> None:
         try:
-            result = run_review(fname, content, category=cat)
-            if result.get("error"):
-                store.update(
-                    review_id,
-                    status="error",
-                    error=result["error"],
-                    text=result.get("text") or "",
-                )
-            else:
-                preview = (result.get("text") or "")[:500]
-                store.update(
-                    review_id,
-                    status="done",
-                    items=result.get("items") or [],
-                    scorecard=result.get("scorecard") or {},
-                    blind_candidates=result.get("blind_candidates") or [],
-                    blind_skipped_messages=result.get("blind_skipped_messages") or [],
-                    blind_skipped_reason=result.get("blind_skipped_reason"),
-                    blind_enabled=bool(result.get("blind_enabled")),
-                    text=result.get("text") or "",
-                    policies=result.get("policies") or [],
-                    category=result.get("category") or cat,
-                    category_label=result.get("category_label") or cat,
-                    text_preview=preview,
-                    error=None,
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("后台审查失败 review_id=%s", review_id)
-            store.update(review_id, status="error", error="审查失败，请重新上传")
+            try:
+                result = run_review(fname, content, category=cat)
+                if result.get("error"):
+                    store.update(
+                        review_id,
+                        status="error",
+                        error=result["error"],
+                        text=result.get("text") or "",
+                    )
+                else:
+                    preview = (result.get("text") or "")[:500]
+                    store.update(
+                        review_id,
+                        status="done",
+                        items=result.get("items") or [],
+                        scorecard=result.get("scorecard") or {},
+                        blind_candidates=result.get("blind_candidates") or [],
+                        blind_skipped_messages=result.get("blind_skipped_messages") or [],
+                        blind_skipped_reason=result.get("blind_skipped_reason"),
+                        blind_enabled=bool(result.get("blind_enabled")),
+                        text=result.get("text") or "",
+                        policies=result.get("policies") or [],
+                        category=result.get("category") or cat,
+                        category_label=result.get("category_label") or cat,
+                        text_preview=preview,
+                        error=None,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("后台审查失败 review_id=%s", review_id)
+                store.update(review_id, status="error", error="审查失败，请重新上传")
+        except Exception:  # noqa: BLE001
+            # 兜底（小智娘 P3-3）：update 自身失败（如 DB 锁超时）不得裸抛线程
+            logger.exception("后台审查状态写入失败 review_id=%s", review_id)
+        finally:
+            _review_slots.release()
 
     threading.Thread(
         target=_run_review_worker, args=(rid, filename, raw, category), daemon=True

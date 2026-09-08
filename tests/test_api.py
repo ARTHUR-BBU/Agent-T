@@ -130,7 +130,7 @@ def test_ask_without_key_clear_message(monkeypatch):
     rid = client.post("/api/upload", files=files, data={"category": "procurement"}).json()[
         "review_id"
     ]
-    review = client.get(f"/api/review/{rid}").json()
+    review = wait_review_done(client, rid)
     assert review.get("ask_available") is False
     item = next(i for i in review["items"] if i["status"] == "需关注")
     r = client.post(

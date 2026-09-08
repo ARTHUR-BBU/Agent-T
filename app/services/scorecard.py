@@ -215,6 +215,11 @@ def _clip_for_scoring(text: str) -> str:
     return text[:head] + _CLIP_MARKER + text[-_TAIL_CHARS:]
 
 
+def clip_contract_text(text: str) -> str:
+    """公开封装：发给大模型的合同文本统一走头尾采样（评分卡与追问共用）。"""
+    return _clip_for_scoring(text)
+
+
 def build_user_prompt(text: str, items: list[dict[str, Any]]) -> str:
     body = _clip_for_scoring(text)
     lines = []

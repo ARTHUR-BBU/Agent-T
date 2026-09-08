@@ -16,6 +16,7 @@ import tempfile
 import threading
 import time
 import uuid
+from contextlib import closing
 from typing import Any
 
 _DEFAULT_DB = os.path.join(
@@ -35,11 +36,33 @@ class ReviewStore:
                 "CREATE TABLE IF NOT EXISTS reviews ("
                 " id TEXT PRIMARY KEY, created_at REAL NOT NULL, data TEXT NOT NULL)"
             )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_reviews_created_at ON reviews (created_at)"
+            )
+        # 重启后遗留的 processing 行永远等不到后台线程，标记为失败
+        # （小智娘 P3-2：否则用户侧会挂到 TTL 过期）
+        self._mark_stale_processing()
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path, timeout=10)
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
+
+    def _mark_stale_processing(self) -> None:
+        with self._lock, closing(self._conn()) as conn, conn:
+            rows = conn.execute(
+                "SELECT id, data FROM reviews WHERE data LIKE '%\"status\": \"processing\"%'"
+            ).fetchall()
+            for rid, data in rows:
+                payload = json.loads(data)
+                if payload.get("status") != "processing":
+                    continue
+                payload["status"] = "error"
+                payload["error"] = "服务重启中断，请重新上传"
+                conn.execute(
+                    "UPDATE reviews SET data = ? WHERE id = ?",
+                    (json.dumps(payload, ensure_ascii=False), rid),
+                )
 
     def _purge_expired(self, conn: sqlite3.Connection) -> None:
         if self._ttl <= 0:
@@ -50,7 +73,7 @@ class ReviewStore:
         rid = uuid.uuid4().hex[:12]
         row = {"id": rid, **kwargs}
         now = time.time()
-        with self._lock, self._conn() as conn:
+        with self._lock, closing(self._conn()) as conn, conn:
             self._purge_expired(conn)
             conn.execute(
                 "INSERT INTO reviews (id, created_at, data) VALUES (?, ?, ?)",
@@ -59,14 +82,14 @@ class ReviewStore:
         return rid
 
     def get(self, review_id: str) -> dict[str, Any] | None:
-        with self._conn() as conn:
+        with closing(self._conn()) as conn:
             row = conn.execute(
                 "SELECT data FROM reviews WHERE id = ?", (review_id,)
             ).fetchone()
         return json.loads(row[0]) if row else None
 
     def update(self, review_id: str, **kwargs: Any) -> dict[str, Any] | None:
-        with self._lock, self._conn() as conn:
+        with self._lock, closing(self._conn()) as conn, conn:
             row = conn.execute(
                 "SELECT data FROM reviews WHERE id = ?", (review_id,)
             ).fetchone()

@@ -222,3 +222,52 @@ def test_report_all_pass_wording_softened():
     text = "\n".join(p.text for p in doc.paragraphs)
     assert "全部适用项均通过" not in text
     assert "规则初筛未命中风险项" in text
+
+
+# ---------- 8. 门禁 P2/P3 修复（2026-09-08 小智娘报告） ----------
+
+def test_ask_question_too_long_rejected(monkeypatch):
+    """追问无长度限制会放大模型费用（外部审计 P1）——超 500 字直接拒绝。"""
+    from app.services import llm_ask
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    result = llm_ask.ask_about_item(
+        question="甲" * 501,
+        item={"id": "x", "name": "押金", "status": "需关注", "note": "", "quote": "押金不予退还"},
+        contract_text="押金不予退还。",
+        policies=[],
+    )
+    assert result["ok"] is False
+    assert "500" in result["error"]
+
+
+def test_store_marks_stale_processing_on_restart(tmp_path):
+    """服务重启后遗留 processing 行必须被标记失败，不能让用户挂到 TTL（P3-2）."""
+    db = str(tmp_path / "stale.db")
+    st1 = ReviewStore(db_path=db, ttl_seconds=3600)
+    rid = st1.create(filename="a.txt", status="processing", items=[])
+    st2 = ReviewStore(db_path=db, ttl_seconds=3600)  # 模拟重启
+    row = st2.get(rid)
+    assert row["status"] == "error"
+    assert "重新上传" in (row.get("error") or "")
+
+
+def test_ask_prompt_uses_head_tail_clip(monkeypatch):
+    """追问链路与评分卡同向：合同文本走头尾采样（P3-7 一致性）."""
+    from app.services import llm_ask
+
+    captured = {}
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test")
+    monkeypatch.setattr(
+        llm_ask, "_chat_deepseek",
+        lambda k, s, u: (captured.update(prompt=u) or "{}"),
+    )
+    long_contract = "开头主体。" + "甲" * (MAX_CONTRACT_CHARS + 1000) + "尾部签字盖章。"
+    llm_ask.ask_about_item(
+        question="风险大吗？",
+        item={"id": "x", "name": "押金", "status": "需关注", "note": "", "quote": "押金不予退还"},
+        contract_text=long_contract,
+        policies=[],
+    )
+    prompt = captured["prompt"]
+    assert "开头主体。" in prompt and "尾部签字盖章。" in prompt
