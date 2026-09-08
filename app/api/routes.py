@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
 
 from app.api.schemas import (
     AskRequest,
@@ -66,13 +67,17 @@ async def upload(
 
     # LLM 预审（spec-llm-precheck）：分类 ≠ 裁判——只决定用哪把尺子/要不要审，
     # 档位仍 100% 出自规则引擎。任何失败降级为照旧开审，绝不阻断主流程。
+    # run_in_threadpool（肉饼门禁 P1）：同步 httpx 调用直接写在 async 路由里
+    # 会冻结整个事件循环——LLM 端点一慢全站挂起
     precheck_record: dict | None = None
     try:
         contract_text = extract_text(filename, raw)
     except ExtractionError:
         contract_text = None  # 提取失败交给 worker 的 fail-closed 路径统一报错
     if contract_text is not None:
-        outcome = precheck_service.run_precheck(contract_text, category)
+        outcome = await run_in_threadpool(
+            precheck_service.run_precheck, contract_text, category
+        )
         branch = precheck_service.decide_branch(outcome, category)
         if branch["action"] != "proceed":
             r = outcome.result

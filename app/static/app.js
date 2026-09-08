@@ -124,8 +124,13 @@
       $("btn-precheck-switch").textContent = `切换为${categoryLabel(data.suggested_category)}`;
       $("btn-precheck-switch").classList.remove("hidden");
     } else {
+      // 支持列表由后端数据渲染（肉饼门禁 P3-2：硬编码在未来加品类时必漂移）
+      const supported = (data.supported_categories || [])
+        .map((c) => c.label)
+        .filter(Boolean)
+        .join("、");
       $("precheck-question").textContent =
-        "该类型暂不在支持范围内（当前支持：租赁合同、采购合同、保密协议 NDA），" +
+        `该类型暂不在支持范围内（当前支持：${supported || "租赁合同、采购合同、保密协议 NDA"}），` +
         "因此本次未生成审查报告。未审查不等于没有风险，" +
         "签署前请自行仔细核对，必要时咨询专业律师。";
       $("btn-precheck-switch").classList.add("hidden");

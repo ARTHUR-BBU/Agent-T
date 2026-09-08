@@ -99,6 +99,7 @@ NDA 红线（风险金标 / 对抗样例须为「需关注」，不得「通过�
 | Key / 模型 / Base | **首选 `DEEPSEEK_API_KEY`**（`DEEPSEEK_MODEL` 默认 `deepseek-v4-flash`）；备选 `ZHIPU_API_KEY` 或 `GLM_API_KEY`（`GLM_MODEL`；`ZHIPU_API_BASE`）。供应商优先级：DeepSeek > 智谱 > xAI |
 | 可选回退 | `XAI_API_KEY` / `GROK_API_KEY`（一般不用） |
 | 超时 / 存储 | `LLM_TIMEOUT_SECONDS`（默认 180）；`STORE_DB_PATH` / `STORE_TTL_HOURS`（审查记录 SQLite，默认保留 24h） |
+| LLM 预审 | `PRECHECK_ENABLED`（默认 `true`；上传时 LLM 分类+支持性判断，不支持类型不开审）；`PRECHECK_TIMEOUT_SECONDS`（预审独立超时，默认 30） |
 | 追问实现 | `app/services/llm_ask.py` |
 | 无 Key 时 | 界面/接口提示「追问暂未开通」；清单审查照常可跑 |
 

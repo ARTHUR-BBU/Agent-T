@@ -125,6 +125,53 @@ def test_disabled_flag_skips(monkeypatch):
     assert outcome.skip_reason == "disabled"
 
 
+def test_busy_degrades_without_calling(monkeypatch):
+    """并发槽占满 → busy 降级跳过，不排队不调用（肉饼门禁 P1 整改）。"""
+    monkeypatch.setattr(
+        precheck, "_precheck_slots", __import__("threading").BoundedSemaphore(0)
+    )
+    outcome = run_precheck("合同正文", "lease", chat_fn=_chat_returns(json.dumps(GOOD), []))
+    assert outcome.skip_reason == "busy"
+    assert outcome.performed is False
+
+
+def test_default_chat_fn_provider_order(monkeypatch):
+    """供应商链 DeepSeek > 智谱 > xAI（肉饼门禁 P3-4：选择路径此前零覆盖）。"""
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("ZHIPU_API_KEY", raising=False)
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
+    monkeypatch.delenv("GROK_API_KEY", raising=False)
+
+    assert precheck._default_chat_fn() is None
+
+    monkeypatch.setenv("ZHIPU_API_KEY", "k-zhipu")
+    monkeypatch.setenv("XAI_API_KEY", "k-xai")
+    fn = precheck._default_chat_fn()
+    assert fn is not None
+    # 智谱在 xAI 之前：用捕获参数验证走的是 _chat_zhipu 且带预审短超时
+    captured = {}
+    monkeypatch.setattr(
+        precheck.llm_ask,
+        "_chat_zhipu",
+        lambda key, s, u, timeout=None: captured.update(key=key, timeout=timeout) or "raw",
+    )
+    assert precheck._default_chat_fn()("sys", "usr") == "raw"
+    assert captured["key"] == "k-zhipu"
+    assert captured["timeout"] == precheck.DEFAULT_PRECHECK_TIMEOUT
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "k-ds")
+    captured_ds = {}
+    monkeypatch.setattr(
+        precheck.llm_ask,
+        "_chat_deepseek",
+        lambda key, s, u, timeout=None: captured_ds.update(key=key, timeout=timeout) or "raw",
+    )
+    assert precheck._default_chat_fn()("sys", "usr") == "raw"
+    assert captured_ds["key"] == "k-ds", "DeepSeek 必须优先于智谱"
+    assert captured_ds["timeout"] == precheck.DEFAULT_PRECHECK_TIMEOUT
+
+
 # ---------- 禁语与采样 ----------
 
 def test_summary_banned_phrase_scrubbed():
@@ -132,6 +179,17 @@ def test_summary_banned_phrase_scrubbed():
     outcome = run_precheck("合同正文", "lease", chat_fn=_chat_returns(json.dumps(payload), []))
     assert "没问题" not in outcome.result.summary
     assert "无风险" not in outcome.result.summary
+
+
+def test_detected_type_scrubbed_and_capped():
+    """类型名同样过禁语清洗且限长（肉饼门禁 P3-1）。"""
+    payload = GOOD | {"detected_type": "没问题的租赁合同" + "长" * 200}
+    outcome = run_precheck("合同正文", "lease", chat_fn=_chat_returns(json.dumps(payload), []))
+    assert "没问题" not in outcome.result.detected_type
+    assert len(outcome.result.detected_type) <= 100
+    payload2 = GOOD | {"summary": "概" * 500}
+    outcome2 = run_precheck("合同正文", "lease", chat_fn=_chat_returns(json.dumps(payload2), []))
+    assert len(outcome2.result.summary) <= 300
 
 
 def test_prompt_clip_keeps_head_and_tail():

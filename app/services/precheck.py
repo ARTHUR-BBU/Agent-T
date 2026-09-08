@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import re
+import threading
 from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, Field
@@ -29,6 +30,15 @@ logger = logging.getLogger(__name__)
 MAX_PRECHECK_CHARS = 3000
 _PRECHECK_TAIL_CHARS = 560
 _CLIP_MARKER = "\n…(中段截断)…\n"
+
+# 预审独立短超时（肉饼门禁 P1：分类 3000 字用不了评分级 180s；
+# 长超时在同步路径上等于把上传接口押给 LLM 端点的脾气）
+DEFAULT_PRECHECK_TIMEOUT = 30.0
+
+# 预审并发上限（肉饼门禁 P1：precheck 若不设闸，脚本刷上传可绕开
+# review 槽位的 429 直接烧 Key 费用。占满时降级跳过预审——可用性优先）
+MAX_CONCURRENT_PRECHECKS = 2
+_precheck_slots = threading.Semaphore(MAX_CONCURRENT_PRECHECKS)
 
 ChatFn = Callable[[str, str], str]
 
@@ -63,14 +73,18 @@ def _clip_for_precheck(text: str) -> str:
 
 
 def _default_chat_fn() -> Optional[ChatFn]:
-    """供应商链 DeepSeek > 智谱 > xAI，复用 llm_ask 的调用与超时配置。"""
+    """供应商链 DeepSeek > 智谱 > xAI，复用 llm_ask 的调用与超时配置。
+
+    超时用预审独立短超时（肉饼门禁 P1），不吃评分级 LLM_TIMEOUT_SECONDS。
+    """
+    timeout = float(os.getenv("PRECHECK_TIMEOUT_SECONDS", str(DEFAULT_PRECHECK_TIMEOUT)))
     deepseek = llm_ask._deepseek_key()
     zhipu = llm_ask._zhipu_key()
     xai = llm_ask._xai_key()
     if deepseek:
-        return lambda s, u: llm_ask._chat_deepseek(deepseek, s, u)
+        return lambda s, u: llm_ask._chat_deepseek(deepseek, s, u, timeout=timeout)
     if zhipu:
-        return lambda s, u: llm_ask._chat_zhipu(zhipu, s, u)
+        return lambda s, u: llm_ask._chat_zhipu(zhipu, s, u, timeout=timeout)
     if xai:
         return lambda s, u: llm_ask._chat_xai(xai, s, u)
     return None
@@ -100,9 +114,12 @@ def _parse_payload(raw: str) -> Optional[PrecheckResult]:
         suggested = None
     is_supported = bool(obj.get("is_supported")) and suggested is not None
 
-    summary = llm_ask._scrub_banned_echo(str(obj.get("summary") or "").strip())
+    # 禁语清洗 + 限长（肉饼门禁 P3-1）：类型名也要洗——模型跑偏时
+    # 「没问题」可从 detected_type 漏出；超长字段直入 store/前端
+    detected = llm_ask._scrub_banned_echo(str(obj.get("detected_type") or "").strip())[:100]
+    summary = llm_ask._scrub_banned_echo(str(obj.get("summary") or "").strip())[:300]
     return PrecheckResult(
-        detected_type=str(obj.get("detected_type") or "").strip(),
+        detected_type=detected,
         is_supported=is_supported,
         suggested_category=suggested,
         confidence=confidence,
@@ -129,28 +146,39 @@ def run_precheck(
     if chat is None:
         return PrecheckOutcome(skip_reason="no_llm_key")
 
-    from app.services.checklist import list_categories
+    # 并发闸门（肉饼门禁 P1）：占满时降级跳过，不排队——排队会把
+    # 上传请求拖成变相 DoS，跳过则主流程完全不受影响
+    if not _precheck_slots.acquire(blocking=False):
+        logger.warning("Precheck slots exhausted, skipping precheck")
+        return PrecheckOutcome(skip_reason="busy")
 
-    system = precheck_prompts.build_system_prompt(list_categories())
-    user = precheck_prompts.build_user_prompt(_clip_for_precheck(text or ""), selected_category)
+    try:
+        from app.services.checklist import list_categories
 
-    for attempt in (1, 2):
-        try:
-            raw = chat(system, user)
-        except Exception:  # noqa: BLE001
-            # 异常详情只进日志（对齐 llm_ask 信息泄露防线），降级 skip
-            logger.exception("Precheck LLM call failed (attempt %s)", attempt)
-            return PrecheckOutcome(skip_reason="llm_error")
-
-        result = _parse_payload(raw)
-        if result is not None:
-            return PrecheckOutcome(performed=True, result=result)
-        logger.warning("Precheck payload parse failed (attempt %s)", attempt)
-        system = precheck_prompts.build_retry_system_prompt(
-            precheck_prompts.build_system_prompt(list_categories())
+        system = precheck_prompts.build_system_prompt(list_categories())
+        user = precheck_prompts.build_user_prompt(
+            _clip_for_precheck(text or ""), selected_category
         )
 
-    return PrecheckOutcome(skip_reason="parse_failed")
+        for attempt in (1, 2):
+            try:
+                raw = chat(system, user)
+            except Exception:  # noqa: BLE001
+                # 异常详情只进日志（对齐 llm_ask 信息泄露防线），降级 skip
+                logger.exception("Precheck LLM call failed (attempt %s)", attempt)
+                return PrecheckOutcome(skip_reason="llm_error")
+
+            result = _parse_payload(raw)
+            if result is not None:
+                return PrecheckOutcome(performed=True, result=result)
+            logger.warning("Precheck payload parse failed (attempt %s)", attempt)
+            system = precheck_prompts.build_retry_system_prompt(
+                precheck_prompts.build_system_prompt(list_categories())
+            )
+
+        return PrecheckOutcome(skip_reason="parse_failed")
+    finally:
+        _precheck_slots.release()
 
 
 def decide_branch(
