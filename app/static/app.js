@@ -100,10 +100,45 @@
     return out;
   }
 
-  async function upload() {
+  function categoryLabel(id) {
+    const opt = [...$("category").options].find((o) => o.value === id);
+    return opt ? opt.textContent : id;
+  }
+
+  function hidePrecheckConfirm() {
+    $("precheck-confirm").classList.add("hidden");
+  }
+
+  // LLM 预审确认（分类≠裁判：AI 只建议，用户拍板；静默切换是事故温床）
+  function showPrecheckConfirm(data) {
+    const box = $("precheck-confirm");
+    const pc = data.precheck || {};
+    const detected = pc.detected_type || "其他类型合同";
+    $("precheck-summary").textContent = pc.summary
+      ? `AI 预判这是一份「${detected}」（${pc.summary}）。`
+      : `AI 预判这是一份「${detected}」。`;
+    if (data.suggested_category) {
+      $("precheck-question").textContent =
+        `与您选择的「${categoryLabel($("category").value)}」不一致。` +
+        "用哪套清单审查，决定提示是否切题。";
+      $("btn-precheck-switch").textContent = `切换为${categoryLabel(data.suggested_category)}`;
+      $("btn-precheck-switch").classList.remove("hidden");
+    } else {
+      $("precheck-question").textContent =
+        "该类型暂不在支持范围内（当前支持：租赁合同、采购合同、保密协议 NDA），" +
+        "因此本次未生成审查报告。未审查不等于没有风险，" +
+        "签署前请自行仔细核对，必要时咨询专业律师。";
+      $("btn-precheck-switch").classList.add("hidden");
+    }
+    box.dataset.suggested = data.suggested_category || "";
+    box.classList.remove("hidden");
+  }
+
+  async function upload(categoryOverride) {
     const fileInput = $("file");
     const err = $("upload-error");
     err.classList.add("hidden");
+    hidePrecheckConfirm();
     if (!fileInput.files || !fileInput.files[0]) {
       err.textContent = "请先选择合同文件。";
       err.classList.remove("hidden");
@@ -113,11 +148,15 @@
     btn.disabled = true;
     const fd = new FormData();
     fd.append("file", fileInput.files[0]);
-    fd.append("category", $("category").value);
+    fd.append("category", categoryOverride || $("category").value);
     try {
       const res = await fetch("/api/upload", { method: "POST", body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "上传失败");
+      if (data.status === "category_confirm") {
+        showPrecheckConfirm(data);
+        return;
+      }
       state.reviewId = data.review_id;
       state.selectedItemId = null;
       show("results");
@@ -180,6 +219,17 @@
     let metaExtra = `需关注 ${nAtt} 项 · 已通过 ${nPass} 项`;
     if (nBlind > 0) {
       metaExtra += ` · 补盲候选 ${nBlind} 项`;
+    }
+    // 品类存疑非阻断提示（老钱金标：知情权不能省，打断权必须不给）
+    const suspectBox = $("precheck-suspect");
+    if (data.precheck && data.precheck.suspect) {
+      suspectBox.textContent =
+        `品类存疑：本报告按「${data.category_label || data.category}」清单审查，` +
+        `AI 预判倾向「${data.precheck.detected_type || "其他类型"}」（把握较低）。` +
+        "结论请结合文件实际类型阅读。";
+      suspectBox.classList.remove("hidden");
+    } else {
+      suspectBox.classList.add("hidden");
     }
     $("results-meta").innerHTML =
       `<strong>${escapeHtml(data.filename || "")}</strong>` +
@@ -530,7 +580,19 @@
       .replace(/"/g, "&quot;");
   }
 
-  $("btn-upload").addEventListener("click", upload);
+  $("btn-upload").addEventListener("click", () => upload());
+  $("btn-precheck-switch").addEventListener("click", () => {
+    const sug = $("precheck-confirm").dataset.suggested;
+    if (sug) {
+      $("category").value = sug;
+      upload(sug);
+    }
+  });
+  $("btn-precheck-keep").addEventListener("click", () => {
+    const sug = $("precheck-confirm").dataset.suggested;
+    hidePrecheckConfirm();
+    if (sug) upload(); // 坚持按原品类审：用户已确认，直接继续
+  });
   $("btn-ask").addEventListener("click", sendAsk);
   $("btn-back-upload").addEventListener("click", () => show("upload"));
   $("btn-back-results").addEventListener("click", () => show("results"));

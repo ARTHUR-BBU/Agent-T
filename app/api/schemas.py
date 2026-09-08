@@ -58,6 +58,16 @@ class ScorecardInfo(BaseModel):
     degraded: bool = False
 
 
+class PrecheckInfo(BaseModel):
+    """LLM 预审结果（分类≠裁判：永不改档位，仅路由与提示）。"""
+
+    performed: bool = False
+    detected_type: str = ""
+    confidence: str = "low"
+    summary: str = ""
+    suspect: bool = False  # low 置信度但倾向与所选不一致 → 非阻断「品类存疑」
+
+
 class ReviewSummary(BaseModel):
     id: str
     filename: str
@@ -73,11 +83,18 @@ class ReviewSummary(BaseModel):
     error: Optional[str] = None
     text_preview: str = ""
     ask_available: bool = False
+    precheck: Optional[PrecheckInfo] = None
 
 
 class UploadResponse(BaseModel):
-    review_id: str
+    """向后兼容：常规路径 review_id 必有值；category_confirm 分支为 None。"""
+
+    review_id: Optional[str] = None
     message: str = "uploaded"
+    status: Literal["uploaded", "category_confirm"] = "uploaded"
+    precheck: Optional[PrecheckInfo] = None
+    suggested_category: Optional[str] = None
+    supported_categories: list[dict[str, str]] = Field(default_factory=list)
 
 
 class AskRequest(BaseModel):

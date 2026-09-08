@@ -12,13 +12,15 @@ from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from app.api.schemas import (
     AskRequest,
     AskResponse,
+    PrecheckInfo,
     ReviewSummary,
     ScorecardInfo,
     UploadResponse,
 )
 from app.graph.pipeline import run_review
-from app.services import llm_ask, report as report_service
+from app.services import llm_ask, precheck as precheck_service, report as report_service
 from app.services.checklist import list_categories
+from app.services.extract import ExtractionError, extract_text
 from app.services.store import store
 
 router = APIRouter(prefix="/api")
@@ -62,6 +64,40 @@ async def upload(
             detail="不支持的文件类型（支持 .txt / .md / .pdf / .docx / .doc）",
         )
 
+    # LLM 预审（spec-llm-precheck）：分类 ≠ 裁判——只决定用哪把尺子/要不要审，
+    # 档位仍 100% 出自规则引擎。任何失败降级为照旧开审，绝不阻断主流程。
+    precheck_record: dict | None = None
+    try:
+        contract_text = extract_text(filename, raw)
+    except ExtractionError:
+        contract_text = None  # 提取失败交给 worker 的 fail-closed 路径统一报错
+    if contract_text is not None:
+        outcome = precheck_service.run_precheck(contract_text, category)
+        branch = precheck_service.decide_branch(outcome, category)
+        if branch["action"] != "proceed":
+            r = outcome.result
+            return UploadResponse(
+                message="category_confirm",
+                status="category_confirm",
+                precheck=PrecheckInfo(
+                    performed=True,
+                    detected_type=r.detected_type,
+                    confidence=r.confidence,
+                    summary=r.summary,
+                ),
+                suggested_category=r.suggested_category if r.is_supported else None,
+                supported_categories=list_categories(),
+            )
+        if branch["suspect"] and outcome.result is not None:
+            r = outcome.result
+            precheck_record = {
+                "performed": True,
+                "detected_type": r.detected_type,
+                "confidence": r.confidence,
+                "summary": r.summary,
+                "suspect": True,
+            }
+
     # 占并发槽位：满则 429（无界线程池被脚本刷 500 次上传 = 500 个 LLM 调用）
     if not _review_slots.acquire(blocking=False):
         raise HTTPException(status_code=429, detail="当前审查排队已满，请稍后再试")
@@ -81,6 +117,7 @@ async def upload(
         text="",
         policies=[],
         error=None,
+        precheck=precheck_record,
     )
 
     # 审查放后台线程：上传立即返回 review_id（外部审计 P1：同步等待模型
@@ -135,7 +172,9 @@ def get_review(review_id: str):
     row = store.get(review_id)
     if not row:
         raise HTTPException(status_code=404, detail="审查记录不存在")
+    pc = row.get("precheck")
     return ReviewSummary(
+        precheck=PrecheckInfo(**pc) if pc else None,
         id=row["id"],
         filename=row.get("filename") or "",
         category=row.get("category") or "",

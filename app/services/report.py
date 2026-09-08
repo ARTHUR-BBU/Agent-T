@@ -88,6 +88,18 @@ def _cover(doc: Any, row: dict[str, Any]) -> None:
         run.bold = True
         p.add_run(str(value))
 
+    # 品类存疑非阻断提示（老钱金标改判：low 置信度但倾向与所选不一致时
+    # 照旧开审，但知情权不能省——报告头必须带上这行）
+    pc = row.get("precheck") or {}
+    if pc.get("suspect"):
+        p = doc.add_paragraph()
+        run = p.add_run(
+            f"品类存疑：本报告按「{row.get('category_label') or row.get('category') or '所选品类'}」"
+            f"清单审查，AI 预判倾向「{pc.get('detected_type') or '其他类型'}」"
+            "（把握较低）。结论请结合文件实际类型阅读。"
+        )
+        run.bold = True
+
 
 def _known_statuses() -> tuple[str, ...]:
     return ("通过", _ATTENTION, _NOT_FOUND, _NA)
