@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -24,6 +25,10 @@ router = APIRouter(prefix="/api")
 
 logger = logging.getLogger(__name__)
 
+# 上传硬限制（外部审计 P1：无限制的大文件可耗尽内存/模型费用）
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
+ALLOWED_SUFFIXES = {".txt", ".md", ".text", ".pdf", ".docx", ".doc"}
+
 
 @router.get("/categories")
 def categories():
@@ -35,13 +40,22 @@ async def upload(
     file: UploadFile = File(...),
     category: str = Form("procurement"),
 ):
-    if category not in ("procurement", "nda"):
-        # allow unknown but default checklist loader falls back
-        pass
+    # 品类必须显式合法（外部审计：未知品类此前会静默回退采购清单）
+    valid_categories = {c["id"] for c in list_categories()}
+    if category not in valid_categories:
+        raise HTTPException(status_code=422, detail=f"未知合同类型：{category}")
+
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="空文件")
+    if len(raw) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="文件超过 10MB 上限，请压缩后上传")
     filename = file.filename or "contract.txt"
+    if Path(filename).suffix.lower() not in ALLOWED_SUFFIXES:
+        raise HTTPException(
+            status_code=400,
+            detail="不支持的文件类型（支持 .txt / .md / .pdf / .docx / .doc）",
+        )
 
     rid = store.create(
         filename=filename,
@@ -60,35 +74,43 @@ async def upload(
         error=None,
     )
 
-    try:
-        result = run_review(filename, raw, category=category)
-        if result.get("error"):
-            store.update(
-                rid,
-                status="error",
-                error=result["error"],
-                text=result.get("text") or "",
-            )
-        else:
-            preview = (result.get("text") or "")[:500]
-            store.update(
-                rid,
-                status="done",
-                items=result.get("items") or [],
-                scorecard=result.get("scorecard") or {},
-                blind_candidates=result.get("blind_candidates") or [],
-                blind_skipped_messages=result.get("blind_skipped_messages") or [],
-                blind_skipped_reason=result.get("blind_skipped_reason"),
-                blind_enabled=bool(result.get("blind_enabled")),
-                text=result.get("text") or "",
-                policies=result.get("policies") or [],
-                category=result.get("category") or category,
-                category_label=result.get("category_label") or category,
-                text_preview=preview,
-                error=None,
-            )
-    except Exception as exc:  # noqa: BLE001
-        store.update(rid, status="error", error=str(exc))
+    # 审查放后台线程：上传立即返回 review_id（外部审计 P1：同步等待模型
+    # 会拖死请求，前端的 processing 轮询此前形同虚设）
+    def _run_review_worker(review_id: str, fname: str, content: bytes, cat: str) -> None:
+        try:
+            result = run_review(fname, content, category=cat)
+            if result.get("error"):
+                store.update(
+                    review_id,
+                    status="error",
+                    error=result["error"],
+                    text=result.get("text") or "",
+                )
+            else:
+                preview = (result.get("text") or "")[:500]
+                store.update(
+                    review_id,
+                    status="done",
+                    items=result.get("items") or [],
+                    scorecard=result.get("scorecard") or {},
+                    blind_candidates=result.get("blind_candidates") or [],
+                    blind_skipped_messages=result.get("blind_skipped_messages") or [],
+                    blind_skipped_reason=result.get("blind_skipped_reason"),
+                    blind_enabled=bool(result.get("blind_enabled")),
+                    text=result.get("text") or "",
+                    policies=result.get("policies") or [],
+                    category=result.get("category") or cat,
+                    category_label=result.get("category_label") or cat,
+                    text_preview=preview,
+                    error=None,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("后台审查失败 review_id=%s", review_id)
+            store.update(review_id, status="error", error="审查失败，请重新上传")
+
+    threading.Thread(
+        target=_run_review_worker, args=(rid, filename, raw, category), daemon=True
+    ).start()
 
     return UploadResponse(review_id=rid, message="uploaded")
 

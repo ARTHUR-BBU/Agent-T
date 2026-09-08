@@ -15,6 +15,7 @@ from docx import Document
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.helpers import wait_review_done
 from app.services.report import DEFAULT_DISCLAIMER, build_report_docx
 from app.services.store import store
 
@@ -172,7 +173,7 @@ def test_report_attention_summary_table():
         {"id": "s", "name": "主体信息", "status": "通过", "note": "", "quote": "",
          "hits": [], "category_na": False, "tag_source": "rule", "needs_confirm": False},
     ]
-    assert "全部适用项均通过" in _doc_text(build_report_docx(row))
+    assert "规则初筛未命中风险项" in _doc_text(build_report_docx(row))
 
 
 def test_report_policies_and_skip_messages():
@@ -216,6 +217,7 @@ def test_api_report_download_after_upload():
     rid = client.post("/api/upload", files=files, data={"category": "procurement"}).json()[
         "review_id"
     ]
+    wait_review_done(client, rid)
     r = client.get(f"/api/review/{rid}/report")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith(

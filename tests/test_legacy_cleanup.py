@@ -137,10 +137,11 @@ def test_real_category_configs_all_valid():
 # ---------- ⑦ 截断 ----------
 
 def test_long_contract_truncated_in_prompt_with_marker():
-    """>12000 字：user prompt 只带截断稿 + 明确标记，不能整篇塞给模型."""
+    """>预算字数：user prompt 只带头尾采样截断稿 + 明确标记，不能整篇塞给模型
+    （2026-09-08 审计整改：截断策略由纯头部改为头+尾，签署区在尾部必须保留）."""
     text = "甲" * (MAX_CONTRACT_CHARS + 3000)
     prompt = build_user_prompt(text, [_item("a", "主体", "通过")])
-    assert "…(截断)" in prompt
+    assert "中段截断" in prompt
     body = prompt.split("合同全文：\n")[1].split("\n\n请按系统指令")[0]
     assert len(body) <= MAX_CONTRACT_CHARS + 20, f"截断稿超长：{len(body)}"
 

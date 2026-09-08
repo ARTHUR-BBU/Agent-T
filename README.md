@@ -62,11 +62,18 @@ bash scripts/demo_procurement.sh
 
 | 变量 | 说明 |
 |------|------|
-| `ZHIPU_API_KEY` 或 `GLM_API_KEY` | 智谱追问 Key；不配也能跑清单 |
+| `DEEPSEEK_API_KEY` | **首选**（OpenAI 兼容，速度快）。GLM Coding Plan 条款限定指定工具内使用，web 服务调用会被降权，故线上优先走 DeepSeek |
+| `DEEPSEEK_MODEL` | 默认 `deepseek-v4-flash`；追问可配 `deepseek-v4-pro` |
+| `DEEPSEEK_API_BASE` | 默认 `https://api.deepseek.com`；兼容其他 OpenAI 协议网关 |
+| `ZHIPU_API_KEY` 或 `GLM_API_KEY` | 智谱 Key（备选回退）；不配也能跑清单 |
 | `GLM_MODEL` | 默认 `glm-5.2` |
 | `ZHIPU_API_BASE` | Coding 套餐默认 `https://open.bigmodel.cn/api/coding/paas/v4`；标准 API 改为 `https://open.bigmodel.cn/api/paas/v4` |
 | `XAI_API_KEY` / `GROK_API_KEY` | 可选回退（**一般不用**） |
 | `BLIND_SPOT_ENABLED` | 补盲开关，默认 `true`；关则纯规则、界面无「补盲」 |
+| `LLM_TIMEOUT_SECONDS` | 单次大模型调用超时，默认 180 |
+| `STORE_DB_PATH` / `STORE_TTL_HOURS` | 审查记录 SQLite 路径 / 保留时长（默认 24h，0=永久） |
+
+> 数据流向说明：配置了模型 Key 时，上传合同的**文本内容**会发送至所配大模型（DeepSeek/智谱）用于评分、补盲与追问；不配置 Key 则纯本地规则审查，数据不出服务器。
 
 ## 测试
 

@@ -32,6 +32,7 @@
         </label>
         <button id="btn-upload" class="primary" type="button">开始审查</button>
         <p id="upload-error" class="error hidden"></p>
+        <p class="privacy-note">审查说明：上传后合同文本将发送至所配置的大模型（DeepSeek / 智谱）用于评分与条款解释；不配置模型 Key 时仅在本机做规则审查、数据不出服务器。审查记录定期自动清除。</p>
       </div>
     </section>
 
@@ -42,7 +43,7 @@
         <h1>审查结果</h1>
       </header>
       <div id="results-loading" class="card">
-        <p class="muted">正在审查…</p>
+        <p class="muted">正在审查…（大合同含模型评分约需 1-2 分钟，请勿关闭页面）</p>
       </div>
       <div id="results-error" class="card error hidden"></div>
       <div id="results-body" class="hidden">

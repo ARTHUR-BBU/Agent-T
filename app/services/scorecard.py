@@ -33,8 +33,9 @@ FORBIDDEN_PATH = CONFIG_DIR / "scorecard_forbidden.yaml"
 
 # 展示档位（纯参考，非规则状态；文案九哥定稿 2026-09-05）
 TIERS = [
-    # 90+ 档措辞不盖章、不省略人工动作（肉饼审查 P2-1：与 A 类禁语同向的表述系统自己也不许用）
-    {"min": 90, "label": "基本没毛病", "hint": "这版没发现实质风险，逐条结果请照常过一遍"},
+    # 90+ 档措辞不盖章、不省略人工动作（肉饼审查 P2-1：与 A 类禁语同向的表述系统自己也不许用；
+    # 外部审计：「基本没毛病」对关键词初筛系统仍偏强，降调）
+    {"min": 90, "label": "未见实质风险", "hint": "这版没发现实质风险，逐条结果请照常过一遍"},
     {"min": 70, "label": "有几处要留心", "hint": "多是能补正的地方，谈一谈再签更稳"},
     {"min": 50, "label": "有实质风险", "hint": "核心条款有硬伤，先改完再谈签的事"},
     {"min": 0, "label": "风险很大", "hint": "多处理念都偏了，先缓一缓（找人看看再定）"},
@@ -51,8 +52,12 @@ DEDUCTION_NOT_FOUND = 0.6
 # 评分提示词的合同截断上限。2026-09-07 线上事故：12000 字 + 评分指令让 glm-5.2
 # 生成超 240s（同步上传被拖死）。压到 6000 后评分延迟回到 ~30-60s 量级；
 # 规则引擎不受此限（checklist 全文扫描，截断只影响参考层评分提示词）。
-# 待法务老钱追认：评分是纯参考层，前 6000 字（含主体/签署区在头尾）足够定调
+# 截断策略（外部审计修正）：**头 + 尾**——主体信息集中在头部，签字/印章/落款
+# 常在尾部，只取头部会漏掉签署区信号。总预算仍为 MAX_CONTRACT_CHARS。
+# 待法务老钱追认：评分是纯参考层，头尾采样足够定调
 MAX_CONTRACT_CHARS = 6000
+_TAIL_CHARS = 1000
+_CLIP_MARKER = "\n…(中段截断)…\n"
 
 # D 类反向必备项：免责句（九哥定稿 2026-09-05）
 DISCLAIMER = "以上都是机器给的参考意见，签之前建议找懂行的人再看一眼。"
@@ -201,8 +206,17 @@ segments[].gap_item_ids 说明：该段内你认为「表述弱、有缺口、�
 candidates 说明：对「规则未标需关注、但你发现真实风险且能引用原文」的条目提出候选；quote 必须是合同原文连续摘录，没有原文依据就不要输出该项；无候选输出 []。禁止改写规则已有结论。"""
 
 
+def _clip_for_scoring(text: str) -> str:
+    """头 + 尾采样截断（总预算 MAX_CONTRACT_CHARS）：
+    主体在头部、签署/落款在尾部，中段条款密集但信噪比低。"""
+    if len(text) <= MAX_CONTRACT_CHARS:
+        return text
+    head = MAX_CONTRACT_CHARS - _TAIL_CHARS - len(_CLIP_MARKER)
+    return text[:head] + _CLIP_MARKER + text[-_TAIL_CHARS:]
+
+
 def build_user_prompt(text: str, items: list[dict[str, Any]]) -> str:
-    body = text if len(text) <= MAX_CONTRACT_CHARS else text[:MAX_CONTRACT_CHARS] + "\n…(截断)"
+    body = _clip_for_scoring(text)
     lines = []
     for it in items:
         na = "（本类不适用）" if it.get("category_na") else ""

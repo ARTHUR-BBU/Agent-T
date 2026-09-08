@@ -1,0 +1,25 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: 安装依赖
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+      # Playwright E2E 未装浏览器时整模块自动 skip；远程 CI 证明的是
+      # 315+ 条单元/API/金标回归（外部审计：此前无远程 CI 证据）
+      - name: 运行全量测试
+        run: python -m pytest -q

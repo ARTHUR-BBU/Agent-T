@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.main import app
+from tests.helpers import wait_review_done
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "fixtures" / "procurement_sample.txt"
@@ -26,9 +27,8 @@ def test_upload_and_review():
     assert r.status_code == 200
     rid = r.json()["review_id"]
 
-    r2 = client.get(f"/api/review/{rid}")
-    assert r2.status_code == 200
-    body = r2.json()
+    # 审查已改后台任务：轮询到完成
+    body = wait_review_done(client, rid)
     assert body["status"] == "done"
     attention = [i for i in body["items"] if i["status"] == "需关注"]
     assert len(attention) >= 7
@@ -42,7 +42,7 @@ def test_review_has_scorecard_unavailable_without_key(monkeypatch):
     rid = client.post("/api/upload", files=files, data={"category": "procurement"}).json()[
         "review_id"
     ]
-    body = client.get(f"/api/review/{rid}").json()
+    body = wait_review_done(client, rid)
     sc = body.get("scorecard") or {}
     assert sc.get("available") is False
     assert sc.get("reason") == "no_llm_key"
@@ -95,7 +95,7 @@ def test_review_with_mocked_llm_exposes_full_scorecard_structure(monkeypatch):
     rid = client.post("/api/upload", files=files, data={"category": "procurement"}).json()[
         "review_id"
     ]
-    body = client.get(f"/api/review/{rid}").json()
+    body = wait_review_done(client, rid)
     assert body["status"] == "done"
 
     sc = body["scorecard"]

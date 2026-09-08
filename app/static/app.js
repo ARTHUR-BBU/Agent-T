@@ -138,7 +138,9 @@
     const loading = $("results-loading");
     const body = $("results-body");
     const errBox = $("results-error");
-    for (let i = 0; i < 60; i++) {
+    // 审查已改为后台任务（上传秒回 review_id）：大合同含模型评分约 1-2 分钟，
+    // 轮询预算给足 5 分钟（150 × 2s），done/error 提前退出
+    for (let i = 0; i < 150; i++) {
       const res = await fetch(`/api/review/${state.reviewId}`);
       const data = await res.json();
       if (!res.ok) {
@@ -149,7 +151,7 @@
       }
       state.review = data;
       if (data.status === "processing" || data.status === "pending") {
-        await new Promise((r) => setTimeout(r, 400));
+        await new Promise((r) => setTimeout(r, 2000));
         continue;
       }
       loading.classList.add("hidden");

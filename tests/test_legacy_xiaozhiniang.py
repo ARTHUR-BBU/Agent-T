@@ -399,12 +399,15 @@ def test_prompt_exactly_12000_chars_not_truncated():
 
 
 def test_prompt_12001_chars_truncated_with_marker():
+    """2026-09-08 审计整改：截断改为头+尾采样——头部前缀保留、尾部保留、
+    中段以标记衔接，总长仍受 MAX_CONTRACT_CHARS 预算约束。"""
     prompt = build_user_prompt("甲" * (MAX_CONTRACT_CHARS + 1), [])
-    assert "…(截断)" in prompt
+    assert "中段截断" in prompt
     body = prompt.split("合同全文：\n")[1].split("\n\n请按系统指令")[0]
-    assert body.endswith("…(截断)")
-    assert len(body) <= MAX_CONTRACT_CHARS + len("…(截断)") + 1, f"截断稿超长：{len(body)}"
-    assert set(body[:MAX_CONTRACT_CHARS]) == {"甲"}, "截断必须是前缀切片，不得混入其他内容"
+    assert len(body) <= MAX_CONTRACT_CHARS + 20, f"截断稿超长：{len(body)}"
+    assert set(body) <= {"甲", "\n", "…", "(", "中", "段", "截", "断", ")"}, (
+        "头尾采样只允许原文前缀（甲）+ 截断标记，不得混入其他内容"
+    )
 
 
 def test_rule_block_has_no_length_cap_documented():

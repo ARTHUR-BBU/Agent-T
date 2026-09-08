@@ -195,9 +195,10 @@ def ask_about_item(
         else:
             raw = _chat_xai(xai, system, user)  # type: ignore[arg-type]
     except Exception as exc:  # noqa: BLE001
+        # 异常详情只进服务端日志，客户端给固定话术（外部审计：exc 可能含
+        # 供应商端点/网络拓扑等内部信息，拼进用户可见错误属信息泄露）
         logger.exception("Ask LLM API error")
-        provider = "智能解释"
-        return {"ok": False, "error": f"{provider} 调用失败: {exc}"}
+        return {"ok": False, "error": "智能解释服务暂时不可用，请稍后重试"}
 
     parsed = _parse_structured(raw)
     if parsed and _is_rubber_stamp(parsed):
