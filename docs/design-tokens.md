@@ -23,6 +23,9 @@
 | `--color-blind` | `#AF52DE` | 补盲候选左侧条 / 描边徽章 |
 | `--color-blind-bg` | `#F9F0FF` | 补盲候选行底 |
 | `--color-aside-bg` | `#FAFAFA` | 评分卡等「参考层」底色（M3.5，阳仔） |
+| `--color-confirm-edge` | `#E8C766` | 品类确认弹窗 / 品类存疑提示边框（预审专项，收编原硬编码） |
+| `--color-confirm-bg` | `#FFFAEB` | 品类确认弹窗 / 品类存疑提示底色（预审专项，收编原硬编码） |
+| `--color-caption-muted` | `#8A8AA0` | 弱说明文字（隐私声明等，收编原硬编码） |
 
 ## 字号 `--type-*`
 

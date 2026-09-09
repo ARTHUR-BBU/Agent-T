@@ -170,6 +170,7 @@
       }
       state.reviewId = data.review_id;
       state.selectedItemId = null;
+      setReviewHash(data.review_id);
       show("results");
       $("results-loading").classList.remove("hidden");
       $("results-body").classList.add("hidden");
@@ -591,6 +592,39 @@
       .replace(/"/g, "&quot;");
   }
 
+  // 审查记录进 URL（阳仔 UI 提案：reviewId 只存内存 = 刷新即丢 1-2 分钟的等待，
+  // 事故级体验）。刷新/重开页面时从 hash 恢复轮询。
+  function setReviewHash(rid) {
+    try {
+      window.location.hash = "#/review/" + rid;
+    } catch (e) { /* 隐私模式等场景忽略 */ }
+  }
+
+  function clearReviewHash() {
+    try {
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+    } catch (e) { /* ignore */ }
+  }
+
+  function reviewIdFromHash() {
+    const m = (window.location.hash || "").match(/^#\/review\/([A-Za-z0-9]+)/);
+    return m ? m[1] : null;
+  }
+
+  async function resumeFromHash() {
+    const rid = reviewIdFromHash();
+    if (!rid) return;
+    state.reviewId = rid;
+    state.selectedItemId = null;
+    show("results");
+    hidePrecheckConfirm();
+    $("results-loading").classList.remove("hidden");
+    $("results-body").classList.add("hidden");
+    $("results-error").classList.add("hidden");
+    $("item-detail").classList.add("hidden");
+    await pollReview();
+  }
+
   $("btn-upload").addEventListener("click", () => upload());
   $("btn-precheck-switch").addEventListener("click", () => {
     const sug = $("precheck-confirm").dataset.suggested;
@@ -606,6 +640,11 @@
     // 无 sug（不支持类）：仅收起弹窗，用户回表单重新选择类型
   });
   $("btn-ask").addEventListener("click", sendAsk);
-  $("btn-back-upload").addEventListener("click", () => show("upload"));
+  $("btn-back-upload").addEventListener("click", () => {
+    clearReviewHash();
+    show("upload");
+  });
   $("btn-back-results").addEventListener("click", () => show("results"));
+
+  resumeFromHash();
 })();

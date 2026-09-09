@@ -24,6 +24,11 @@
   --color-blind-bg: #F9F0FF;
   /* 规则需关注 left bar (阳仔 amber) */
   --color-attention-bar: #FF9F0A;
+  /* 品类确认弹窗 / 品类存疑提示（预审专项，原硬编码收编——阳仔 token 审计） */
+  --color-confirm-edge: #E8C766;
+  --color-confirm-bg: #FFFAEB;
+  /* 弱说明文字（隐私声明等，原硬编码收编） */
+  --color-caption-muted: #8A8AA0;
 
   /* Type */
   --type-title: 600 30px/1.25 "PingFang SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
@@ -549,12 +554,12 @@ mark.kw,
 }
 
 /* 上传页隐私说明（外部审计 P1：原文发送至第三方模型须明示） */
-.privacy-note { font-size: 12px; color: #8a8aa0; margin-top: 10px; line-height: 1.6; }
+.privacy-note { font-size: 12px; color: var(--color-caption-muted); margin-top: 10px; line-height: 1.6; }
 
 /* LLM 预审确认与品类存疑提示（分类≠裁判：AI 只建议，用户拍板） */
 .precheck-confirm {
-  border: 1px solid #e8c766;
-  background: #fffaeb;
+  border: 1px solid var(--color-confirm-edge);
+  background: var(--color-confirm-bg);
   margin-top: 10px;
 }
 .precheck-confirm .precheck-actions {
@@ -563,8 +568,8 @@ mark.kw,
   margin-top: 10px;
 }
 .precheck-suspect {
-  border: 1px solid #e8c766;
-  background: #fffaeb;
+  border: 1px solid var(--color-confirm-edge);
+  background: var(--color-confirm-bg);
   font-size: 13px;
   line-height: 1.6;
 }
