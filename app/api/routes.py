@@ -13,6 +13,7 @@ from fastapi.concurrency import run_in_threadpool
 from app.api.schemas import (
     AskRequest,
     AskResponse,
+    ClauseIndexInfo,
     PrecheckInfo,
     ReviewSummary,
     ScorecardInfo,
@@ -172,6 +173,7 @@ async def upload(
                         policies=result.get("policies") or [],
                         category=result.get("category") or cat,
                         category_label=result.get("category_label") or cat,
+                        clause_index=result.get("clause_index"),
                         text_preview=preview,
                         error=None,
                     )
@@ -197,6 +199,7 @@ def get_review(review_id: str):
     if not row:
         raise HTTPException(status_code=404, detail="审查记录不存在")
     pc = row.get("precheck")
+    clause_index = row.get("clause_index")
     return ReviewSummary(
         precheck=PrecheckInfo(**pc) if pc else None,
         id=row["id"],
@@ -206,6 +209,7 @@ def get_review(review_id: str):
         status=row.get("status") or "pending",
         items=row.get("items") or [],
         scorecard=ScorecardInfo(**(row.get("scorecard") or {})),
+        clause_index=ClauseIndexInfo(**clause_index) if clause_index else None,
         blind_candidates=row.get("blind_candidates") or [],
         blind_skipped_messages=row.get("blind_skipped_messages") or [],
         blind_skipped_reason=row.get("blind_skipped_reason"),

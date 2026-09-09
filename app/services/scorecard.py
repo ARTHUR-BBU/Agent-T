@@ -49,12 +49,15 @@ CORE_SEGMENTS = {"B", "D"}
 DEDUCTION_ATTENTION = 0.4
 DEDUCTION_NOT_FOUND = 0.6
 
-# 评分提示词的合同截断上限。2026-09-07 线上事故：12000 字 + 评分指令让 glm-5.2
+# 评分提示词的单次文本上限。2026-09-07 线上事故：12000 字 + 评分指令让 glm-5.2
 # 生成超 240s（同步上传被拖死）。压到 6000 后评分延迟回到 ~30-60s 量级；
 # 规则引擎不受此限（checklist 全文扫描，截断只影响参考层评分提示词）。
 # 截断策略（外部审计修正）：**头 + 尾**——主体信息集中在头部，签字/印章/落款
 # 常在尾部，只取头部会漏掉签署区信号。总预算仍为 MAX_CONTRACT_CHARS。
 # 待法务老钱追认：评分是纯参考层，头尾采样足够定调
+# 阶段 1.2：超过上限的合同不再整体截断——走分段阅读（model_review map-reduce），
+# 每个阅读块仍受本常量约束（延迟教训直接复用）；_clip_for_scoring 保留为
+# 追问（/api/ask）与分段回退路径的共用截断。
 MAX_CONTRACT_CHARS = 6000
 _TAIL_CHARS = 1000
 _CLIP_MARKER = "\n…(中段截断)…\n"
@@ -220,8 +223,7 @@ def clip_contract_text(text: str) -> str:
     return _clip_for_scoring(text)
 
 
-def build_user_prompt(text: str, items: list[dict[str, Any]]) -> str:
-    body = _clip_for_scoring(text)
+def _rule_block(items: list[dict[str, Any]]) -> str:
     lines = []
     for it in items:
         na = "（本类不适用）" if it.get("category_na") else ""
@@ -229,7 +231,12 @@ def build_user_prompt(text: str, items: list[dict[str, Any]]) -> str:
             f"- {it.get('name')}（id={it.get('id')}）：{it.get('status')}{na}"
             f"｜备注：{it.get('note') or '无'}"
         )
-    rule_block = "\n".join(lines)
+    return "\n".join(lines)
+
+
+def build_user_prompt(text: str, items: list[dict[str, Any]]) -> str:
+    body = _clip_for_scoring(text)
+    rule_block = _rule_block(items)
     return f"""规则引擎打标结果：
 {rule_block}
 
@@ -237,6 +244,176 @@ def build_user_prompt(text: str, items: list[dict[str, Any]]) -> str:
 {body}
 
 请按系统指令只输出 JSON。"""
+
+
+# ---------- 阶段 1.2 分段阅读（map-reduce）：长合同消灭 6000 字近视 ----------
+
+def build_map_system_prompt(policies: list[str]) -> str:
+    policy_block = "\n".join(f"- {p}" for p in policies) or "- （无额外政策）"
+    return f"""你是合同审查「分段阅读」助手。长合同被切成若干片段分批阅读，你只看到一个片段。任务：通读本片段，找出与规则清单相关的真实风险信号，产出**观察素材**。你不下结论、不打分、不改任何档位——汇总由另一轮完成。
+
+政策参考（为什么这样找）：
+{policy_block}
+
+输出要求：只输出 JSON 对象（不要 markdown 围栏），结构严格为：
+{{
+  "observations": [
+    {{"segment":"A","comment":"本片段内发现的具体风险点，须点明条款位置（如「第五条」）与关键表述","gap_item_ids":["表述弱/有缺口/值得补盲的清单项id"],"candidates":[{{"item_id":"...","name":"...","note":"...","quote":"合同原文连续摘录"}}]}}
+  ]
+}}
+
+说明：
+- segment 填该风险点所属的评分段 key；与清单无关的片段输出 {{"observations":[]}}。
+- quote 必须是**本片段原文连续摘录**，没有原文依据就不要输出候选。
+- 禁止整体性背书（如"没有问题""可以放心签署"）、禁止效力越权判断（如"该条款无效"）、禁止推翻规则档位的表述（如"提示可以忽略"）。"""
+
+
+def build_map_user_prompt(chunk_text: str, items: list[dict[str, Any]], part_no: int, part_total: int) -> str:
+    return f"""规则引擎打标清单：
+{_rule_block(items)}
+
+合同片段（第 {part_no}/{part_total} 部分）：
+{chunk_text}
+
+请按系统指令只输出 JSON。"""
+
+
+def build_reduce_user_prompt(items: list[dict[str, Any]], observations_block: str) -> str:
+    """汇总轮 user prompt：规则打标 + 分段观察素材，**不含合同全文**（延迟护栏：
+    输入规模与单次调用路径同量级）。"""
+    return f"""规则引擎打标结果：
+{_rule_block(items)}
+
+分段阅读观察（分片阅读产生的素材，仅供定位与展开；档位与扣分一律以规则打标为准，不得因素材改判）：
+{observations_block}
+
+请按系统指令只输出 JSON（输出结构与单文本版完全一致）。"""
+
+
+def parse_map_payload(raw: str) -> Optional[list[dict[str, Any]]]:
+    """解析 map 轮输出。成功返回 observations 列表（合法空 = []）；解析失败返回 None
+    ——调用方据此区分「无风险」与「结构错误」，二者不能混为回退依据。"""
+    if not raw:
+        return None
+    text = raw.strip()
+    fence = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", text)
+    if fence:
+        text = fence.group(1).strip()
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError:
+        m = re.search(r"\{[\s\S]*\}", text)
+        if not m:
+            return None
+        try:
+            obj = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            return None
+    obs = obj.get("observations") if isinstance(obj, dict) else None
+    if not isinstance(obs, list):
+        return None
+    return [o for o in obs if isinstance(o, dict)]
+
+
+# 观察素材进入 reduce prompt 前的尺寸护栏（防素材自身膨胀拖垮汇总轮延迟）
+_OBS_COMMENT_MAX = 200
+_OBS_CAND_NOTE_MAX = 100
+_OBS_CAND_QUOTE_MAX = 150
+_OBS_MAX_ENTRIES = 40
+
+
+def format_observations(observations: list[dict[str, Any]]) -> str:
+    """把各片段观察聚合成 reduce prompt 的素材块；进门先过禁语清洗（防禁语
+    经素材回流放大重试）。"""
+    lines: list[str] = []
+    for i, obs in enumerate(observations[:_OBS_MAX_ENTRIES], start=1):
+        comment = scrub_forbidden(str(obs.get("comment") or ""))[:_OBS_COMMENT_MAX]
+        seg = str(obs.get("segment") or "")
+        entry = f"【片段 {i}】{('[' + seg + '] ') if seg else ''}{comment}".rstrip()
+        gap_ids = obs.get("gap_item_ids")
+        if isinstance(gap_ids, list) and gap_ids:
+            entry += "\n  点名缺口：" + "、".join(str(g) for g in gap_ids[:10])
+        cands = obs.get("candidates")
+        if isinstance(cands, list):
+            for c in cands[:5]:
+                if not isinstance(c, dict):
+                    continue
+                note = scrub_forbidden(str(c.get("note") or ""))[:_OBS_CAND_NOTE_MAX]
+                quote = str(c.get("quote") or "")[:_OBS_CAND_QUOTE_MAX]
+                entry += f"\n  候选：{c.get('item_id', '')}｜{c.get('name', '')}｜{note}｜原文：{quote}"
+        lines.append(entry)
+    return "\n".join(lines)
+
+
+def build_review_chunks(
+    text: str, clause_index: Optional[dict[str, Any]] = None, max_segments: int = 4
+) -> list[str]:
+    """长合同 → ≤max_segments 个阅读块（每块 ≤MAX_CONTRACT_CHARS，延迟护栏）。
+
+    优先按条款索引对齐切块（条款不跨块）；无索引/坐标失效时按段落聚合回退。
+    块数超限时尾部并成一块并走头尾采样截断——覆盖 4 块 ≈2.4 万字，超出部分
+    是深度换延迟的既有取舍，显式截断好过静默假装读过。
+    """
+    text = text or ""
+    if not text:
+        return []
+    ranges = _reading_ranges(text, clause_index)
+    chunks: list[str] = []
+    cur_start: Optional[int] = None
+    cur_end = 0
+    for start, end in ranges:
+        size = end - start
+        if size > MAX_CONTRACT_CHARS:
+            # 单条款超限：冲刷当前块后按字符硬切
+            if cur_start is not None:
+                chunks.append(text[cur_start:cur_end])
+                cur_start = None
+            for i in range(start, end, MAX_CONTRACT_CHARS):
+                chunks.append(text[i : min(end, i + MAX_CONTRACT_CHARS)])
+            continue
+        if cur_start is None:
+            cur_start, cur_end = start, end
+            continue
+        if cur_end - cur_start + size > MAX_CONTRACT_CHARS:
+            chunks.append(text[cur_start:cur_end])
+            cur_start, cur_end = start, end
+        else:
+            cur_end = end
+    if cur_start is not None:
+        chunks.append(text[cur_start:cur_end])
+
+    if len(chunks) > max_segments:
+        tail = "".join(chunks[max_segments - 1 :])
+        chunks = chunks[: max_segments - 1] + [_clip_for_scoring(tail)]
+    return chunks
+
+
+def _reading_ranges(text: str, clause_index: Optional[dict[str, Any]]) -> list[tuple[int, int]]:
+    """阅读区间列表：条款对齐（索引有效）或段落聚合（回退）。区间有序且覆盖全文。"""
+    clauses = (clause_index or {}).get("clauses") or []
+    ranges = [
+        (int(c["start"]), int(c["end"]))
+        for c in clauses
+        if isinstance(c.get("start"), int) and isinstance(c.get("end"), int)
+        and 0 <= c["start"] < c["end"] <= len(text)
+    ]
+    if len(ranges) >= 1 and ranges == sorted(ranges):
+        # 补上索引外的散落文本（开头 preamble 已由索引建档；这里兜底残余间隙）
+        return ranges
+
+    # 回退：按段落聚合到 MAX_CONTRACT_CHARS
+    out: list[tuple[int, int]] = []
+    pos = 0
+    seg_start = 0
+    for para in text.split("\n"):
+        plen = len(para) + 1
+        if pos - seg_start + plen > MAX_CONTRACT_CHARS and pos > seg_start:
+            out.append((seg_start, pos))
+            seg_start = pos
+        pos += plen
+    if seg_start < len(text):
+        out.append((seg_start, len(text)))
+    return out
 
 
 # ---------- parsing & post-processing ----------

@@ -102,7 +102,8 @@ NDA 红线（风险金标 / 对抗样例须为「需关注」，不得「通过�
 | LLM 预审 | `PRECHECK_ENABLED`（默认 `true`；上传时 LLM 分类+支持性判断，不支持类型不开审）；`PRECHECK_TIMEOUT_SECONDS`（预审独立超时，默认 30；**阶段 0.5 起对 xAI 分支同样生效**——此前 xAI 写死 60s 不吃此配置） |
 | 模型分级（阶段 0.5） | `DEEPSEEK_MODEL_PRECHECK` / `DEEPSEEK_MODEL_REVIEW`（智谱 `GLM_MODEL_*`、xAI `GROK_MODEL_*` 同理）：未设回落 `DEEPSEEK_MODEL` 等，**默认配置零行为变化** |
 | 限频（阶段 0.5） | `RATE_LIMIT_UPLOAD_PER_MINUTE`（默认 10）、`RATE_LIMIT_ASK_PER_MINUTE`（默认 20）；`0`=关闭；超限 429「过于频繁」+ Retry-After；单进程假设，多 worker 限额按 worker 数放大。注意：按客户端 IP 计数，办公室/校园等 NAT 共享出口时是**全体共享额度**，误伤则调大或设 0 关闭 |
-| 单次审查预算（阶段 0.5） | `LLM_BUDGET_PER_REVIEW`（默认 12；`0`=不限）：预审+评分/补盲的 LLM 调用总量，超限走软降级（评分卡 `unavailable(budget_exceeded)`、预审 skip），规则引擎照常 |
+| 单次审查预算（阶段 0.5） | `LLM_BUDGET_PER_REVIEW`（默认 12；`0`=不限）：预审+评分/补盲的 LLM 调用总量，超限走软降级（评分卡 `unavailable(budget_exceeded)`、预审 skip），规则引擎照常。阶段 1.2 分段阅读后最坏 8 次（预审 2 + 分段 map 4 + 汇总 2） |
+| 分段阅读块数（阶段 1.2） | `LLM_REVIEW_MAX_SEGMENTS`（默认 4）：长合同（>6000 字）评分/补盲分段阅读的块数上限，每块 ≤6000 字；超限尾部并块走头尾采样。短合同（≤6000 字）不受影响，仍走单次调用 |
 | 追问实现 | `app/services/llm_ask.py` |
 | 无 Key 时 | 界面/接口提示「追问暂未开通」；清单审查照常可跑 |
 

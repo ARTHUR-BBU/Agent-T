@@ -236,6 +236,21 @@ def test_attention_item_click_shows_detail_and_ask(home):
     assert home.is_visible("#detail-actions")
 
 
+def test_clause_badge_and_meta_count(home):
+    """阶段 1.1：条款索引锚定——meta 行露出段数，详情区露出「所在条款」。"""
+    _upload(home)
+    assert "已识别条款" in home.inner_text("#results-meta")
+    rows = home.locator("#item-list .item")
+    found = False
+    for i in range(rows.count()):
+        rows.nth(i).click()
+        badge = home.locator("#detail-clause")
+        if badge.is_visible() and "所在条款" in badge.inner_text():
+            found = True
+            break
+    assert found, "至少一个条目应锚定到条款（段落型回退索引也算）"
+
+
 def test_attention_item_with_quote_gets_keyword_highlight(home):
     """采购金标的需关注项带原文命中：详情区应渲染 <mark> 关键词高亮
     （lease_sample 的需关注项是缺失型、无摘句，故换采购金标验证）。"""

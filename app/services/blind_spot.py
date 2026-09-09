@@ -8,8 +8,9 @@ M3.5 changes (定向补盲):
 - Switch via BLIND_SPOT_ENABLED (default true; also 1/yes). When off: zero
   candidates, no 补盲 strings in payload; scorecard still runs.
 
-The single merged LLM call lives in model_review.py; this module holds the
-candidate normalization/validation helpers.
+The final merged LLM call lives in model_review.py (阶段 1.2 起长合同为
+map-reduce 分段阅读，候选仍由汇总轮 payload 承载、本模块对全文校验 quote);
+this module holds the candidate normalization/validation helpers.
 """
 from __future__ import annotations
 
