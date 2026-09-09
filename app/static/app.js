@@ -100,10 +100,53 @@
     return out;
   }
 
-  async function upload() {
+  function categoryLabel(id) {
+    const opt = [...$("category").options].find((o) => o.value === id);
+    return opt ? opt.textContent : id;
+  }
+
+  function hidePrecheckConfirm() {
+    $("precheck-confirm").classList.add("hidden");
+  }
+
+  // LLM 预审确认（分类≠裁判：AI 只建议，用户拍板；静默切换是事故温床）
+  function showPrecheckConfirm(data) {
+    const box = $("precheck-confirm");
+    const pc = data.precheck || {};
+    const detected = pc.detected_type || "其他类型合同";
+    $("precheck-summary").textContent = pc.summary
+      ? `AI 预判这是一份「${detected}」（${pc.summary}）。`
+      : `AI 预判这是一份「${detected}」。`;
+    if (data.suggested_category) {
+      $("precheck-question").textContent =
+        `与您选择的「${categoryLabel($("category").value)}」不一致。` +
+        "用哪套清单审查，决定提示是否切题。";
+      $("btn-precheck-switch").textContent = `切换为${categoryLabel(data.suggested_category)}`;
+      $("btn-precheck-switch").classList.remove("hidden");
+      $("btn-precheck-keep").textContent = "按原类型继续";
+    } else {
+      // 支持列表由后端数据渲染（肉饼门禁 P3-2：硬编码在未来加品类时必漂移）
+      const supported = (data.supported_categories || [])
+        .map((c) => c.label)
+        .filter(Boolean)
+        .join("、");
+      $("precheck-question").textContent =
+        `该类型暂不在支持范围内（当前支持：${supported || "租赁合同、采购合同、保密协议 NDA"}），` +
+        "因此本次未生成审查报告。未审查不等于没有风险，" +
+        "签署前请自行仔细核对，必要时咨询专业律师。";
+      $("btn-precheck-switch").classList.add("hidden");
+      // 小智娘门禁 P3-2：无路可走时「按原类型继续」是误导，改文案只收起弹窗
+      $("btn-precheck-keep").textContent = "重新选择类型";
+    }
+    box.dataset.suggested = data.suggested_category || "";
+    box.classList.remove("hidden");
+  }
+
+  async function upload(categoryOverride, force = false) {
     const fileInput = $("file");
     const err = $("upload-error");
     err.classList.add("hidden");
+    hidePrecheckConfirm();
     if (!fileInput.files || !fileInput.files[0]) {
       err.textContent = "请先选择合同文件。";
       err.classList.remove("hidden");
@@ -113,11 +156,18 @@
     btn.disabled = true;
     const fd = new FormData();
     fd.append("file", fileInput.files[0]);
-    fd.append("category", $("category").value);
+    fd.append("category", categoryOverride || $("category").value);
+    // 确认弹窗里的拍板必须带 force（小智娘门禁 P1）：
+    // 否则重传会重跑预审，LLM 持续不同意 = 用户永远开不了审
+    if (force) fd.append("force", "1");
     try {
       const res = await fetch("/api/upload", { method: "POST", body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "上传失败");
+      if (data.status === "category_confirm") {
+        showPrecheckConfirm(data);
+        return;
+      }
       state.reviewId = data.review_id;
       state.selectedItemId = null;
       show("results");
@@ -180,6 +230,17 @@
     let metaExtra = `需关注 ${nAtt} 项 · 已通过 ${nPass} 项`;
     if (nBlind > 0) {
       metaExtra += ` · 补盲候选 ${nBlind} 项`;
+    }
+    // 品类存疑非阻断提示（老钱金标：知情权不能省，打断权必须不给）
+    const suspectBox = $("precheck-suspect");
+    if (data.precheck && data.precheck.suspect) {
+      suspectBox.textContent =
+        `品类存疑：本报告按「${data.category_label || data.category}」清单审查，` +
+        `AI 预判倾向「${data.precheck.detected_type || "其他类型"}」（把握较低）。` +
+        "结论请结合文件实际类型阅读。";
+      suspectBox.classList.remove("hidden");
+    } else {
+      suspectBox.classList.add("hidden");
     }
     $("results-meta").innerHTML =
       `<strong>${escapeHtml(data.filename || "")}</strong>` +
@@ -530,7 +591,20 @@
       .replace(/"/g, "&quot;");
   }
 
-  $("btn-upload").addEventListener("click", upload);
+  $("btn-upload").addEventListener("click", () => upload());
+  $("btn-precheck-switch").addEventListener("click", () => {
+    const sug = $("precheck-confirm").dataset.suggested;
+    if (sug) {
+      $("category").value = sug;
+      upload(sug, true); // 用户已拍板，带 force 防预审重跑死循环
+    }
+  });
+  $("btn-precheck-keep").addEventListener("click", () => {
+    const sug = $("precheck-confirm").dataset.suggested;
+    hidePrecheckConfirm();
+    if (sug) upload(undefined, true); // 坚持按原品类审：已确认，force 继续
+    // 无 sug（不支持类）：仅收起弹窗，用户回表单重新选择类型
+  });
   $("btn-ask").addEventListener("click", sendAsk);
   $("btn-back-upload").addEventListener("click", () => show("upload"));
   $("btn-back-results").addEventListener("click", () => show("results"));

@@ -5,11 +5,14 @@ so synonym and paraphrase groups stay deterministic without an LLM.
 """
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 CONFIG_DIR = Path(__file__).resolve().parents[2] / "config"
 
@@ -35,7 +38,10 @@ def list_categories() -> list[dict[str, str]]:
 def load_checklist(category: str) -> dict[str, Any]:
     path = CONFIG_DIR / f"checklist_{category}.yaml"
     if not path.exists():
-        # default to procurement
+        # fallback to procurement（老钱预审金标附警告：静默兜底是「服务合同按
+        # 采购硬审」事故的结构性温床——保留兼容但必须留痕，上游 precheck
+        # 生效路径上未知品类已显式走 category_confirm，不再落到这里）
+        logger.warning("checklist fallback: unknown category=%s -> procurement", category)
         path = CONFIG_DIR / "checklist_procurement.yaml"
         if not path.exists():
             raise FileNotFoundError(f"No checklist config for category={category}")

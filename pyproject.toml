@@ -23,3 +23,6 @@ docs = ["docling>=2.0.0", "pypdf>=4.0.0"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+  "live_llm: 真实 LLM Key 专项（无 Key 自动 skip；验收专项跑，不进 CI 门禁）",
+]

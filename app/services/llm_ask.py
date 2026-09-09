@@ -262,7 +262,7 @@ def _build_user_prompt(question: str, item: dict[str, Any], contract_text: str) 
 """
 
 
-def _chat_deepseek(api_key: str, system: str, user: str) -> str:
+def _chat_deepseek(api_key: str, system: str, user: str, timeout: float | None = None) -> str:
     """DeepSeek（OpenAI 兼容 /chat/completions）。"""
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -276,7 +276,7 @@ def _chat_deepseek(api_key: str, system: str, user: str) -> str:
         ],
         "temperature": 0.3,
     }
-    llm_timeout = float(os.getenv("LLM_TIMEOUT_SECONDS", "180"))
+    llm_timeout = timeout if timeout is not None else float(os.getenv("LLM_TIMEOUT_SECONDS", "180"))
     with httpx.Client(timeout=llm_timeout) as client:
         resp = client.post(_deepseek_chat_url(), headers=headers, json=payload)
         if resp.status_code >= 400:
@@ -291,7 +291,7 @@ def _chat_deepseek(api_key: str, system: str, user: str) -> str:
     return (msg.get("content") or "").strip()
 
 
-def _chat_zhipu(api_key: str, system: str, user: str) -> str:
+def _chat_zhipu(api_key: str, system: str, user: str, timeout: float | None = None) -> str:
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -308,7 +308,7 @@ def _chat_zhipu(api_key: str, system: str, user: str) -> str:
     # glm-5.2 对大合同评分实测可超 90s（6000 字单轮已 31s，12000 字+清单提示更久），
     # 写死 90s 会把整个同步上传拖到超时降级（2026-09-07 线上事故）；
     # 超时后走环境变量可调，服务器容器配 LLM_TIMEOUT_SECONDS=240
-    llm_timeout = float(os.getenv("LLM_TIMEOUT_SECONDS", "180"))
+    llm_timeout = timeout if timeout is not None else float(os.getenv("LLM_TIMEOUT_SECONDS", "180"))
     with httpx.Client(timeout=llm_timeout) as client:
         resp = client.post(url, headers=headers, json=payload)
         if resp.status_code >= 400:

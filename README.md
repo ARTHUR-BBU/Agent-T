@@ -71,6 +71,8 @@ bash scripts/demo_procurement.sh
 | `XAI_API_KEY` / `GROK_API_KEY` | 可选回退（**一般不用**） |
 | `BLIND_SPOT_ENABLED` | 补盲开关，默认 `true`；关则纯规则、界面无「补盲」 |
 | `LLM_TIMEOUT_SECONDS` | 单次大模型调用超时，默认 180 |
+| `PRECHECK_ENABLED` | LLM 预审（上传时合同分类+支持性判断）开关，默认 `true`；设 `false` 退回纯规则行为 |
+| `PRECHECK_TIMEOUT_SECONDS` | 预审独立超时秒数，默认 30 |
 | `STORE_DB_PATH` / `STORE_TTL_HOURS` | 审查记录 SQLite 路径 / 保留时长（默认 24h，0=永久） |
 
 > 数据流向说明：配置了模型 Key 时，上传合同的**文本内容**会发送至所配大模型（DeepSeek/智谱）用于评分、补盲与追问；不配置 Key 则纯本地规则审查，数据不出服务器。

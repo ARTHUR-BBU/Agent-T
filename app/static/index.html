@@ -32,6 +32,16 @@
         </label>
         <button id="btn-upload" class="primary" type="button">开始审查</button>
         <p id="upload-error" class="error hidden"></p>
+        <!-- LLM 预审确认（分类≠裁判：AI 只建议，用户拍板） -->
+        <div id="precheck-confirm" class="card precheck-confirm hidden">
+          <p class="detail-label">AI 预判</p>
+          <p id="precheck-summary" class="detail-note"></p>
+          <p id="precheck-question" class="detail-note"></p>
+          <div class="precheck-actions">
+            <button id="btn-precheck-switch" class="primary" type="button"></button>
+            <button id="btn-precheck-keep" type="button">按原类型继续</button>
+          </div>
+        </div>
         <p class="privacy-note">审查说明：上传后合同文本将发送至所配置的大模型（DeepSeek / 智谱）用于评分与条款解释；不配置模型 Key 时仅在本机做规则审查、数据不出服务器。审查记录定期自动清除。</p>
       </div>
     </section>
@@ -47,6 +57,7 @@
       </div>
       <div id="results-error" class="card error hidden"></div>
       <div id="results-body" class="hidden">
+        <div id="precheck-suspect" class="card precheck-suspect hidden"></div>
         <div class="meta card" id="results-meta"></div>
         <!-- M4 审查报告导出：与页面同源的 store 数据，无二次 LLM 调用 -->
         <div class="report-actions hidden" id="report-actions">

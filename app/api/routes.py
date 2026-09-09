@@ -8,17 +8,20 @@ from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
+from fastapi.concurrency import run_in_threadpool
 
 from app.api.schemas import (
     AskRequest,
     AskResponse,
+    PrecheckInfo,
     ReviewSummary,
     ScorecardInfo,
     UploadResponse,
 )
 from app.graph.pipeline import run_review
-from app.services import llm_ask, report as report_service
+from app.services import llm_ask, precheck as precheck_service, report as report_service
 from app.services.checklist import list_categories
+from app.services.extract import ExtractionError, extract_text
 from app.services.store import store
 
 router = APIRouter(prefix="/api")
@@ -44,6 +47,7 @@ def categories():
 async def upload(
     file: UploadFile = File(...),
     category: str = Form("procurement"),
+    force: bool = Form(False),
 ):
     # 品类必须显式合法（外部审计：未知品类此前会静默回退采购清单）
     valid_categories = {c["id"] for c in list_categories()}
@@ -61,6 +65,49 @@ async def upload(
             status_code=400,
             detail="不支持的文件类型（支持 .txt / .md / .pdf / .docx / .doc）",
         )
+
+    # LLM 预审（spec-llm-precheck）：分类 ≠ 裁判——只决定用哪把尺子/要不要审，
+    # 档位仍 100% 出自规则引擎。任何失败降级为照旧开审，绝不阻断主流程。
+    # run_in_threadpool（肉饼门禁 P1）：同步 httpx 调用直接写在 async 路由里
+    # 会冻结整个事件循环——LLM 端点一慢全站挂起
+    precheck_record: dict | None = None
+    try:
+        contract_text = extract_text(filename, raw)
+    except ExtractionError:
+        contract_text = None  # 提取失败交给 worker 的 fail-closed 路径统一报错
+    if contract_text is not None:
+        outcome = await run_in_threadpool(
+            precheck_service.run_precheck, contract_text, category
+        )
+        branch = precheck_service.decide_branch(outcome, category)
+        # force（小智娘门禁 P1）：用户在确认弹窗里已拍板（切换或坚持原品类）。
+        # 不带 force 重传会重跑预审——LLM 持续不同意时用户永远开不了审（死循环）。
+        # force 只跳过 confirm 分支，预审结论仍记录为 suspect 知情提示。
+        if branch["action"] != "proceed" and force and outcome.result is not None:
+            branch = {"action": "proceed", "suspect": True}
+        if branch["action"] != "proceed":
+            r = outcome.result
+            return UploadResponse(
+                message="category_confirm",
+                status="category_confirm",
+                precheck=PrecheckInfo(
+                    performed=True,
+                    detected_type=r.detected_type,
+                    confidence=r.confidence,
+                    summary=r.summary,
+                ),
+                suggested_category=r.suggested_category if r.is_supported else None,
+                supported_categories=list_categories(),
+            )
+        if branch["suspect"] and outcome.result is not None:
+            r = outcome.result
+            precheck_record = {
+                "performed": True,
+                "detected_type": r.detected_type,
+                "confidence": r.confidence,
+                "summary": r.summary,
+                "suspect": True,
+            }
 
     # 占并发槽位：满则 429（无界线程池被脚本刷 500 次上传 = 500 个 LLM 调用）
     if not _review_slots.acquire(blocking=False):
@@ -81,6 +128,7 @@ async def upload(
         text="",
         policies=[],
         error=None,
+        precheck=precheck_record,
     )
 
     # 审查放后台线程：上传立即返回 review_id（外部审计 P1：同步等待模型
@@ -135,7 +183,9 @@ def get_review(review_id: str):
     row = store.get(review_id)
     if not row:
         raise HTTPException(status_code=404, detail="审查记录不存在")
+    pc = row.get("precheck")
     return ReviewSummary(
+        precheck=PrecheckInfo(**pc) if pc else None,
         id=row["id"],
         filename=row.get("filename") or "",
         category=row.get("category") or "",

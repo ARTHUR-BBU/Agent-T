@@ -550,3 +550,21 @@ mark.kw,
 
 /* 上传页隐私说明（外部审计 P1：原文发送至第三方模型须明示） */
 .privacy-note { font-size: 12px; color: #8a8aa0; margin-top: 10px; line-height: 1.6; }
+
+/* LLM 预审确认与品类存疑提示（分类≠裁判：AI 只建议，用户拍板） */
+.precheck-confirm {
+  border: 1px solid #e8c766;
+  background: #fffaeb;
+  margin-top: 10px;
+}
+.precheck-confirm .precheck-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+.precheck-suspect {
+  border: 1px solid #e8c766;
+  background: #fffaeb;
+  font-size: 13px;
+  line-height: 1.6;
+}
