@@ -170,6 +170,7 @@
       }
       state.reviewId = data.review_id;
       state.selectedItemId = null;
+      setReviewHash(data.review_id);
       show("results");
       $("results-loading").classList.remove("hidden");
       $("results-body").classList.add("hidden");
@@ -188,15 +189,22 @@
     const loading = $("results-loading");
     const body = $("results-body");
     const errBox = $("results-error");
+    // 快照 reviewId（小智娘复验 P3）：用户中途 Back 走人后，睡醒的循环不得
+    // 拿着失效 rid 去 fetch/清 hash，干扰用户刚导航到的新审查
+    const rid = state.reviewId;
     // 审查已改为后台任务（上传秒回 review_id）：大合同含模型评分约 1-2 分钟，
     // 轮询预算给足 5 分钟（150 × 2s），done/error 提前退出
     for (let i = 0; i < 150; i++) {
-      const res = await fetch(`/api/review/${state.reviewId}`);
+      if (state.reviewId !== rid) return;
+      const res = await fetch(`/api/review/${rid}`);
       const data = await res.json();
+      if (state.reviewId !== rid) return;
       if (!res.ok) {
         loading.classList.add("hidden");
         errBox.textContent = data.detail || "获取结果失败";
         errBox.classList.remove("hidden");
+        // 404（记录不存在/已过期）：清掉 hash，避免刷新永远 404（小智娘 P3-3）
+        if (res.status === 404 && state.reviewId === rid) clearReviewHash();
         return;
       }
       state.review = data;
@@ -591,6 +599,53 @@
       .replace(/"/g, "&quot;");
   }
 
+  // 审查记录进 URL（阳仔 UI 提案：reviewId 只存内存 = 刷新即丢 1-2 分钟的等待，
+  // 事故级体验）。刷新/重开页面时从 hash 恢复轮询。
+  function setReviewHash(rid) {
+    try {
+      window.location.hash = "#/review/" + rid;
+    } catch (e) { /* 隐私模式等场景忽略 */ }
+  }
+
+  function clearReviewHash() {
+    try {
+      history.replaceState(null, "", window.location.pathname + window.location.search);
+    } catch (e) { /* ignore */ }
+  }
+
+  function reviewIdFromHash() {
+    const m = (window.location.hash || "").match(/^#\/review\/([A-Za-z0-9]+)/);
+    return m ? m[1] : null;
+  }
+
+  async function resumeFromHash() {
+    const rid = reviewIdFromHash();
+    if (!rid) return;
+    state.reviewId = rid;
+    state.selectedItemId = null;
+    show("results");
+    hidePrecheckConfirm();
+    $("results-loading").classList.remove("hidden");
+    $("results-body").classList.add("hidden");
+    $("results-error").classList.add("hidden");
+    $("item-detail").classList.add("hidden");
+    await pollReview();
+  }
+
+  // 浏览器 Back/Forward 与界面同步（小智娘门禁 P2-4：hash 已退界面还在，
+  // 此时刷新会让「刷新丢结果」事故从 Back 路径复发）
+  window.addEventListener("hashchange", () => {
+    const rid = reviewIdFromHash();
+    if (rid === state.reviewId) return;
+    if (rid) {
+      resumeFromHash();
+    } else {
+      state.reviewId = null;
+      hidePrecheckConfirm();
+      show("upload");
+    }
+  });
+
   $("btn-upload").addEventListener("click", () => upload());
   $("btn-precheck-switch").addEventListener("click", () => {
     const sug = $("precheck-confirm").dataset.suggested;
@@ -606,6 +661,12 @@
     // 无 sug（不支持类）：仅收起弹窗，用户回表单重新选择类型
   });
   $("btn-ask").addEventListener("click", sendAsk);
-  $("btn-back-upload").addEventListener("click", () => show("upload"));
+  $("btn-back-upload").addEventListener("click", () => {
+    clearReviewHash();
+    state.reviewId = null;
+    show("upload");
+  });
   $("btn-back-results").addEventListener("click", () => show("results"));
+
+  resumeFromHash();
 })();

@@ -204,6 +204,25 @@ def test_full_review_flow_renders_results(home):
     assert home.locator("#item-list .item.pass").count() >= 10
 
 
+def test_refresh_preserves_review_via_hash(home):
+    """阶段 0.1（阳仔 UI 提案）：reviewId 进 URL hash，刷新不丢审查结果。"""
+    _upload(home)
+    assert "#/review/" in home.url, "上传成功后 hash 必须携带 review_id"
+    home.reload()
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    home.wait_for_selector(".item", state="visible", timeout=5000)
+    assert "#/review/" in home.url
+    assert "lease_sample.txt" in home.inner_text("#results-meta")
+
+
+def test_back_to_upload_clears_hash(home):
+    _upload(home)
+    assert "#/review/" in home.url
+    home.click("#btn-back-upload")
+    home.wait_for_selector("#screen-upload", state="visible")
+    assert "#/review/" not in home.url, "返回上传页必须清掉旧审查 hash"
+
+
 def test_attention_item_click_shows_detail_and_ask(home):
     _upload(home)
     home.locator("#item-list .item.attention").first.click()
