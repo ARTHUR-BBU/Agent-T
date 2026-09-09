@@ -29,7 +29,8 @@ logger = logging.getLogger(__name__)
 
 WINDOW_SECONDS = 60.0
 
-# 桶数上限：超过时顺手清理空桶，防 IP 字典无界增长（公网扫描器会打满 /24）
+# 桶数上限：超过时驱逐已滑出窗口的死键（见 allow 内注释；公网扫描器
+# 会打满 /24，死键必须能被回收，字典才不会无界增长）
 _MAX_BUCKETS = 512
 
 
@@ -73,11 +74,16 @@ class SlidingWindowLimiter:
                 return False
             bucket.append(ts)
             if len(self._buckets) > _MAX_BUCKETS:
-                # 只清空桶（键保留），O(n) 一次、锁内完成；键本身开销极小
-                for k, b in self._buckets.items():
-                    if not b:
-                        continue
-                    b.clear()
+                # 驱逐死键（小智娘门禁 P2-1 整改）：只删「最后活跃时间已滑出
+                # 窗口」的键与空桶，绝不清活跃桶——全局清窗会让攻击流量反而
+                # 把正常 IP 的计数洗掉，与本模块防刷目的相反。
+                # 字典键数随之有界：键只会在其记录仍在窗口内时存活。
+                stale = [
+                    k for k, b in self._buckets.items()
+                    if k != key and (not b or b[-1] <= cutoff)
+                ]
+                for k in stale:
+                    del self._buckets[k]
             return True
 
     def reset(self) -> None:

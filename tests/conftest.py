@@ -21,6 +21,10 @@ def _precheck_off(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _rate_limit_off(monkeypatch):
+    # 时序提醒（小智娘门禁 P3-5）：本 fixture 是 function 级，module/session 级
+    # fixture 的 setup 发生在它之前，若未来有人在模块级 fixture 里打 API 且
+    # 未显式设限频 env，会在默认限额下踩 429——届时请在那个 fixture 的 env
+    # 里显式关闭（参照 test_frontend_e2e.py 的做法）
     monkeypatch.setenv("RATE_LIMIT_UPLOAD_PER_MINUTE", "0")
     monkeypatch.setenv("RATE_LIMIT_ASK_PER_MINUTE", "0")
 

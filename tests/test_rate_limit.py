@@ -75,14 +75,29 @@ def test_different_ips_independent(monkeypatch):
     assert lim.allow("2.2.2.2", now=100.0), "不同 IP 互不影响"
 
 
-def test_bucket_cleanup_when_too_many(monkeypatch):
-    lim = _limiter(monkeypatch, 1)
+def test_eviction_never_touches_active_buckets(monkeypatch):
+    """门禁 P2-1 回归探针：桶数超限触发驱逐时，窗口内活跃 IP 的计数
+    必须原样保留——全局清窗会让攻击流量反而洗掉限频（旧实现的真实缺陷）。"""
+    lim = _limiter(monkeypatch, 2)
+    # 受害者用满 2/2 窗口（t=100，60s 窗口到 t=160 仍活跃）
+    assert lim.allow("victim", now=100.0)
+    assert lim.allow("victim", now=100.1)
+    assert not lim.allow("victim", now=100.2)
+    # 扫描器灌 600 个独立 IP（t=130，victim 仍在窗口内）触发驱逐
     for i in range(600):
-        lim.allow(f"10.0.0.{i}", now=100.0)
-    assert len(lim._buckets) <= 600
-    # 触发一次超阈值后的清理路径（桶被清空但键保留）
-    lim.allow("10.0.0.0", now=200.0)
-    assert all(isinstance(b, type(lim._buckets["10.0.0.0"])) for b in lim._buckets.values())
+        assert lim.allow(f"10.0.0.{i}", now=130.0)
+    assert "victim" in lim._buckets, "活跃键不得被驱逐"
+    assert not lim.allow("victim", now=130.5), "受害者的限频不得被扫描流量洗掉"
+
+
+def test_eviction_removes_expired_keys(monkeypatch):
+    """已滑出窗口的死键在超阈值时被删除：字典键数有界（防扫描器堆死键）。"""
+    lim = _limiter(monkeypatch, 1)
+    assert lim.allow("victim", now=100.0)
+    # 600 个独立 IP 在远超 60s 窗口之后灌入 → victim 成死键，应被驱逐
+    for i in range(600):
+        lim.allow(f"10.0.1.{i}", now=700.0)
+    assert "victim" not in lim._buckets, "过期死键必须被回收"
 
 
 # ---------- validate_rate_limit_config（fail-closed 对齐 auth） ----------
@@ -136,12 +151,12 @@ def test_ask_rate_limited_before_404(monkeypatch):
     assert "提问过于频繁" in r.json()["detail"]
 
 
-def test_queue_full_429_has_no_retry_after(monkeypatch):
-    """既有「排队已满」与限频 429 的可区分性：前者无 Retry-After 头。
-    （并发槽占满路径难以在单测稳定构造，这里只锁响应头契约的实现一致性）"""
+def test_queue_slots_still_exist(monkeypatch):
+    """并发槽位配置仍在（防误删）——「排队已满」与限频是两道独立闸门，
+    429 文案与 Retry-After 头的可区分性由上两条限频测试锁定。"""
     from app.api import routes
 
-    assert routes.MAX_CONCURRENT_REVIEWS >= 1  # 槽位配置仍在（防误删）
+    assert routes.MAX_CONCURRENT_REVIEWS >= 1
 
 
 def test_reset_for_tests_clears_buckets(monkeypatch):
