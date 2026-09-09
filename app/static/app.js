@@ -198,6 +198,8 @@
         loading.classList.add("hidden");
         errBox.textContent = data.detail || "获取结果失败";
         errBox.classList.remove("hidden");
+        // 404（记录不存在/已过期）：清掉 hash，避免刷新永远 404（小智娘 P3-3）
+        if (res.status === 404) clearReviewHash();
         return;
       }
       state.review = data;
@@ -625,6 +627,20 @@
     await pollReview();
   }
 
+  // 浏览器 Back/Forward 与界面同步（小智娘门禁 P2-4：hash 已退界面还在，
+  // 此时刷新会让「刷新丢结果」事故从 Back 路径复发）
+  window.addEventListener("hashchange", () => {
+    const rid = reviewIdFromHash();
+    if (rid === state.reviewId) return;
+    if (rid) {
+      resumeFromHash();
+    } else {
+      state.reviewId = null;
+      hidePrecheckConfirm();
+      show("upload");
+    }
+  });
+
   $("btn-upload").addEventListener("click", () => upload());
   $("btn-precheck-switch").addEventListener("click", () => {
     const sug = $("precheck-confirm").dataset.suggested;
@@ -642,6 +658,7 @@
   $("btn-ask").addEventListener("click", sendAsk);
   $("btn-back-upload").addEventListener("click", () => {
     clearReviewHash();
+    state.reviewId = null;
     show("upload");
   });
   $("btn-back-results").addEventListener("click", () => show("results"));
