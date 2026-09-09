@@ -217,14 +217,14 @@ def test_map_budget_stops_early_reduce_still_runs():
     assert result["scorecard"]["available"] is True
 
 
-def test_budget_exhausted_after_partial_map_soft_degrades():
-    """预算只够 1 块 map：第 2 块停，reduce 无额度 → budget_exceeded 软降级。"""
+def test_budget_of_one_goes_straight_to_reduce():
+    """预算 1：map 预留逻辑直接跳过全部 map，唯一额度保 reduce。"""
     text = _fixture_text()
-    chat, calls = _chat_router([], map_output=_map_observations())
+    chat, calls = _chat_router([_reduce_payload()], map_output=_map_observations())
     result = _run(text, chat, budget=ReviewBudget(1))
-    assert len(calls) == 1, "只允许 1 次 map 调用"
-    assert result["scorecard"]["available"] is False
-    assert result["scorecard"]["reason"] == "budget_exceeded"
+    assert len(calls) == 1, "0 次 map + 1 次 reduce"
+    assert "分段阅读" not in calls[0][0]
+    assert result["scorecard"]["available"] is True
 
 
 # ---------- 补盲联动 ----------
@@ -259,3 +259,60 @@ def test_build_review_chunks_caps_at_max_segments():
 
 def test_build_review_chunks_empty_text():
     assert scorecard.build_review_chunks("", None) == []
+
+
+# ---------- 门禁整改回归 ----------
+
+def test_corrupted_clause_index_falls_back_to_paragraph_ranges():
+    """门禁 P1-1 防御纵深：塌缩/重叠/低覆盖的坏索引不得被分段路径采用。"""
+    text = "甲方应按约供货，逾期每日按千分之一支付违约金。" * 100
+    bad_index = {
+        "strategy": "paragraph",
+        "count": 2,
+        "clauses": [
+            {"id": "c01", "heading": "x", "start": 0, "end": 50, "chars": 50},
+            {"id": "c02", "heading": "x", "start": 4, "end": 69, "chars": 65},
+        ],
+    }
+    chunks = scorecard.build_review_chunks(text, bad_index, max_segments=4)
+    covered = sum(len(c) for c in chunks)
+    assert covered >= 0.9 * len(text), "坏索引必须回退段落聚合，不得静默漏读正文"
+
+
+def test_tiny_tail_chunk_merged_not_wasted():
+    """门禁 P3 挂账④：碎尾块并入前块，不白耗一次 map 调用与预算。"""
+    # 1 字尾块场景：6000+1 字无换行 → 硬切后又并回，单块 6001 字
+    text = "超" * (scorecard.MAX_CONTRACT_CHARS + 1)
+    chunks = scorecard.build_review_chunks(text, None, max_segments=4)
+    assert len(chunks) == 1 and len(chunks[0]) == scorecard.MAX_CONTRACT_CHARS + 1
+
+    # 多块场景：12003 字（段落切在 6001）→ 尾块不得小于 32 字
+    text2 = "超" * 6000 + "\n" + "超" * 7001
+    chunks2 = scorecard.build_review_chunks(text2, None, max_segments=4)
+    assert len(chunks2) == 3, f"应切为 3 块（1 字碎块并入前块），实际 {len(chunks2)}"
+    assert all(len(c) >= 32 for c in chunks2), "不允许多块方案里残留碎块（每块都值一次 map 调用）"
+    assert sum(len(c) for c in chunks2) == len(text2), "切块不得丢字"
+
+
+def test_map_reserves_last_budget_credit_for_reduce():
+    """门禁 P3 整改：预算只够 map 吃时必须给 reduce 留 1 次额度，评分卡不得恒 unavailable。"""
+    text = _fixture_text()
+    chat, calls = _chat_router([_reduce_payload()], map_output=_map_observations())
+    result = _run(text, chat, budget=ReviewBudget(2))
+    # 预算 2：map 1 次（剩 1 时预留停手）+ reduce 1 次
+    assert len(calls) == 2
+    assert result["scorecard"]["available"] is True, "预留额度必须保证 reduce 能跑"
+
+
+def test_format_observations_scrubs_candidate_quote(monkeypatch):
+    """肉饼门禁 P3-1：禁语不得借候选 quote 字段回流 reduce prompt。"""
+    block = scorecard.format_observations(
+        [{
+            "segment": "C",
+            "comment": "正常评语",
+            "gap_item_ids": [],
+            "candidates": [{"item_id": "x", "name": "y", "note": "n", "quote": "这份合同没有问题"}],
+        }]
+    )
+    assert "没有问题" not in block
+    assert "【已过滤】" in block

@@ -93,6 +93,32 @@ def test_crlf_line_endings_still_indexed():
     assert idx["clauses"][0]["start"] == 0
 
 
+def test_repeated_content_buckets_never_collapse():
+    """门禁 P1-1 回归探针：重复内容文本（模板句×100）桶坐标不得塌缩重叠。"""
+    text = "甲方应按约供货，逾期每日按千分之一支付违约金。" * 100  # ≈2300 字，无换行
+    idx = build_clause_index(text)
+    assert idx["count"] >= 2
+    clauses = idx["clauses"]
+    covered = 0
+    prev_end = -1
+    for c in clauses:
+        assert c["start"] >= prev_end, "桶区间必须有序且互不重叠（塌缩=分段阅读静默漏读）"
+        covered += c["end"] - c["start"]
+        prev_end = c["end"]
+    assert covered >= 0.9 * len(text), "桶并集覆盖率不得低于 90%"
+    # 坐标必须落在合法范围
+    for c in clauses:
+        assert 0 <= c["start"] < c["end"] <= len(text)
+
+
+def test_fullwidth_indent_and_digits_headings():
+    """门禁 P2-1 回归探针：全角空格缩进标题 + 全角数字编号（中文 Word 排版高发）。"""
+    text = "　第一条 甲\n内容一。\n第１条 乙\n内容二。\n　　第三条 丙\n内容三。"
+    idx = build_clause_index(text)
+    assert idx["strategy"] == "numbered", "全角缩进/全角数字编号不得退化为 paragraph 伪桶"
+    assert idx["count"] == 3
+
+
 # ---------- 边界 ----------
 
 def test_empty_text_returns_empty_index():

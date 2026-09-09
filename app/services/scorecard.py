@@ -339,7 +339,8 @@ def format_observations(observations: list[dict[str, Any]]) -> str:
                 if not isinstance(c, dict):
                     continue
                 note = scrub_forbidden(str(c.get("note") or ""))[:_OBS_CAND_NOTE_MAX]
-                quote = str(c.get("quote") or "")[:_OBS_CAND_QUOTE_MAX]
+                # quote 同过禁语清洗（门禁 P3-1：禁语不得借 quote 字段回流 reduce prompt）
+                quote = scrub_forbidden(str(c.get("quote") or ""))[:_OBS_CAND_QUOTE_MAX]
                 entry += f"\n  候选：{c.get('item_id', '')}｜{c.get('name', '')}｜{note}｜原文：{quote}"
         lines.append(entry)
     return "\n".join(lines)
@@ -382,6 +383,16 @@ def build_review_chunks(
     if cur_start is not None:
         chunks.append(text[cur_start:cur_end])
 
+    # 碎块并入前块（硬切/回退可能产生几十字的小块，白耗一次 map 调用与预算，
+    # 门禁 P3 挂账④；合并后前块最多超出上限 31 字，对延迟无实质影响）
+    merged: list[str] = []
+    for chunk in chunks:
+        if merged and len(chunk) < 32:
+            merged[-1] += chunk
+        else:
+            merged.append(chunk)
+    chunks = merged
+
     if len(chunks) > max_segments:
         tail = "".join(chunks[max_segments - 1 :])
         chunks = chunks[: max_segments - 1] + [_clip_for_scoring(tail)]
@@ -389,7 +400,12 @@ def build_review_chunks(
 
 
 def _reading_ranges(text: str, clause_index: Optional[dict[str, Any]]) -> list[tuple[int, int]]:
-    """阅读区间列表：条款对齐（索引有效）或段落聚合（回退）。区间有序且覆盖全文。"""
+    """阅读区间列表：条款对齐（索引可信）或段落聚合（回退）。区间有序且覆盖全文。
+
+    索引可信 = 有序、互不重叠、并集覆盖 ≥90% 全文——重复内容文本曾把回退
+    桶坐标塌缩到开头（覆盖 3%），若无此校验分段阅读会静默漏读还照常出分
+    （门禁 P1-1）。校验不过一律走段落聚合（坐标来自切分，实测可靠）。
+    """
     clauses = (clause_index or {}).get("clauses") or []
     ranges = [
         (int(c["start"]), int(c["end"]))
@@ -397,8 +413,10 @@ def _reading_ranges(text: str, clause_index: Optional[dict[str, Any]]) -> list[t
         if isinstance(c.get("start"), int) and isinstance(c.get("end"), int)
         and 0 <= c["start"] < c["end"] <= len(text)
     ]
-    if len(ranges) >= 1 and ranges == sorted(ranges):
-        # 补上索引外的散落文本（开头 preamble 已由索引建档；这里兜底残余间隙）
+    ranges.sort()
+    covered = sum(end - start for start, end in ranges)
+    non_overlapping = all(ranges[i][1] <= ranges[i + 1][0] for i in range(len(ranges) - 1))
+    if ranges and non_overlapping and text and covered / len(text) >= 0.9:
         return ranges
 
     # 回退：按段落聚合到 MAX_CONTRACT_CHARS

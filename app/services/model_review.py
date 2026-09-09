@@ -186,7 +186,7 @@ def _run_map_pass(
     chat_fn: Optional[Any],
     map_chat_fn: Optional[Any],
     budget: Optional[Any],
-) -> tuple[list[dict[str, Any]], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str], int]:
     """map 阶段：按块阅读产出观察素材。
 
     - 每块调用前预算检查，耗尽即停（已收观察直接进 reduce，reduce 额度优先）
@@ -203,9 +203,18 @@ def _run_map_pass(
     gap_ids: list[str] = []
     chunks_ok = 0
     for part_no, chunk in enumerate(chunks, start=1):
-        if budget is not None and not budget.try_consume():
-            logger.warning("Map pass stopped early: LLM budget exhausted (%d/%d chunks)", part_no - 1, total)
-            break
+        # 预算预留：给 reduce 留最后 1 次额度（remaining()==-1 表示不限）——
+        # 否则段数调大时 map 会把预算吃光，长合同评分卡恒 unavailable（门禁 P3）
+        if budget is not None:
+            remaining = budget.remaining()
+            if remaining >= 0 and remaining <= 1:
+                logger.warning(
+                    "Map pass stopped: reserving last budget credit for reduce (%d/%d chunks)", part_no - 1, total
+                )
+                break
+            if not budget.try_consume():
+                logger.warning("Map pass stopped early: LLM budget exhausted (%d/%d chunks)", part_no - 1, total)
+                break
         user = scorecard.build_map_user_prompt(chunk, items, part_no, total)
         try:
             raw = _call_llm(zhipu, xai, system, user, map_chat_fn or chat_fn, deepseek=deepseek)

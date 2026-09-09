@@ -18,10 +18,11 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# 编号条款标题：行首「第X条」（中文数字含两/〇/零 + 阿拉伯数字），后接可选分隔符。
-# 行首锚定依赖提取层保留换行（docling/python-docx/pypdf 三条路径均满足）。
+# 编号条款标题：行首「第X条」（中文数字含两/〇/零 + 半/全角阿拉伯数字），
+# 允许半/全角空格缩进（中文 Word 合同全角空格排版常见，门禁 P2-1），
+# 后接可选分隔符。行首锚定依赖提取层保留换行（三条提取路径均满足）。
 _HEADING_LINE_RE = re.compile(
-    r"(?m)^[ \t]*(第[零〇一二三四五六七八九十百千两0-9]+条)[ \t]*[、.．:：]?[ \t]*(.*)$"
+    r"(?m)^[ \t　]*(第[零〇一二三四五六七八九十百千两0-9０-９]+条)[ \t　]*[、.．:：]?[ \t　]*(.*)$"
 )
 
 # paragraph 回退聚合参数：目标桶 800 字、硬上限 1200（超限单段硬切）
@@ -42,8 +43,9 @@ def build_clause_index(text: str) -> dict[str, Any]:
     """构建条款索引。返回 {"strategy", "count", "clauses":[{id,heading,start,end,chars}]}。
 
     start/end 为闭开区间 [start, end) 字符偏移，锚定入参 text 本身。
-    公开形状不含条款正文（审查记录里全文已有，索引只存元数据）；
-    paragraph 桶定位失败（理论上仅剩空白噪声）时丢弃该桶。
+    公开形状不含条款正文（审查记录里全文已有，索引只存元数据）。
+    两种策略的坐标都来自切分本身（finditer 命中点/段落偏移），不做
+    事后锚点回捞——重复内容文本的回捞会塌缩（门禁 P1-1 教训）。
     """
     text = text or ""
     if not text.strip():
@@ -54,7 +56,6 @@ def build_clause_index(text: str) -> dict[str, Any]:
     if len(clauses) < _MIN_CLAUSES:
         strategy = "paragraph"
         clauses = _split_paragraphs(text)
-        clauses = _resolve_offsets(text, clauses)
     return _finalize(strategy, clauses)
 
 
@@ -87,87 +88,58 @@ def _split_numbered(text: str) -> list[dict[str, Any]]:
 
 
 def _split_paragraphs(text: str) -> list[dict[str, Any]]:
-    """流水型回退：按段落贪心聚合成 ≤1200 字的伪条款桶。"""
-    paragraphs = [p for p in (seg.strip() for seg in text.split("\n")) if p]
-    if not paragraphs:
-        # 纯空白/无换行长文本整体成桶（硬切超长）
-        return _hard_split(text)
+    """流水型回退：按段落贪心聚合（目标 800 字、单段超 1200 硬切）。
+
+    坐标直接来自切分本身（原文偏移），**不做事后锚点回捞**——重复内容
+    文本（模板句/PDF 提取退化）的锚点 find 会塌缩到同一坐标，导致分段
+    阅读静默漏读绝大部分正文（门禁 P1-1 实测教训）。
+    """
+    paras: list[tuple[int, int, str]] = []  # (start, end, stripped) 原文坐标
+    pos = 0
+    for seg in text.split("\n"):
+        stripped = seg.strip()
+        if stripped:
+            start = pos + (len(seg) - len(seg.lstrip()))
+            paras.append((start, start + len(stripped), stripped))
+        pos += len(seg) + 1
+    if not paras:
+        return []
 
     buckets: list[dict[str, Any]] = []
-    current: list[str] = []
+    current: list[tuple[int, int, str]] = []
     current_len = 0
-    for para in paragraphs:
-        # 单段本身超上限：先冲刷当前桶，再对超长段硬切
-        if len(para) > _BUCKET_MAX:
-            if current:
-                buckets.append(_make_bucket(current))
-                current, current_len = [], 0
-            buckets.extend(_hard_split(para))
-            continue
-        if current and current_len + len(para) > _BUCKET_TARGET:
-            buckets.append(_make_bucket(current))
+
+    def flush() -> None:
+        nonlocal current, current_len
+        if current:
+            first_text = current[0][2]
+            buckets.append(
+                {
+                    "heading": first_text[:20] + ("…" if len(first_text) > 20 else ""),
+                    "start": current[0][0],
+                    "end": current[-1][1],
+                }
+            )
             current, current_len = [], 0
-        current.append(para)
-        current_len += len(para)
-    if current:
-        buckets.append(_make_bucket(current))
+
+    for start, end, stripped in paras:
+        size = end - start
+        if size > _BUCKET_MAX:
+            # 单段本身超上限：冲刷当前桶后按字符硬切（切分内坐标，无回捞）
+            flush()
+            for i in range(start, end, _BUCKET_MAX):
+                hi = min(end, i + _BUCKET_MAX)
+                head = text[i:hi]
+                buckets.append(
+                    {"heading": head[:20] + ("…" if hi - i > 20 else ""), "start": i, "end": hi}
+                )
+            continue
+        if current and current_len + size > _BUCKET_TARGET:
+            flush()
+        current.append((start, end, stripped))
+        current_len += size
+    flush()
     return buckets
-
-
-def _make_bucket(paragraphs: list[str]) -> dict[str, Any]:
-    heading = paragraphs[0][:20] + ("…" if len(paragraphs[0]) > 20 else "")
-    # 锚点取首段前 50 字 / 末段后 50 字（strip 只去首尾空白 → 必为原文逐字子串；
-    # 桶体 join 不是原文子串——原文分隔符可能是 \r\n 或连续换行，不能拿来 find）
-    return {
-        "heading": heading,
-        "start": -1,
-        "end": -1,
-        "anchor_head": paragraphs[0][:50],
-        "anchor_tail": paragraphs[-1][-50:],
-    }
-
-
-def _hard_split(text: str) -> list[dict[str, Any]]:
-    stripped = text.strip()
-    if not stripped:
-        return []
-    return [
-        {
-            "heading": stripped[i : i + 20] + ("…" if len(stripped) - i > 20 else ""),
-            "start": -1,
-            "end": -1,
-            "anchor_head": stripped[i : i + 50],
-            "anchor_tail": stripped[i : min(len(stripped), i + _BUCKET_MAX)][-50:],
-        }
-        for i in range(0, len(stripped), _BUCKET_MAX)
-    ]
-
-
-def _resolve_offsets(text: str, clauses: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """把 paragraph 策略产出的桶（start=-1）定位回全文坐标。
-
-    头锚点定起点、尾锚点定终点（从起点向后找）；任一锚点定位失败则丢弃
-    该桶（理论上仅剩空白噪声场景）。
-    """
-    out: list[dict[str, Any]] = []
-    search_from = 0
-    for clause in clauses:
-        if clause.get("start", -1) >= 0:
-            out.append(clause)
-            continue
-        head = clause.get("anchor_head") or ""
-        tail = clause.get("anchor_tail") or head
-        idx = text.find(head, search_from) if head else -1
-        if idx < 0:
-            continue
-        tail_idx = text.find(tail, idx)
-        end = tail_idx + len(tail) if tail_idx >= 0 else idx + len(head)
-        out.append(
-            {k: v for k, v in clause.items() if k not in ("anchor_head", "anchor_tail")}
-            | {"start": idx, "end": min(end, len(text))}
-        )
-        search_from = idx
-    return out
 
 
 def map_items_to_clauses(
