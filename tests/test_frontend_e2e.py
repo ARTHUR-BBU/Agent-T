@@ -43,6 +43,10 @@ def base_url():
     env["PYTHONPATH"] = str(ROOT)
     env["PYTHONIOENCODING"] = "utf-8"
     env["BLIND_SPOT_ENABLED"] = "true"
+    # 限频关闭（阶段 0.5）：子进程不继承 conftest 的 autouse 关闭——
+    # 本模块用例远超默认 10 次 upload/分钟，不关必 429
+    env["RATE_LIMIT_UPLOAD_PER_MINUTE"] = "0"
+    env["RATE_LIMIT_ASK_PER_MINUTE"] = "0"
     import urllib.request
 
     url = proc = None

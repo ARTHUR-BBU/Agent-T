@@ -32,7 +32,7 @@
 | 0.2 真实进度 | /api/review 加 stage 字段（triage/scanning/scoring/done），等待页三段真实进度 | 前后端各一小块 |
 | 0.3 背靠背付款簇 | procurement/payment 新增 hardline 簇（法释〔2024〕11号：以第三方付款为前提条款无效） | **现状会被 pass 词表洗成通过**——最危险，速修；回放集回归 |
 | 0.4 token 收编 | 硬编码颜色进 design-tokens（confirm-edge/bg 等） | 纯前端 |
-| 0.5 基础设施 | 限频、模型分级路由（flash=分诊/定位，重模型=研判）、单次审查预算 | 阶段 2 前置硬条件 |
+| 0.5 基础设施 | 限频、模型分级路由（flash=分诊/定位，重模型=研判）、单次审查预算 | 阶段 2 前置硬条件。✅ 2026-09-09 落地：`app/services/rate_limit.py` + `app/services/llm_budget.py` + `llm_ask._model_for` 分级（env：`RATE_LIMIT_*` / `LLM_BUDGET_PER_REVIEW` / `*_MODEL_PRECHECK\|REVIEW`；分级与预算默认零行为变化，限频默认 10/20 每分钟） |
 
 ### 阶段 1 · 看得全（条款索引）+ 立场输入
 

@@ -9,9 +9,12 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
 from app.auth import BasicAuthMiddleware, validate_auth_config
+from app.services.rate_limit import validate_rate_limit_config
 
 # 半配置的认证变量属部署事故，启动即拒绝（肉饼审计 P1-1，fail-closed）
 validate_auth_config()
+# 限频变量同理：配了但不是非负整数 = 部署事故，启动即拒绝（阶段 0.5）
+validate_rate_limit_config()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 

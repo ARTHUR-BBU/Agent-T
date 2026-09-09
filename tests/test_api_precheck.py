@@ -23,7 +23,11 @@ client = TestClient(app)
 
 def _mock_precheck(monkeypatch, **kw):
     outcome = PrecheckOutcome(performed=True, result=PrecheckResult(**kw))
-    monkeypatch.setattr("app.api.routes.precheck_service.run_precheck", lambda t, c: outcome)
+    # 签名对齐真实 run_precheck（阶段 0.5 起第 4 参为 budget 对象）
+    monkeypatch.setattr(
+        "app.api.routes.precheck_service.run_precheck",
+        lambda t, c, chat_fn=None, budget=None: outcome,
+    )
 
 
 def _enable(monkeypatch):
@@ -125,7 +129,7 @@ def test_no_key_degrades_to_normal_upload(monkeypatch):
     _enable(monkeypatch)
     monkeypatch.setattr(
         "app.api.routes.precheck_service.run_precheck",
-        lambda t, c: PrecheckOutcome(skip_reason="no_llm_key"),
+        lambda t, c, chat_fn=None, budget=None: PrecheckOutcome(skip_reason="no_llm_key"),
     )
     review = upload_and_wait(client, str(PROC_FIXTURE), category="procurement")
     assert review["status"] == "done"

@@ -167,26 +167,33 @@ def test_default_chat_fn_provider_order(monkeypatch):
     fn = precheck._default_chat_fn()
     assert fn is not None
     # 智谱在 xAI 之前：用捕获参数验证走的是 _chat_zhipu 且带预审短超时
+    # 与 precheck 分级档（阶段 0.5：purpose="precheck"）
     captured = {}
     monkeypatch.setattr(
         precheck.llm_ask,
         "_chat_zhipu",
-        lambda key, s, u, timeout=None: captured.update(key=key, timeout=timeout) or "raw",
+        lambda key, s, u, timeout=None, purpose=None: captured.update(
+            key=key, timeout=timeout, purpose=purpose
+        ) or "raw",
     )
     assert precheck._default_chat_fn()("sys", "usr") == "raw"
     assert captured["key"] == "k-zhipu"
     assert captured["timeout"] == precheck.DEFAULT_PRECHECK_TIMEOUT
+    assert captured["purpose"] == "precheck"
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "k-ds")
     captured_ds = {}
     monkeypatch.setattr(
         precheck.llm_ask,
         "_chat_deepseek",
-        lambda key, s, u, timeout=None: captured_ds.update(key=key, timeout=timeout) or "raw",
+        lambda key, s, u, timeout=None, purpose=None: captured_ds.update(
+            key=key, timeout=timeout, purpose=purpose
+        ) or "raw",
     )
     assert precheck._default_chat_fn()("sys", "usr") == "raw"
     assert captured_ds["key"] == "k-ds", "DeepSeek 必须优先于智谱"
     assert captured_ds["timeout"] == precheck.DEFAULT_PRECHECK_TIMEOUT
+    assert captured_ds["purpose"] == "precheck"
 
 
 # ---------- 禁语与采样 ----------

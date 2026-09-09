@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
 from app.api.schemas import (
@@ -20,6 +20,7 @@ from app.api.schemas import (
 )
 from app.graph.pipeline import run_review
 from app.services import llm_ask, precheck as precheck_service, report as report_service
+from app.services import llm_budget, rate_limit
 from app.services.checklist import list_categories
 from app.services.extract import ExtractionError, extract_text
 from app.services.store import store
@@ -43,7 +44,12 @@ def categories():
     return {"categories": list_categories()}
 
 
-@router.post("/upload", response_model=UploadResponse)
+# 限频依赖先于 handler 执行：超频请求在读文件/预审之前就被廉价拒绝（阶段 0.5）
+@router.post(
+    "/upload",
+    response_model=UploadResponse,
+    dependencies=[Depends(rate_limit.upload_rate_limit)],
+)
 async def upload(
     file: UploadFile = File(...),
     category: str = Form("procurement"),
@@ -66,6 +72,11 @@ async def upload(
             detail="不支持的文件类型（支持 .txt / .md / .pdf / .docx / .doc）",
         )
 
+    # 单次审查 LLM 预算（阶段 0.5）：每个 upload 请求一个 Budget 对象，
+    # 按引用贯穿预审与审查线程，随 GC 清理；force 重传天然新预算。
+    # 创建于预审之前（预审也计入预算），关闭态返回 None 全程直通。
+    budget = llm_budget.new_review_budget()
+
     # LLM 预审（spec-llm-precheck）：分类 ≠ 裁判——只决定用哪把尺子/要不要审，
     # 档位仍 100% 出自规则引擎。任何失败降级为照旧开审，绝不阻断主流程。
     # run_in_threadpool（肉饼门禁 P1）：同步 httpx 调用直接写在 async 路由里
@@ -77,7 +88,7 @@ async def upload(
         contract_text = None  # 提取失败交给 worker 的 fail-closed 路径统一报错
     if contract_text is not None:
         outcome = await run_in_threadpool(
-            precheck_service.run_precheck, contract_text, category
+            precheck_service.run_precheck, contract_text, category, None, budget
         )
         branch = precheck_service.decide_branch(outcome, category)
         # force（小智娘门禁 P1）：用户在确认弹窗里已拍板（切换或坚持原品类）。
@@ -133,10 +144,12 @@ async def upload(
 
     # 审查放后台线程：上传立即返回 review_id（外部审计 P1：同步等待模型
     # 会拖死请求，前端的 processing 轮询此前形同虚设）
-    def _run_review_worker(review_id: str, fname: str, content: bytes, cat: str) -> None:
+    def _run_review_worker(
+        review_id: str, fname: str, content: bytes, cat: str, budget: object | None
+    ) -> None:
         try:
             try:
-                result = run_review(fname, content, category=cat)
+                result = run_review(fname, content, category=cat, budget=budget)
                 if result.get("error"):
                     store.update(
                         review_id,
@@ -172,7 +185,7 @@ async def upload(
             _review_slots.release()
 
     threading.Thread(
-        target=_run_review_worker, args=(rid, filename, raw, category), daemon=True
+        target=_run_review_worker, args=(rid, filename, raw, category, budget), daemon=True
     ).start()
 
     return UploadResponse(review_id=rid, message="uploaded")
@@ -239,7 +252,11 @@ def download_report(review_id: str):
     )
 
 
-@router.post("/ask", response_model=AskResponse)
+@router.post(
+    "/ask",
+    response_model=AskResponse,
+    dependencies=[Depends(rate_limit.ask_rate_limit)],
+)
 def ask(body: AskRequest):
     row = store.get(body.review_id)
     if not row:

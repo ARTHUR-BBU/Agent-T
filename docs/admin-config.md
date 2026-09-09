@@ -100,6 +100,9 @@ NDA 红线（风险金标 / 对抗样例须为「需关注」，不得「通过�
 | 可选回退 | `XAI_API_KEY` / `GROK_API_KEY`（一般不用） |
 | 超时 / 存储 | `LLM_TIMEOUT_SECONDS`（默认 180）；`STORE_DB_PATH` / `STORE_TTL_HOURS`（审查记录 SQLite，默认保留 24h） |
 | LLM 预审 | `PRECHECK_ENABLED`（默认 `true`；上传时 LLM 分类+支持性判断，不支持类型不开审）；`PRECHECK_TIMEOUT_SECONDS`（预审独立超时，默认 30） |
+| 模型分级（阶段 0.5） | `DEEPSEEK_MODEL_PRECHECK` / `DEEPSEEK_MODEL_REVIEW`（智谱 `GLM_MODEL_*`、xAI `GROK_MODEL_*` 同理）：未设回落 `DEEPSEEK_MODEL` 等，**默认配置零行为变化** |
+| 限频（阶段 0.5） | `RATE_LIMIT_UPLOAD_PER_MINUTE`（默认 10）、`RATE_LIMIT_ASK_PER_MINUTE`（默认 20）；`0`=关闭；超限 429「过于频繁」+ Retry-After；单进程假设，多 worker 限额按 worker 数放大 |
+| 单次审查预算（阶段 0.5） | `LLM_BUDGET_PER_REVIEW`（默认 12；`0`=不限）：预审+评分/补盲的 LLM 调用总量，超限走软降级（评分卡 `unavailable(budget_exceeded)`、预审 skip），规则引擎照常 |
 | 追问实现 | `app/services/llm_ask.py` |
 | 无 Key 时 | 界面/接口提示「追问暂未开通」；清单审查照常可跑 |
 
@@ -172,6 +175,7 @@ NDA 红线（风险金标 / 对抗样例须为「需关注」，不得「通过�
 | 加金标/对抗样例 | `fixtures/` + `tests/` |
 | 开通追问/评分 | `.env`（见 `.env.example`）与 `app/services/llm_ask.py` |
 | 开关补盲 | `.env` → `BLIND_SPOT_ENABLED`（默认 true；候选仅，不盖章；评分不受影响） |
+| 调限频/预算/模型分级 | `.env` → `RATE_LIMIT_*` / `LLM_BUDGET_PER_REVIEW` / `*_MODEL_PRECHECK|REVIEW`（阶段 0.5，见上文第六节） |
 
 改完规则后请跑（pytest 是 dev 依赖，不在 requirements.txt 里）：
 

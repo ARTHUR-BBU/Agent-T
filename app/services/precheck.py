@@ -53,7 +53,8 @@ class PrecheckResult(BaseModel):
 
 class PrecheckOutcome(BaseModel):
     performed: bool = False
-    # skip_reason: no_llm_key / llm_error / parse_failed / disabled / busy
+    # skip_reason: no_llm_key / llm_error / parse_failed / disabled / busy /
+    #              budget_exceeded（阶段 0.5：单次审查 LLM 预算耗尽，软降级）
     skip_reason: Optional[str] = None
     result: Optional[PrecheckResult] = None
 
@@ -77,17 +78,25 @@ def _default_chat_fn() -> Optional[ChatFn]:
     """供应商链 DeepSeek > 智谱 > xAI，复用 llm_ask 的调用与超时配置。
 
     超时用预审独立短超时（肉饼门禁 P1），不吃评分级 LLM_TIMEOUT_SECONDS。
+    模型走 precheck 分级档（flash=分诊；阶段 0.5），未配分级回落原模型。
     """
     timeout = float(os.getenv("PRECHECK_TIMEOUT_SECONDS", str(DEFAULT_PRECHECK_TIMEOUT)))
     deepseek = llm_ask._deepseek_key()
     zhipu = llm_ask._zhipu_key()
     xai = llm_ask._xai_key()
     if deepseek:
-        return lambda s, u: llm_ask._chat_deepseek(deepseek, s, u, timeout=timeout)
+        return lambda s, u: llm_ask._chat_deepseek(
+            deepseek, s, u, timeout=timeout, purpose="precheck"
+        )
     if zhipu:
-        return lambda s, u: llm_ask._chat_zhipu(zhipu, s, u, timeout=timeout)
+        return lambda s, u: llm_ask._chat_zhipu(
+            zhipu, s, u, timeout=timeout, purpose="precheck"
+        )
     if xai:
-        return lambda s, u: llm_ask._chat_xai(xai, s, u)
+        # timeout 补传（阶段 0.5 顺带修复：此前预审超时配置对 xAI 分支不生效）
+        return lambda s, u: llm_ask._chat_xai(
+            xai, s, u, timeout=timeout, purpose="precheck"
+        )
     return None
 
 
@@ -143,8 +152,14 @@ def run_precheck(
     text: str,
     selected_category: str,
     chat_fn: Optional[ChatFn] = None,
+    budget: Optional[Any] = None,
 ) -> PrecheckOutcome:
-    """分类预审。任何失败都降级为 skip（照旧开审），绝不阻断主流程。"""
+    """分类预审。任何失败都降级为 skip（照旧开审），绝不阻断主流程。
+
+    budget（阶段 0.5）：ReviewBudget 对象，每次调用 LLM 前扣减，耗尽降级
+    skip_reason="budget_exceeded"。检查点在重试循环内——「首轮成功、
+    重试前预算尽」也正确跳过重试。
+    """
     if not is_precheck_enabled():
         return PrecheckOutcome(skip_reason="disabled")
 
@@ -167,6 +182,9 @@ def run_precheck(
         )
 
         for attempt in (1, 2):
+            if budget is not None and not budget.try_consume():
+                logger.warning("Precheck skipped: LLM budget exhausted (attempt %s)", attempt)
+                return PrecheckOutcome(skip_reason="budget_exceeded")
             try:
                 raw = chat(system, user)
             except Exception:  # noqa: BLE001
