@@ -10,6 +10,11 @@ Env:
   ZHIPU_API_BASE (default coding plan:
     https://open.bigmodel.cn/api/coding/paas/v4)
   GROK_MODEL (default grok-2-latest)
+  模型分级（阶段 0.5，未设回落原变量）：
+  DEEPSEEK_MODEL_PRECHECK / DEEPSEEK_MODEL_REVIEW
+  GLM_MODEL_PRECHECK / GLM_MODEL_REVIEW
+  GROK_MODEL_PRECHECK / GROK_MODEL_REVIEW
+  XAI_TIMEOUT_SECONDS (default 60)
 """
 from __future__ import annotations
 
@@ -39,6 +44,17 @@ DEFAULT_GROK_MODEL = "grok-2-latest"
 # DeepSeek 标准计费 API 无此问题且速度快（2026-09-07 接入）
 DEEPSEEK_CHAT_URL_DEFAULT = "https://api.deepseek.com/chat/completions"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
+
+# 模型分级路由（路线图阶段 0.5）：flash=分诊/定位（precheck），重模型=研判
+# （评分/补盲/追问）。分级变量（如 DEEPSEEK_MODEL_PRECHECK）未设或为空白时
+# 回落原变量——默认配置下发出的请求与历史版本逐字节一致（零行为变化红线）。
+MODEL_PURPOSES = ("precheck", "review")
+
+
+def _model_for(env_base: str, default: str, purpose: str = "review") -> str:
+    """按用途解析模型名：{ENV_BASE}_{PURPOSE} 覆盖，未设回落 {ENV_BASE}。"""
+    tiered = (os.getenv(f"{env_base}_{purpose.upper()}", "") or "").strip()
+    return tiered or os.getenv(env_base, default)
 
 
 def _deepseek_chat_url() -> str:
@@ -262,14 +278,17 @@ def _build_user_prompt(question: str, item: dict[str, Any], contract_text: str) 
 """
 
 
-def _chat_deepseek(api_key: str, system: str, user: str, timeout: float | None = None) -> str:
+def _chat_deepseek(
+    api_key: str, system: str, user: str,
+    timeout: float | None = None, purpose: str = "review",
+) -> str:
     """DeepSeek（OpenAI 兼容 /chat/completions）。"""
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     payload = {
-        "model": os.getenv("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL),
+        "model": _model_for("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL, purpose),
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -291,13 +310,16 @@ def _chat_deepseek(api_key: str, system: str, user: str, timeout: float | None =
     return (msg.get("content") or "").strip()
 
 
-def _chat_zhipu(api_key: str, system: str, user: str, timeout: float | None = None) -> str:
+def _chat_zhipu(
+    api_key: str, system: str, user: str,
+    timeout: float | None = None, purpose: str = "review",
+) -> str:
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     payload = {
-        "model": os.getenv("GLM_MODEL", DEFAULT_GLM_MODEL),
+        "model": _model_for("GLM_MODEL", DEFAULT_GLM_MODEL, purpose),
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -327,20 +349,26 @@ def _chat_zhipu(api_key: str, system: str, user: str, timeout: float | None = No
     return content
 
 
-def _chat_xai(api_key: str, system: str, user: str) -> str:
+def _chat_xai(
+    api_key: str, system: str, user: str,
+    timeout: float | None = None, purpose: str = "review",
+) -> str:
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     payload = {
-        "model": os.getenv("GROK_MODEL", DEFAULT_GROK_MODEL),
+        "model": _model_for("GROK_MODEL", DEFAULT_GROK_MODEL, purpose),
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
         "temperature": 0.2,
     }
-    with httpx.Client(timeout=60.0) as client:
+    # 原写死 60s；提为可配但默认不变。预审路径由 PRECHECK_TIMEOUT_SECONDS
+    # 经 timeout 参数传入（修复：此前预审超时配置对 xAI 分支不生效）
+    llm_timeout = timeout if timeout is not None else float(os.getenv("XAI_TIMEOUT_SECONDS", "60"))
+    with httpx.Client(timeout=llm_timeout) as client:
         resp = client.post(XAI_CHAT_URL, headers=headers, json=payload)
         resp.raise_for_status()
         data = resp.json()

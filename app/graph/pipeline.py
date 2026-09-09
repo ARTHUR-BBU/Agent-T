@@ -29,6 +29,9 @@ class ReviewState(TypedDict, total=False):
     blind_skipped_messages: list[str]
     blind_skipped_reason: str
     blind_enabled: bool
+    # 阶段 0.5：单次审查 LLM 预算对象（llm_budget.ReviewBudget | None），
+    # 由 upload 请求创建、贯穿预审与审查线程；放 state 仅为透传给 model_review
+    budget: Any
 
 
 def node_parse(state: ReviewState) -> ReviewState:
@@ -71,6 +74,7 @@ def node_model_review(state: ReviewState) -> ReviewState:
         items=state.get("items") or [],
         policies=state.get("policies") or [],
         category=state.get("category") or "procurement",
+        budget=state.get("budget"),
     )
     return {
         "scorecard": out.get("scorecard") or {},
@@ -120,13 +124,19 @@ def reset_graph() -> None:
     _graph = None
 
 
-def run_review(filename: str, raw_bytes: bytes, category: str = "procurement") -> dict[str, Any]:
+def run_review(
+    filename: str,
+    raw_bytes: bytes,
+    category: str = "procurement",
+    budget: Any = None,
+) -> dict[str, Any]:
     graph = get_graph()
     final: ReviewState = graph.invoke(
         {
             "filename": filename,
             "raw_bytes": raw_bytes,
             "category": category or "procurement",
+            "budget": budget,
         }
     )
     return {

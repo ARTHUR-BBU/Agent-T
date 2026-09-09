@@ -11,6 +11,7 @@ Gating matrix (tests assert all of these):
 - no LLM key → scorecard unavailable(no_llm_key) + blind skipped(no_llm_key).
 - rule items empty → scorecard unavailable (有规则结果才出分).
 - forbidden phrase hit → retry once; second hit → degrade to score-only.
+- budget exhausted → unavailable(budget_exceeded)（阶段 0.5，软降级同 llm_error）.
 """
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ def run_model_review(
     policies: list[str] | None = None,
     category: str = "procurement",
     chat_fn: Optional[Any] = None,
+    budget: Optional[Any] = None,
 ) -> dict[str, Any]:
     """Run the merged pass. Returns scorecard + blind halves.
 
@@ -65,6 +67,14 @@ def run_model_review(
     system = scorecard.build_system_prompt(segments, policies or [])
     user = scorecard.build_user_prompt(text or "", items)
 
+    # 预算检查点（阶段 0.5）：调用前扣减，耗尽走软降级（同 llm_error 形态，
+    # 不硬失败）。重试前同样检查——「第 1 次成功、重试时预算尽」也正确降级
+    if budget is not None and not budget.try_consume():
+        logger.warning("Model-review skipped: LLM budget exhausted")
+        result["scorecard"] = scorecard.unavailable("budget_exceeded")
+        result["blind_skipped_reason"] = "budget_exceeded" if blind_on else None
+        return result
+
     try:
         raw = _call_llm(zhipu, xai, system, user, chat_fn, deepseek=deepseek)
     except Exception:  # noqa: BLE001
@@ -79,6 +89,10 @@ def run_model_review(
     # 禁语命中或解析失败 → 重试一次（更严格提醒）；再命中 → 降级为仅展示分数
     if payload is None or scorecard.check_forbidden(_scorecard_text(payload)):
         retry_system = system + "\n\n【再次提醒】上一轮输出包含禁止表述或结构错误。重新输出，严禁出现任何整体性背书/推翻规则档位的表述，只输出 JSON。"
+        if budget is not None and not budget.try_consume():
+            logger.warning("Model-review retry skipped: LLM budget exhausted")
+            result["scorecard"] = scorecard.unavailable("budget_exceeded")
+            return result
         try:
             raw = _call_llm(zhipu, xai, retry_system, user, chat_fn, deepseek=deepseek)
         except Exception:  # noqa: BLE001
