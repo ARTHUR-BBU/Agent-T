@@ -189,17 +189,22 @@
     const loading = $("results-loading");
     const body = $("results-body");
     const errBox = $("results-error");
+    // 快照 reviewId（小智娘复验 P3）：用户中途 Back 走人后，睡醒的循环不得
+    // 拿着失效 rid 去 fetch/清 hash，干扰用户刚导航到的新审查
+    const rid = state.reviewId;
     // 审查已改为后台任务（上传秒回 review_id）：大合同含模型评分约 1-2 分钟，
     // 轮询预算给足 5 分钟（150 × 2s），done/error 提前退出
     for (let i = 0; i < 150; i++) {
-      const res = await fetch(`/api/review/${state.reviewId}`);
+      if (state.reviewId !== rid) return;
+      const res = await fetch(`/api/review/${rid}`);
       const data = await res.json();
+      if (state.reviewId !== rid) return;
       if (!res.ok) {
         loading.classList.add("hidden");
         errBox.textContent = data.detail || "获取结果失败";
         errBox.classList.remove("hidden");
         // 404（记录不存在/已过期）：清掉 hash，避免刷新永远 404（小智娘 P3-3）
-        if (res.status === 404) clearReviewHash();
+        if (res.status === 404 && state.reviewId === rid) clearReviewHash();
         return;
       }
       state.review = data;

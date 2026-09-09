@@ -77,6 +77,13 @@ def test_fp_negated_backtoback_not_flagged():
     assert _payment_status(text)["status"] != STATUS_ATTENTION
 
 
+def test_huikuan_wei_zhun_caught():
+    """复验回归（小智娘）：回款/拨付/拨款的钱流动动词接「为准」= 背靠背核心语义。"""
+    text = "尾款以甲方客户回款为准支付。"
+    item = _payment_status(text)
+    assert item["status"] == STATUS_ATTENTION
+
+
 # ---------- 小智娘门禁漏报探针（P2-2，建筑/分包高频直陈句式） ----------
 
 def test_fn_ye_zhu_funds_arrival_caught():
