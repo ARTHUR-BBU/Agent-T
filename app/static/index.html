@@ -26,22 +26,22 @@
             <option value="lease">租赁合同</option>
           </select>
         </label>
+        <!-- 阶段 1.3 立场输入（阳仔线框①）：原生 radio 皮的 segmented，
+             默认中性真选中；品类切换重渲+复位中性；不可审立场不渲染 -->
+        <div class="field">
+          <span>我代表哪一方</span>
+          <fieldset class="seg" id="stance-seg">
+            <div class="seg-track" id="stance-track"></div>
+          </fieldset>
+          <p class="muted stance-hint" id="stance-hint"></p>
+          <p class="muted stance-note hidden" id="stance-note"></p>
+        </div>
         <label class="field file-field">
           <span>选择文件</span>
           <input type="file" id="file" accept=".txt,.md,.pdf,.docx,.doc,text/plain" />
         </label>
         <button id="btn-upload" class="primary" type="button">开始审查</button>
         <p id="upload-error" class="error hidden"></p>
-        <!-- LLM 预审确认（分类≠裁判：AI 只建议，用户拍板） -->
-        <div id="precheck-confirm" class="card precheck-confirm hidden">
-          <p class="detail-label">AI 预判</p>
-          <p id="precheck-summary" class="detail-note"></p>
-          <p id="precheck-question" class="detail-note"></p>
-          <div class="precheck-actions">
-            <button id="btn-precheck-switch" class="primary" type="button"></button>
-            <button id="btn-precheck-keep" type="button">按原类型继续</button>
-          </div>
-        </div>
         <p class="privacy-note">审查说明：上传后合同文本将发送至所配置的大模型（DeepSeek / 智谱）用于评分与条款解释；不配置模型 Key 时仅在本机做规则审查、数据不出服务器。审查记录定期自动清除。</p>
       </div>
     </section>
@@ -52,12 +52,43 @@
         <button type="button" class="link" id="btn-back-upload">← 重新上传</button>
         <h1>审查结果</h1>
       </header>
+      <!-- 阶段 0.2 真实进度：三段状态清单（阳仔线框）。无百分比无 spinner——
+           后端给不出百分比，填充它就是假进度；stage 缺失（旧记录）退化单行文案 -->
       <div id="results-loading" class="card">
-        <p class="muted">正在审查…（大合同含模型评分约需 1-2 分钟，请勿关闭页面）</p>
+        <p class="stage-title">审查进行中</p>
+        <ol class="stage-list" id="stage-list">
+          <li class="stage" data-stage="triage">
+            <span class="stage-dot" aria-hidden="true"></span>
+            <span class="stage-text">
+              <span class="stage-name">预审分诊</span>
+              <span class="stage-sub">确认合同类型与审查视角</span>
+            </span>
+            <span class="stage-badge">等待中</span>
+          </li>
+          <li class="stage" data-stage="scanning">
+            <span class="stage-dot" aria-hidden="true"></span>
+            <span class="stage-text">
+              <span class="stage-name">规则扫描</span>
+              <span class="stage-sub">正在逐条核对规则清单，通常几秒完成</span>
+            </span>
+            <span class="stage-badge">等待中</span>
+          </li>
+          <li class="stage" data-stage="scoring">
+            <span class="stage-dot" aria-hidden="true"></span>
+            <span class="stage-text">
+              <span class="stage-name">AI 评分</span>
+              <span class="stage-sub">大合同约需 1 分钟，请勿关闭页面</span>
+            </span>
+            <span class="stage-badge">等待中</span>
+          </li>
+        </ol>
+        <p class="muted stage-legacy hidden" id="stage-legacy">正在审查…（大合同含模型评分约需 1-2 分钟，请勿关闭页面）</p>
       </div>
       <div id="results-error" class="card error hidden"></div>
       <div id="results-body" class="hidden">
         <div id="precheck-suspect" class="card precheck-suspect hidden"></div>
+        <!-- 阶段 1.3 分支 C 立场知情提示（非阻断，文案服务端下发） -->
+        <div id="stance-notice" class="card precheck-suspect hidden"></div>
         <div class="meta card" id="results-meta"></div>
         <!-- M4 审查报告导出：与页面同源的 store 数据，无二次 LLM 调用 -->
         <div class="report-actions hidden" id="report-actions">
@@ -127,6 +158,17 @@
       </div>
     </section>
   </div>
+  <!-- 阶段 1.4⑤ 预审确认 dialog 化（阳仔线框）：原生 <dialog>，文案零改动只换
+       载体；Esc/点遮罩 = 放弃本次上传；焦点默认给保守按钮「按原类型继续」 -->
+  <dialog id="precheck-dialog" class="precheck-dialog" aria-labelledby="precheck-title">
+    <p class="detail-label" id="precheck-title">AI 预判</p>
+    <p id="precheck-summary" class="detail-note"></p>
+    <p id="precheck-question" class="detail-note"></p>
+    <div class="precheck-actions">
+      <button id="btn-precheck-switch" class="primary" type="button"></button>
+      <button id="btn-precheck-keep" type="button">按原类型继续</button>
+    </div>
+  </dialog>
   <script src="/static/app.js"></script>
 </body>
 </html>

@@ -22,7 +22,7 @@ STATUS_NOT_FOUND = "未找到"
 STATUS_NA = "本类不适用"
 
 
-def list_categories() -> list[dict[str, str]]:
+def list_categories() -> list[dict[str, Any]]:
     cats = []
     for path in sorted(CONFIG_DIR.glob("checklist_*.yaml")):
         data = _load_yaml(path)
@@ -30,6 +30,9 @@ def list_categories() -> list[dict[str, str]]:
             {
                 "id": data.get("category", path.stem.replace("checklist_", "")),
                 "label": data.get("label", path.stem),
+                # 阶段 1.3：立场元数据透传（前端 segmented 数据源；缺失时
+                # 上层 stance.get_stances 会回默认，这里原样透出）
+                "stances": data.get("stances") or {},
             }
         )
     return cats

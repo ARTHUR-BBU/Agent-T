@@ -34,13 +34,15 @@ CASES = [
     dict(id="pc07", file="pc07_nda_mutual.txt", selected="nda", kind="same", conf_floor=True),
     dict(id="pc08", file="pc08_nda_one_way.txt", selected="nda", kind="same", conf_floor=True),
     dict(id="pc09", file="pc09_proc_with_nda_clause.txt", selected="procurement", kind="same", conf_floor=True),
-    # ---- 不支持组 5 条（红线 0 容忍）：必须全部拦截 ----
+    # ---- 不支持组 4 条（红线 0 容忍）：必须全部拦截 ----
     dict(id="pc10", file="pc10_service_video_production.txt", selected="procurement", kind="blocked"),
-    dict(id="pc11", file="pc11_sale_seller_view.txt", selected="procurement", kind="blocked"),
     dict(id="pc12", file="pc12_labor.txt", selected="procurement", kind="blocked"),
     dict(id="pc13", file="pc13_loan.txt", selected="procurement", kind="blocked"),
     dict(id="pc14", file="pc14_mixed_proc_dev.txt", selected="procurement", kind="blocked"),
     # ---- 边界与干扰组（容忍带：分类错 0 条） ----
+    # pc11（卖方视角销售，2026-09-10 老钱立场裁决改判可审）：中性立场照审，
+    # detected_type 必须带视角标记（报告层据此生成分支 C 知情提示，不阻断）
+    dict(id="pc11", file="pc11_sale_seller_view.txt", selected="procurement", kind="same"),
     dict(id="pc15", file="pc15_mirror_proc_sla.txt", selected="procurement", kind="same"),
     dict(id="pc16", file="pc16_disguised_sale.txt", selected="lease", kind="blocked"),
     dict(id="pc17", file="pc17_mirror_service_contract.txt", selected="procurement", kind="blocked"),
@@ -143,7 +145,7 @@ MOCK_PAYLOADS = {
     "pc08": dict(detected_type="单向保密协议", is_supported=True, suggested_category="nda", confidence="high", summary="接收方对披露方信息承担保密义务"),
     "pc09": dict(detected_type="仪器采购合同", is_supported=True, suggested_category="procurement", confidence="high", summary="采购主线明确，保密仅为零星条款"),
     "pc10": dict(detected_type="委托创作服务合同", is_supported=False, suggested_category=None, confidence="high", summary="交付成片且约定知识产权归属"),
-    "pc11": dict(detected_type="买卖合同（卖方视角）", is_supported=False, suggested_category=None, confidence="high", summary="以卖方交付收款义务为主线"),
+    "pc11": dict(detected_type="销售合同（卖方视角）", is_supported=True, suggested_category="procurement", confidence="high", summary="条款密集偏向卖方保护，以卖方交付收款义务为主线"),
     "pc12": dict(detected_type="劳动合同", is_supported=False, suggested_category=None, confidence="high", summary="用人单位与劳动者的从属性劳动安排"),
     "pc13": dict(detected_type="借款合同", is_supported=False, suggested_category=None, confidence="high", summary="转移货币所有权并支付利息"),
     "pc14": dict(detected_type="采购与开发混合合同", is_supported=False, suggested_category=None, confidence="medium", summary="设备供应与定制开发主给付义务不分主次"),

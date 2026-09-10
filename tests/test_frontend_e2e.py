@@ -150,9 +150,12 @@ def home(page, base_url):
     return page
 
 
-def _upload(page, path: Path = FIXTURE, category: str = "lease"):
+def _upload(page, path: Path = FIXTURE, category: str = "lease", stance: str | None = None):
     page.set_input_files("#file", str(path))
     page.select_option("#category", category)
+    if stance:
+        # radio 是视觉隐藏（键盘可达），点它的 label——和真实用户行为一致
+        page.click(f"#stance-track label:has(input[value='{stance}'])")
     page.click("#btn-upload")
     # 审查同步完成，等结果体渲染出来
     page.wait_for_selector("#results-body", state="visible", timeout=15000)
@@ -178,6 +181,40 @@ def test_upload_without_file_shows_error(home):
     assert "请先选择合同文件" in home.inner_text("#upload-error")
     # 仍停留在上传页
     assert home.is_visible("#screen-upload")
+
+
+def test_stance_segmented_renders_and_resets(home):
+    """阶段 1.3①：立场 segmented 默认中性真选中，品类切换重渲+复位。"""
+    home.wait_for_selector("#stance-track input[name='stance']", state="attached")
+    # 采购：中性/买方 两段，默认中性选中，前馈小字露出
+    values = home.eval_on_selector_all(
+        "#stance-track input[name='stance']", "els => els.map(e => e.value)"
+    )
+    assert values == ["neutral", "buyer"]
+    assert home.is_checked("input[name='stance'][value='neutral']")
+    assert "卖方立场审查暂不支持" in home.inner_text("#stance-note")
+    # 切到 NDA：三段（中性/披露方/接收方），复位中性，前馈小字消失
+    home.select_option("#category", "nda")
+    values = home.eval_on_selector_all(
+        "#stance-track input[name='stance']", "els => els.map(e => e.value)"
+    )
+    assert values == ["neutral", "disclosing", "receiving"]
+    assert home.is_checked("input[name='stance'][value='neutral']")
+    assert not home.is_visible("#stance-note")
+    # 声明行随选中项切换
+    home.click("#stance-track label:has(input[value='receiving'])")
+    assert "接收方" in home.inner_text("#stance-hint")
+
+
+def test_stance_submitted_with_upload(home):
+    """立场随上传请求上报：结果页声明行与所选一致。"""
+    _upload(home, category="lease", stance="lessee")
+    assert "承租方" in home.inner_text("#results-meta")
+
+
+def test_precheck_dialog_element_exists(home):
+    """阶段 1.4⑤：确认弹窗为原生 <dialog>（渲染冒烟；confirm 路径无 Key 不触发）。"""
+    assert home.evaluate("document.querySelector('#precheck-dialog') instanceof HTMLDialogElement")
 
 
 def test_legend_shows_four_status_tags(home):
@@ -206,6 +243,11 @@ def test_full_review_flow_renders_results(home):
     # lease_sample 金标：signature 需关注；governing_law 老钱裁决后为本类不适用
     assert home.locator("#item-list .item.attention").count() >= 1
     assert home.locator("#item-list .item.pass").count() >= 10
+    # 阶段 0.2：终态 stage=done（三段进度的数据源；DOM 不硬断言防 flaky）
+    api_stage = home.evaluate(
+        f"async () => (await (await fetch('/api/review/{review_id}')).json()).stage"
+    )
+    assert api_stage == "done"
 
 
 def test_refresh_preserves_review_via_hash(home):

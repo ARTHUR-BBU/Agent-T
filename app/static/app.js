@@ -106,12 +106,15 @@
   }
 
   function hidePrecheckConfirm() {
-    $("precheck-confirm").classList.add("hidden");
+    // 阶段 1.4⑤ dialog 化：开闭走 showModal/close，不用 hidden 类
+    const dlg = $("precheck-dialog");
+    if (dlg && dlg.open) dlg.close();
   }
 
-  // LLM 预审确认（分类≠裁判：AI 只建议，用户拍板；静默切换是事故温床）
+  // LLM 预审确认（分类≠裁判：AI 只建议，用户拍板；静默切换是事故温床）。
+  // Esc / 点遮罩 = 放弃本次上传（确认类弹窗的默认逃生门必须是「不继续」）
   function showPrecheckConfirm(data) {
-    const box = $("precheck-confirm");
+    const dlg = $("precheck-dialog");
     const pc = data.precheck || {};
     const detected = pc.detected_type || "其他类型合同";
     $("precheck-summary").textContent = pc.summary
@@ -138,8 +141,10 @@
       // 小智娘门禁 P3-2：无路可走时「按原类型继续」是误导，改文案只收起弹窗
       $("btn-precheck-keep").textContent = "重新选择类型";
     }
-    box.dataset.suggested = data.suggested_category || "";
-    box.classList.remove("hidden");
+    dlg.dataset.suggested = data.suggested_category || "";
+    dlg.showModal();
+    // 焦点给非破坏按钮（阳仔：回车党默认动作不该是改品类）
+    $("btn-precheck-keep").focus();
   }
 
   async function upload(categoryOverride, force = false) {
@@ -154,9 +159,12 @@
     }
     const btn = $("btn-upload");
     btn.disabled = true;
+    $("stance-seg").disabled = true; // 上传进行中立场锁定（阳仔线框）
     const fd = new FormData();
     fd.append("file", fileInput.files[0]);
     fd.append("category", categoryOverride || $("category").value);
+    // 阶段 1.3：立场随请求上报（默认 neutral）
+    fd.append("stance", selectedStance());
     // 确认弹窗里的拍板必须带 force（小智娘门禁 P1）：
     // 否则重传会重跑预审，LLM 持续不同意 = 用户永远开不了审
     if (force) fd.append("force", "1");
@@ -170,19 +178,78 @@
       }
       state.reviewId = data.review_id;
       state.selectedItemId = null;
+      state.stageIdx = 0;
       setReviewHash(data.review_id);
       show("results");
       $("results-loading").classList.remove("hidden");
       $("results-body").classList.add("hidden");
       $("results-error").classList.add("hidden");
       $("item-detail").classList.add("hidden");
+      resetStages();
       await pollReview();
     } catch (e) {
       err.textContent = e.message || String(e);
       err.classList.remove("hidden");
     } finally {
       btn.disabled = false;
+      $("stance-seg").disabled = false;
     }
+  }
+
+  // ===== 阶段 0.2 等待页三段真实进度（阳仔线框）=====
+  // 诚实进度：只点亮后端真实到达的段位，无百分比无倒计时
+  const STAGE_ORDER = ["triage", "scanning", "scoring"];
+  const STAGE_BADGE = { pending: "等待中", active: "进行中", done: "已完成", error: "未能完成" };
+
+  function resetStages() {
+    state.stageIdx = 0;
+    document.querySelectorAll("#stage-list .stage").forEach((li) => {
+      li.classList.remove("is-active", "is-done", "is-error");
+      li.querySelector(".stage-badge").textContent = STAGE_BADGE.pending;
+    });
+    const legacy = $("stage-legacy");
+    if ($("stage-list")) $("stage-list").classList.remove("hidden");
+    if (legacy) legacy.classList.add("hidden");
+  }
+
+  function updateStages(stage) {
+    const list = $("stage-list");
+    const legacy = $("stage-legacy");
+    if (!list) return;
+    if (!stage) {
+      // 旧记录无 stage 字段：退化单行文案（兼容不空转）
+      list.classList.add("hidden");
+      if (legacy) legacy.classList.remove("hidden");
+      return;
+    }
+    list.classList.remove("hidden");
+    if (legacy) legacy.classList.add("hidden");
+    const idx = STAGE_ORDER.indexOf(stage);
+    if (idx < 0) return;
+    // 只前进不回退：stage 乱序/重复到达时取 max
+    state.stageIdx = Math.max(state.stageIdx || 0, idx);
+    document.querySelectorAll("#stage-list .stage").forEach((li, i) => {
+      const badge = li.querySelector(".stage-badge");
+      li.classList.toggle("is-done", i < state.stageIdx);
+      li.classList.toggle("is-active", i === state.stageIdx);
+      if (!badge) return;
+      if (i < state.stageIdx) badge.textContent = STAGE_BADGE.done;
+      else if (i === state.stageIdx) badge.textContent = STAGE_BADGE.active;
+      else badge.textContent = STAGE_BADGE.pending;
+    });
+  }
+
+  function markStageError() {
+    // 失败段置 ✕；其后 pending 段保持「等待中」不动——stage 清单答「走到哪」，
+    // #results-error 卡答「为什么停」+ 下一步指引（职责划分，阳仔）
+    const idx = state.stageIdx || 0;
+    document.querySelectorAll("#stage-list .stage").forEach((li, i) => {
+      if (i !== idx) return;
+      li.classList.remove("is-active");
+      li.classList.add("is-error");
+      const badge = li.querySelector(".stage-badge");
+      if (badge) badge.textContent = STAGE_BADGE.error;
+    });
   }
 
   async function pollReview() {
@@ -210,12 +277,14 @@
       }
       state.review = data;
       if (data.status === "processing" || data.status === "pending") {
+        updateStages(data.stage);
         await new Promise((r) => setTimeout(r, 2000));
         continue;
       }
       loading.classList.add("hidden");
       if (data.status === "error") {
-        errBox.textContent = data.error || "审查失败";
+        markStageError();
+        errBox.textContent = data.error || "审查失败，请返回重新上传";
         errBox.classList.remove("hidden");
         return;
       }
@@ -251,6 +320,17 @@
     } else {
       suspectBox.classList.add("hidden");
     }
+    // 阶段 1.3 分支 C 立场知情提示（非阻断；文案服务端下发，前端只渲染）
+    const stanceNoticeBox = $("stance-notice");
+    const noticeText = data.precheck && data.precheck.stance_notice_text;
+    if (noticeText) {
+      stanceNoticeBox.textContent = noticeText;
+      stanceNoticeBox.classList.remove("hidden");
+    } else {
+      stanceNoticeBox.classList.add("hidden");
+    }
+    // 立场声明（老钱裁决书：中性也声明——按哪个方向读必须摆在明面上）
+    const stanceDecl = data.stance_declaration || "";
     $("results-meta").innerHTML =
       `<strong>${escapeHtml(data.filename || "")}</strong>` +
       ` · ${escapeHtml(data.category_label || data.category || "")}` +
@@ -263,6 +343,13 @@
       clauseNote.className = "clause-count-note";
       clauseNote.textContent = ` · 已识别条款 ${nClauses} 段`;
       $("results-meta").appendChild(clauseNote);
+    }
+    // 阶段 1.3 立场声明行（服务端生成，含「核查口径不因立场而改变」语义）
+    if (stanceDecl) {
+      const decl = document.createElement("p");
+      decl.className = "stance-declaration";
+      decl.textContent = stanceDecl;
+      $("results-meta").appendChild(decl);
     }
 
     // M4：审查完成后开放报告导出（GET /api/review/{id}/report）
@@ -680,14 +767,15 @@
 
   $("btn-upload").addEventListener("click", () => upload());
   $("btn-precheck-switch").addEventListener("click", () => {
-    const sug = $("precheck-confirm").dataset.suggested;
+    const sug = $("precheck-dialog").dataset.suggested;
     if (sug) {
       $("category").value = sug;
+      hidePrecheckConfirm();
       upload(sug, true); // 用户已拍板，带 force 防预审重跑死循环
     }
   });
   $("btn-precheck-keep").addEventListener("click", () => {
-    const sug = $("precheck-confirm").dataset.suggested;
+    const sug = $("precheck-dialog").dataset.suggested;
     hidePrecheckConfirm();
     if (sug) upload(undefined, true); // 坚持按原品类审：已确认，force 继续
     // 无 sug（不支持类）：仅收起弹窗，用户回表单重新选择类型
@@ -700,5 +788,106 @@
   });
   $("btn-back-results").addEventListener("click", () => show("results"));
 
+  // ===== 阶段 1.3 立场 segmented（阳仔线框①）=====
+  // 数据源：/api/categories 的 stances 元数据（YAML 单一来源）；
+  // fetch 失败退化内置兜底表（同老钱矩阵）。不可审立场不渲染 + 前馈小字。
+  const STANCE_FALLBACK = {
+    procurement: {
+      allowed: ["neutral", "buyer"],
+      labels: { neutral: "中性（未声明）", buyer: "买方（采购方）" },
+      note: "卖方立场审查暂不支持",
+    },
+    lease: {
+      allowed: ["neutral", "lessee"],
+      labels: { neutral: "中性（未声明）", lessee: "承租方" },
+      note: "出租方立场审查暂不支持",
+    },
+    nda: {
+      allowed: ["neutral", "disclosing", "receiving"],
+      labels: { neutral: "中性（未声明）", disclosing: "披露方", receiving: "接收方" },
+      note: "",
+    },
+  };
+  let STANCE_META = null;
+
+  function stanceMeta(cat) {
+    return (STANCE_META && STANCE_META[cat]) || STANCE_FALLBACK[cat]
+      || { allowed: ["neutral"], labels: { neutral: "中性（未声明）" }, note: "" };
+  }
+
+  function selectedStance() {
+    const checked = document.querySelector('input[name="stance"]:checked');
+    return checked ? checked.value : "neutral";
+  }
+
+  function updateStanceHint() {
+    const meta = stanceMeta($("category").value);
+    const v = selectedStance();
+    $("stance-hint").textContent =
+      v === "neutral"
+        ? "将按中性视角阅读合同，不预设立场，报告会声明此视角。"
+        : `将按${(meta.labels && meta.labels[v]) || v}立场阅读合同，风险判断以该视角为准。`;
+  }
+
+  function renderStanceOptions() {
+    const meta = stanceMeta($("category").value);
+    const track = $("stance-track");
+    track.innerHTML = "";
+    meta.allowed.forEach((s, i) => {
+      const label = document.createElement("label");
+      label.className = "seg-item";
+      const input = document.createElement("input");
+      input.type = "radio";
+      input.name = "stance";
+      input.value = s;
+      input.checked = i === 0; // 默认中性是真选中态，不是「未选」
+      input.addEventListener("change", updateStanceHint);
+      const span = document.createElement("span");
+      span.textContent = (meta.labels && meta.labels[s]) || s;
+      label.appendChild(input);
+      label.appendChild(span);
+      track.appendChild(label);
+    });
+    const note = $("stance-note");
+    if (meta.note) {
+      note.textContent = meta.note;
+      note.classList.remove("hidden");
+    } else {
+      note.classList.add("hidden");
+    }
+    updateStanceHint();
+  }
+
+  async function loadStanceMeta() {
+    try {
+      const res = await fetch("/api/categories");
+      const data = await res.json();
+      const meta = {};
+      (data.categories || []).forEach((c) => {
+        if (c.stances && Array.isArray(c.stances.allowed) && c.stances.allowed.length) {
+          meta[c.id] = c.stances;
+        }
+      });
+      if (Object.keys(meta).length) STANCE_META = meta;
+    } catch (e) {
+      /* 拉不到就退兜底表，控件照常可用 */
+    }
+    renderStanceOptions();
+  }
+
+  // 品类切换：枚举重渲 + 复位中性（旧立场作废——品类换了尺子，静默保留是事故温床）
+  $("category").addEventListener("change", renderStanceOptions);
+
+  // ===== 阶段 1.4⑤ dialog 行为（阳仔线框）=====
+  // 点遮罩（backdrop）= 放弃本次上传；Esc 原生走同一 close 路径
+  $("precheck-dialog").addEventListener("click", (ev) => {
+    if (ev.target === $("precheck-dialog")) hidePrecheckConfirm();
+  });
+  // close（含 Esc/遮罩）清 suggested，防「拒诊→关→换文件→上传」串台
+  $("precheck-dialog").addEventListener("close", () => {
+    $("precheck-dialog").dataset.suggested = "";
+  });
+
+  loadStanceMeta();
   resumeFromHash();
 })();

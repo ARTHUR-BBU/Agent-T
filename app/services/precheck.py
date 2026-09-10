@@ -153,12 +153,15 @@ def run_precheck(
     selected_category: str,
     chat_fn: Optional[ChatFn] = None,
     budget: Optional[Any] = None,
+    stance: str = "neutral",
 ) -> PrecheckOutcome:
     """分类预审。任何失败都降级为 skip（照旧开审），绝不阻断主流程。
 
     budget（阶段 0.5）：ReviewBudget 对象，每次调用 LLM 前扣减，耗尽降级
     skip_reason="budget_exceeded"。检查点在重试循环内——「首轮成功、
     重试前预算尽」也正确跳过重试。
+    stance（阶段 1.3）：只进 prompt 供可审性判定（老钱视角规则修订），
+    预审输出仍然只有分类字段，永不触碰档位。
     """
     if not is_precheck_enabled():
         return PrecheckOutcome(skip_reason="disabled")
@@ -178,7 +181,7 @@ def run_precheck(
 
         system = precheck_prompts.build_system_prompt(list_categories())
         user = precheck_prompts.build_user_prompt(
-            _clip_for_precheck(text or ""), selected_category
+            _clip_for_precheck(text or ""), selected_category, stance=stance
         )
 
         for attempt in (1, 2):

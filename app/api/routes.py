@@ -24,6 +24,7 @@ from app.services import llm_ask, precheck as precheck_service, report as report
 from app.services import llm_budget, rate_limit
 from app.services.checklist import list_categories
 from app.services.extract import ExtractionError, extract_text
+from app.services import stance as stance_service
 from app.services.store import store
 
 router = APIRouter(prefix="/api")
@@ -54,12 +55,17 @@ def categories():
 async def upload(
     file: UploadFile = File(...),
     category: str = Form("procurement"),
+    stance: str = Form("neutral"),
     force: bool = Form(False),
 ):
     # 品类必须显式合法（外部审计：未知品类此前会静默回退采购清单）
     valid_categories = {c["id"] for c in list_categories()}
     if category not in valid_categories:
         raise HTTPException(status_code=422, detail=f"未知合同类型：{category}")
+    # 立场校验（阶段 1.3，老钱矩阵）：不在品类可审集合内直接 422——UI 根本
+    # 不渲染不可审立场（前馈小字），这里是 API 层兜底；不新增阻断弹窗
+    if not stance_service.is_allowed(category, stance):
+        raise HTTPException(status_code=422, detail=f"该合同类型不支持立场：{stance}")
 
     raw = await file.read()
     if not raw:
@@ -89,7 +95,7 @@ async def upload(
         contract_text = None  # 提取失败交给 worker 的 fail-closed 路径统一报错
     if contract_text is not None:
         outcome = await run_in_threadpool(
-            precheck_service.run_precheck, contract_text, category, None, budget
+            precheck_service.run_precheck, contract_text, category, None, budget, stance
         )
         branch = precheck_service.decide_branch(outcome, category)
         # force（小智娘门禁 P1）：用户在确认弹窗里已拍板（切换或坚持原品类）。
@@ -111,14 +117,25 @@ async def upload(
                 suggested_category=r.suggested_category if r.is_supported else None,
                 supported_categories=list_categories(),
             )
-        if branch["suspect"] and outcome.result is not None:
+        # 分支 C 知情提示（老钱裁决：中性 + 检出对方视角起草 → 照审 + 非阻断
+        # 告知；买方/承租方立场则静默——对方格式合同正是清单靶心场景）
+        stance_notice = bool(
+            outcome.performed
+            and outcome.result is not None
+            and stance == "neutral"
+            and stance_service.has_counterparty_view_marker(
+                category, outcome.result.detected_type
+            )
+        )
+        if outcome.result is not None and (branch["suspect"] or stance_notice):
             r = outcome.result
             precheck_record = {
                 "performed": True,
                 "detected_type": r.detected_type,
                 "confidence": r.confidence,
                 "summary": r.summary,
-                "suspect": True,
+                "suspect": bool(branch["suspect"]),
+                "stance_notice": stance_notice,
             }
 
     # 占并发槽位：满则 429（无界线程池被脚本刷 500 次上传 = 500 个 LLM 调用）
@@ -131,6 +148,11 @@ async def upload(
         category_label=category,
         created_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
         status="processing",
+        # 阶段 0.2：进度段位（triage→scanning→scoring→done/error）；预审已在
+        # 本请求内完成，建档即 triage 完成态，等待页首屏看到的是扫描进行中
+        stage="triage",
+        # 阶段 1.3：用户声明立场（仅元数据+声明，不进规则引擎）
+        stance=stance,
         items=[],
         scorecard={},
         blind_candidates=[],
@@ -148,13 +170,19 @@ async def upload(
     def _run_review_worker(
         review_id: str, fname: str, content: bytes, cat: str, budget: object | None
     ) -> None:
+        # stage 回调：pipeline 节点入口上报 → 逐步落库；update 自身有兜底，
+        # 回调失败不影响审查（pipeline 侧还包了一层 try/except）
+        def on_stage(stage: str) -> None:
+            store.update(review_id, stage=stage)
+
         try:
             try:
-                result = run_review(fname, content, category=cat, budget=budget)
+                result = run_review(fname, content, category=cat, budget=budget, on_stage=on_stage)
                 if result.get("error"):
                     store.update(
                         review_id,
                         status="error",
+                        stage="error",
                         error=result["error"],
                         text=result.get("text") or "",
                     )
@@ -163,6 +191,7 @@ async def upload(
                     store.update(
                         review_id,
                         status="done",
+                        stage="done",
                         items=result.get("items") or [],
                         scorecard=result.get("scorecard") or {},
                         blind_candidates=result.get("blind_candidates") or [],
@@ -179,7 +208,7 @@ async def upload(
                     )
             except Exception as exc:  # noqa: BLE001
                 logger.exception("后台审查失败 review_id=%s", review_id)
-                store.update(review_id, status="error", error="审查失败，请重新上传")
+                store.update(review_id, status="error", stage="error", error="审查失败，请重新上传")
         except Exception:  # noqa: BLE001
             # 兜底（小智娘 P3-3）：update 自身失败（如 DB 锁超时）不得裸抛线程
             logger.exception("后台审查状态写入失败 review_id=%s", review_id)
@@ -199,7 +228,14 @@ def get_review(review_id: str):
     if not row:
         raise HTTPException(status_code=404, detail="审查记录不存在")
     pc = row.get("precheck")
+    if pc:
+        # 分支 C 文案服务端生成（单一来源，前端只渲染不拼接）
+        pc = {**pc, "stance_notice_text": (
+            stance_service.counterparty_view_notice(row.get("category") or "")
+            if pc.get("stance_notice") else ""
+        )}
     clause_index = row.get("clause_index")
+    stance = row.get("stance") or "neutral"
     return ReviewSummary(
         precheck=PrecheckInfo(**pc) if pc else None,
         id=row["id"],
@@ -207,7 +243,10 @@ def get_review(review_id: str):
         category=row.get("category") or "",
         category_label=row.get("category_label") or "",
         status=row.get("status") or "pending",
+        stage=row.get("stage"),
         items=row.get("items") or [],
+        stance=stance,
+        stance_declaration=stance_service.declaration(row.get("category") or "", stance),
         scorecard=ScorecardInfo(**(row.get("scorecard") or {})),
         clause_index=ClauseIndexInfo(**clause_index) if clause_index else None,
         blind_candidates=row.get("blind_candidates") or [],

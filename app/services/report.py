@@ -12,6 +12,7 @@ import io
 import re
 from typing import Any
 
+from app.services import stance as stance_service
 from app.services.scorecard import scrub_forbidden
 
 # 免责句兜底：评分卡未生成（无 Key / 降级）时报告也必须带免责声明
@@ -88,9 +89,24 @@ def _cover(doc: Any, row: dict[str, Any]) -> None:
         run.bold = True
         p.add_run(str(value))
 
+    # 立场声明（阶段 1.3，老钱裁决书）：默认中性也声明——让「按哪把尺子的
+    # 哪个方向读」始终摆在明面上；文案由 stance.declaration 单一来源生成
+    stance = row.get("stance") or "neutral"
+    declaration = stance_service.declaration(row.get("category") or "", stance)
+    p = doc.add_paragraph()
+    run = p.add_run(f"审查立场：{stance_service.stance_label(row.get('category') or '', stance)}")
+    run.bold = True
+    doc.add_paragraph(declaration)
+
     # 品类存疑非阻断提示（老钱金标改判：low 置信度但倾向与所选不一致时
     # 照旧开审，但知情权不能省——报告头必须带上这行）
     pc = row.get("precheck") or {}
+    if pc.get("stance_notice"):
+        notice = stance_service.counterparty_view_notice(row.get("category") or "")
+        if notice:
+            p = doc.add_paragraph()
+            run = p.add_run(notice)
+            run.bold = True
     if pc.get("suspect"):
         p = doc.add_paragraph()
         run = p.add_run(

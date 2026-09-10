@@ -29,7 +29,7 @@
 | 项 | 内容 | 备注 |
 |---|---|---|
 | 0.1 刷新恢复 | URL hash 持久化 review_id，刷新/重开回到结果页（阳仔：事故级体验） | 纯前端，收益最大 |
-| 0.2 真实进度 | /api/review 加 stage 字段（triage/scanning/scoring/done），等待页三段真实进度 | 前后端各一小块 |
+| 0.2 真实进度 | /api/review 加 stage 字段（triage/scanning/scoring/done），等待页三段真实进度 | 前后端各一小块。✅ 2026-09-10 随阶段 1-B 落地：`run_review(on_stage)` 回调 + `ReviewSummary.stage` + 纵向三段状态清单（stage 缺失退化单行） |
 | 0.3 背靠背付款簇 | procurement/payment 新增 hardline 簇（法释〔2024〕11号：以第三方付款为前提条款无效） | **现状会被 pass 词表洗成通过**——最危险，速修；回放集回归 |
 | 0.4 token 收编 | 硬编码颜色进 design-tokens（confirm-edge/bg 等） | 纯前端 |
 | 0.5 基础设施 | 限频、模型分级路由（flash=分诊/定位，重模型=研判）、单次审查预算 | 阶段 2 前置硬条件。✅ 2026-09-09 落地：`app/services/rate_limit.py` + `app/services/llm_budget.py` + `llm_ask._model_for` 分级（env：`RATE_LIMIT_*` / `LLM_BUDGET_PER_REVIEW` / `*_MODEL_PRECHECK\|REVIEW`；分级与预算默认零行为变化，限频默认 10/20 每分钟） |
@@ -40,8 +40,8 @@
 |---|---|---|
 | 1.1 条款索引 | 条款切分+稳定编号+原文坐标，存入审查记录 | 回放集不退步；编号在 UI 可锚定。✅ 2026-09-09 落地：`app/services/clause_index.py`（numbered/paragraph 双策略、c01 顺序号、字符坐标）；结果页条款徽章+「已识别 N 段」 |
 | 1.2 全文覆盖 | 评分/质量层按条款分段阅读再汇总（消灭 6000/3000 字近视） | 背靠背类中段条款能被质量层点名。✅ 2026-09-09 落地：`model_review` map-reduce（>6000 字触发；`LLM_REVIEW_MAX_SEGMENTS` 默认 4，块 ≤6000 字；reduce 复用既有 schema/禁语/封顶全链）；短合同仍单次调用逐字节不变 |
-| 1.3 立场输入 | 上传页「我代表哪一方」（枚举，默认中性+报告声明视角）；老钱矩阵：采购/租赁仅单一视角可审，**NDA 双向可审**；立场×品类不一致走 category_confirm 同构分支 | pc11（卖方销售）买方立场可正常审；老钱矩阵测试全覆盖 |
-| 1.4 UI ①②⑤ | 上传页（立场 segmented）、等待页、确认弹窗 dialog 化 | 阳仔线框为准 |
+| 1.3 立场输入 | 上传页「我代表哪一方」（枚举，默认中性+报告声明视角）；老钱矩阵：采购/租赁仅单一视角可审，**NDA 双向可审**；立场×品类不一致走 category_confirm 同构分支 | pc11（卖方销售）买方立场可正常审；老钱矩阵测试全覆盖。✅ 2026-09-10 落地：`app/services/stance.py` 单一来源 + YAML stances 元数据 + 422 兜底 + 分支 C 非阻断知情提示（**老钱裁决修订：立场错配不弹窗**，卖方视角销售/出租方视角租赁改可审）+ pc11 四层测试 `test_stance.py` |
+| 1.4 UI ①②⑤ | 上传页（立场 segmented）、等待页、确认弹窗 dialog 化 | 阳仔线框为准。✅ 2026-09-10 落地：原生 radio 皮的 segmented（品类切换复位中性+前馈小字）、三段等待页（见 0.2）、`<dialog id="precheck-dialog">`（文案零改动换载体，`--color-backdrop` 唯一新 token） |
 
 ### 阶段 2 · 质量层（ChatGPT 四级框架收编）
 
