@@ -81,21 +81,29 @@ class ReviewStore:
             )
         return rid
 
+    def _is_expired(self, created_at: float) -> bool:
+        """访问级过期判定（外部审计批2-②）：TTL 语义不能依赖「下一位用户
+        什么时候上传触发 purge」——get/update 对已过期行必须直接视为不存在，
+        合同这类敏感资料的访问控制要在读取路径上强制。"""
+        return self._ttl > 0 and created_at < time.time() - self._ttl
+
     def get(self, review_id: str) -> dict[str, Any] | None:
         with closing(self._conn()) as conn:
             row = conn.execute(
-                "SELECT data FROM reviews WHERE id = ?", (review_id,)
+                "SELECT created_at, data FROM reviews WHERE id = ?", (review_id,)
             ).fetchone()
-        return json.loads(row[0]) if row else None
+        if not row or self._is_expired(row[0]):
+            return None
+        return json.loads(row[1])
 
     def update(self, review_id: str, **kwargs: Any) -> dict[str, Any] | None:
         with self._lock, closing(self._conn()) as conn, conn:
             row = conn.execute(
-                "SELECT data FROM reviews WHERE id = ?", (review_id,)
+                "SELECT created_at, data FROM reviews WHERE id = ?", (review_id,)
             ).fetchone()
-            if not row:
+            if not row or self._is_expired(row[0]):
                 return None
-            data = json.loads(row[0])
+            data = json.loads(row[1])
             data.update(kwargs)
             conn.execute(
                 "UPDATE reviews SET data = ? WHERE id = ?",

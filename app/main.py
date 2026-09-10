@@ -9,12 +9,15 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
 from app.auth import BasicAuthMiddleware, validate_auth_config
+from app.services.checklist import validate_checklist_configs
 from app.services.rate_limit import validate_rate_limit_config
 
 # 半配置的认证变量属部署事故，启动即拒绝（肉饼审计 P1-1，fail-closed）
 validate_auth_config()
 # 限频变量同理：配了但不是非负整数 = 部署事故，启动即拒绝（阶段 0.5）
 validate_rate_limit_config()
+# 清单正则/id 启动校验（外部审计批2）：配置坏了宁可起不来，不悄悄降级漏审
+validate_checklist_configs()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 

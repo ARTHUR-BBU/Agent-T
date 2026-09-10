@@ -15,7 +15,7 @@ from langgraph.graph import END, StateGraph
 from app.services.blind_spot import annotate_rule_items
 from app.services.checklist import run_checklist
 from app.services.clause_index import build_clause_index, map_items_to_clauses
-from app.services.extract import extract_text
+from app.services.extract import ExtractionError, extract_text
 from app.services.model_review import run_model_review
 
 
@@ -62,8 +62,14 @@ def node_parse(state: ReviewState) -> ReviewState:
     try:
         text = extract_text(state["filename"], state["raw_bytes"])
         return {"text": text, "error": "", "clause_index": build_clause_index(text)}
-    except Exception as exc:  # noqa: BLE001
+    except ExtractionError as exc:
+        # 设计为用户可见的解析失败（坏文件/扫描版 PDF 等），文案受控
         return {"text": "", "error": str(exc)}
+    except Exception:  # noqa: BLE001
+        # 未知异常收口（外部审计批2-④）：str(exc) 可能携带库内部路径/实现
+        # 细节并经 store→API→前端外泄——只进服务端日志，客户端给固定话术
+        logging.getLogger(__name__).exception("Unhandled extraction failure")
+        return {"text": "", "error": "文档解析失败，请重新上传或转换格式后再试"}
 
 
 def node_checklist(state: ReviewState) -> ReviewState:
