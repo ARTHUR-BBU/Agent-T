@@ -142,6 +142,56 @@ def _split_paragraphs(text: str) -> list[dict[str, Any]]:
     return buckets
 
 
+def build_clause_context(
+    text: str,
+    clause_index: dict[str, Any],
+    clause_ids: list[str],
+    max_chars: int = 4000,
+    neighbors: int = 1,
+) -> str:
+    """按命中条款构造追问上下文（外部审计批1-③）。
+
+    取命中条款完整正文 + 前后各 `neighbors` 条相邻条款（改写常依赖
+    违约/争议等关联条款），总量截到 max_chars（延迟护栏：2026-09-07 事故
+    的教训是追问输入也要有预算）。任何异常/未定位返回空串，调用方回退
+    头尾采样——本函数是纯增强，绝不成为追问失败原因。
+    """
+    try:
+        clauses = clause_index.get("clauses") or []
+        if not clauses or not clause_ids or not text:
+            return ""
+        id_set = {cid for cid in clause_ids if isinstance(cid, str)}
+        wanted: list[int] = []
+        for i, c in enumerate(clauses):
+            if c.get("id") in id_set:
+                lo = max(0, i - neighbors)
+                hi = min(len(clauses), i + neighbors + 1)
+                for j in range(lo, hi):
+                    if j not in wanted:
+                        wanted.append(j)
+        wanted.sort()
+        parts: list[str] = []
+        total = 0
+        for j in wanted:
+            c = clauses[j]
+            start, end = c.get("start", -1), c.get("end", -1)
+            if not isinstance(start, int) or not isinstance(end, int):
+                continue
+            if not (0 <= start < end <= len(text)):
+                continue
+            body = text[start:end]
+            if total + len(body) > max_chars:
+                body = body[: max_chars - total]
+            parts.append(body)
+            total += len(body)
+            if total >= max_chars:
+                break
+        # join 后再截一次：分隔符不计入预算会超出 max_chars（小智娘门禁 P3）
+        return "\n".join(parts)[:max_chars]
+    except Exception:  # noqa: BLE001 — 纯增强，绝不抛
+        return ""
+
+
 def map_items_to_clauses(
     items: list[dict[str, Any]], clause_index: dict[str, Any], text: str
 ) -> None:
