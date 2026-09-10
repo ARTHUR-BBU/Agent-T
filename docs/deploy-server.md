@@ -46,6 +46,11 @@ ssh root@<IP> "docker run -d --name agent-t --restart unless-stopped -p 8080:808
   agent-t:latest"
 ```
 
+> **排障提示**（外部审计批3）：容器用 `--restart unless-stopped`，若启动阶段
+> 校验失败（认证变量只配一半 / 限频变量非法 / checklist 配置正则写坏）会
+> **无限重启循环**。容器反复重启时先 `docker logs agent-t` 看具体
+> ValueError，改正环境变量或配置后 `docker restart agent-t`。
+
 ## 日常更新代码
 
 ```bash

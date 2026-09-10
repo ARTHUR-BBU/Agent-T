@@ -170,6 +170,7 @@ NDA 红线（风险金标 / 对抗样例须为「需关注」，不得「通过�
 | 开关品类 | `config/checklist_*.yaml` |
 | 改检查项 / N/A | 同上 `items` |
 | 加强同义词打标 | 同上 `rules` + 必要时 `app/services/checklist.py` |
+| 改规则后容器起不来 | checklist 配置校验（fail-closed，外部审计批2）：规则正则写坏 / item id 重复会**拒绝启动**——`docker logs agent-t` 看 ValueError 明细，报错自带「品类/条目/字段」定位，改正后重启即可 |
 | 改政策摘句 | 同上 `policies` |
 | 改评分卡分段/权重/归段 | 同上 `scorecard:` 段与 `items[].segment`（M3.5） |
 | 改评分禁语 | `config/scorecard_forbidden.yaml`（M3.5） |

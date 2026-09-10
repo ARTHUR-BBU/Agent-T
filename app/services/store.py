@@ -88,20 +88,28 @@ class ReviewStore:
         return self._ttl > 0 and created_at < time.time() - self._ttl
 
     def get(self, review_id: str) -> dict[str, Any] | None:
-        with closing(self._conn()) as conn:
+        with closing(self._conn()) as conn, conn:
             row = conn.execute(
                 "SELECT created_at, data FROM reviews WHERE id = ?", (review_id,)
             ).fetchone()
-        if not row or self._is_expired(row[0]):
-            return None
-        return json.loads(row[1])
+            if not row:
+                return None
+            if self._is_expired(row[0]):
+                # 顺带落盘清理（外部审计批3）：服务长期无新上传时，过期合同
+                # 文本不应一直滞留 SQLite——读到即删
+                conn.execute("DELETE FROM reviews WHERE id = ?", (review_id,))
+                return None
+            return json.loads(row[1])
 
     def update(self, review_id: str, **kwargs: Any) -> dict[str, Any] | None:
         with self._lock, closing(self._conn()) as conn, conn:
             row = conn.execute(
                 "SELECT created_at, data FROM reviews WHERE id = ?", (review_id,)
             ).fetchone()
-            if not row or self._is_expired(row[0]):
+            if not row:
+                return None
+            if self._is_expired(row[0]):
+                conn.execute("DELETE FROM reviews WHERE id = ?", (review_id,))
                 return None
             data = json.loads(row[1])
             data.update(kwargs)
