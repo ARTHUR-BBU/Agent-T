@@ -72,18 +72,21 @@ def test_stage_callback_exception_never_breaks_review(monkeypatch):
 # ---------- API 进度 ----------
 
 def test_upload_stage_progress_reaches_done():
+    """API 级终态断言（确定性，不赌轮询撞见瞬时中间态）。
+
+    中间段位的顺序语义由 test_run_review_emits_stage_sequence 用注入回调
+    确定性覆盖——快机上审查线程可在两次轮询之间跑完全程（外部审计批1-①
+    的 CI flaky 根因），这里只锁「终态字段存在且正确」。
+    """
     rid = _upload_mini()
-    seen: set[str | None] = set()
     deadline = time.time() + 15
     while time.time() < deadline:
         d = client.get(f"/api/review/{rid}").json()
-        seen.add(d.get("stage"))
         if d["status"] != "processing":
             break
         time.sleep(0.1)
     assert d["status"] == "done"
     assert d["stage"] == "done", "终态 stage 必须为 done"
-    assert seen & {"scanning", "scoring"}, f"轮询应至少观测到一个中间段位，实际 {seen}"
 
 
 def test_worker_error_marks_stage_error(monkeypatch):

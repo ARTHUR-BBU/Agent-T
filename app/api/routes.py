@@ -23,6 +23,7 @@ from app.graph.pipeline import run_review
 from app.services import llm_ask, precheck as precheck_service, report as report_service
 from app.services import llm_budget, rate_limit
 from app.services.checklist import list_categories
+from app.services.clause_index import build_clause_context
 from app.services.extract import ExtractionError, extract_text
 from app.services import stance as stance_service
 from app.services.store import store
@@ -39,6 +40,16 @@ ALLOWED_SUFFIXES = {".txt", ".md", ".text", ".pdf", ".docx", ".doc"}
 # 槽位占满直接 429，让用户稍后再试而不是排队堆积）
 MAX_CONCURRENT_REVIEWS = 4
 _review_slots = threading.Semaphore(MAX_CONCURRENT_REVIEWS)
+
+# 解析/预审阶段并发闸门（外部审计批1-②）：extract_text（Docling/pypdf 可能
+# 很重）与预审此前发生在 review 槽位**之前**、完全无闸——大文档可在正式
+# 审查被限流的同时打爆解析资源。占满降级跳过预审（对齐 precheck busy
+# 先例：可用性优先，规则审查不受影响），解析本身同步排队。
+MAX_CONCURRENT_PARSES = 4
+_parse_slots = threading.Semaphore(MAX_CONCURRENT_PARSES)
+
+# 流式读取块大小：首块读 MAX+1 即可判定超限，不把整个文件读进内存
+_READ_CHUNK = 1024 * 1024
 
 
 @router.get("/categories")
@@ -67,11 +78,26 @@ async def upload(
     if not stance_service.is_allowed(category, stance):
         raise HTTPException(status_code=422, detail=f"该合同类型不支持立场：{stance}")
 
-    raw = await file.read()
+    # 流式限额（外部审计批1-②）：分块读取，累计超限立即拒收——
+    # 旧实现 await file.read() 先把整个文件读进内存才判长度，「10MB 以上
+    # 不给审」做到了，「10MB 以上不进内存」没做到
+    chunks: list[bytes] = []
+    total = 0
+    over_limit = False
+    while True:
+        chunk = await file.read(_READ_CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            over_limit = True
+            break  # 立即停止读取，剩余字节由框架丢弃
+        chunks.append(chunk)
+    if over_limit:
+        raise HTTPException(status_code=413, detail="文件超过 10MB 上限，请压缩后上传")
+    raw = b"".join(chunks)
     if not raw:
         raise HTTPException(status_code=400, detail="空文件")
-    if len(raw) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="文件超过 10MB 上限，请压缩后上传")
     filename = file.filename or "contract.txt"
     if Path(filename).suffix.lower() not in ALLOWED_SUFFIXES:
         raise HTTPException(
@@ -86,13 +112,22 @@ async def upload(
 
     # LLM 预审（spec-llm-precheck）：分类 ≠ 裁判——只决定用哪把尺子/要不要审，
     # 档位仍 100% 出自规则引擎。任何失败降级为照旧开审，绝不阻断主流程。
-    # run_in_threadpool（肉饼门禁 P1）：同步 httpx 调用直接写在 async 路由里
-    # 会冻结整个事件循环——LLM 端点一慢全站挂起
+    # run_in_threadpool（肉饼门禁 P1）：同步调用直接写在 async 路由里
+    # 会冻结整个事件循环——解析与 LLM 都挪线程池。
+    # 解析阶段并发闸门（外部审计批1-②）：Docling/pypdf 解析很重且此前完全
+    # 无闸——大文档可在 review 槽位限流的同时打爆解析资源。非阻塞占位：
+    # 占满直接跳过预审（对齐 precheck busy 先例，可用性优先，规则审查不受
+    # 影响）；worker 内的 node_parse 本就受 review 槽位（4）约束。
     precheck_record: dict | None = None
-    try:
-        contract_text = extract_text(filename, raw)
-    except ExtractionError:
-        contract_text = None  # 提取失败交给 worker 的 fail-closed 路径统一报错
+    contract_text: str | None = None
+    if _parse_slots.acquire(blocking=False):
+        try:
+            try:
+                contract_text = await run_in_threadpool(extract_text, filename, raw)
+            except ExtractionError:
+                contract_text = None  # 提取失败交给 worker 的 fail-closed 路径统一报错
+        finally:
+            _parse_slots.release()
     if contract_text is not None:
         outcome = await run_in_threadpool(
             precheck_service.run_precheck, contract_text, category, None, budget, stance
@@ -314,6 +349,13 @@ def ask(body: AskRequest):
         item=item,
         contract_text=row.get("text") or "",
         policies=row.get("policies") or [],
+        # 条款上下文（外部审计批1-③）：命中条款全文+相邻条款做主上下文；
+        # 无索引/未定位回退头尾采样（llm_ask 内处理）
+        clause_context=build_clause_context(
+            row.get("text") or "",
+            row.get("clause_index") or {},
+            item.get("clause_ids") or [],
+        ),
     )
     return AskResponse(
         ok=bool(result.get("ok")),

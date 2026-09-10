@@ -178,6 +178,7 @@ def ask_about_item(
     contract_text: str,
     policies: list[str],
     user_id: Optional[str] = None,
+    clause_context: str = "",
 ) -> dict[str, Any]:
     """Ask LLM about a 需关注 checklist item. Never stamps 没问题; must cite quote."""
     q = _normalize_question(question)
@@ -210,7 +211,7 @@ def ask_about_item(
         }
 
     system = _build_system_prompt(policies)
-    user = _build_user_prompt(q, item, contract_text)
+    user = _build_user_prompt(q, item, contract_text, clause_context=clause_context)
 
     try:
         if deepseek:
@@ -261,11 +262,30 @@ def _build_system_prompt(policies: list[str]) -> str:
 只输出 JSON，不要 markdown 围栏。"""
 
 
-def _build_user_prompt(question: str, item: dict[str, Any], contract_text: str) -> str:
+def _build_user_prompt(
+    question: str,
+    item: dict[str, Any],
+    contract_text: str,
+    clause_context: str = "",
+) -> str:
     # 与评分卡同向的头尾采样（小智娘门禁 P3-7：旧版纯头部 12000 截断不一致）
     from app.services.scorecard import clip_contract_text
 
     body = clip_contract_text(contract_text)
+    # 条款上下文（外部审计批1-③）：命中条款完整正文+相邻条款是主上下文，
+    # 头尾采样降级为全局背景——旧版只给头尾+80字摘录，改写第27条时模型
+    # 根本没见过第27条全文。无条款索引/未定位时回退纯头尾（旧行为）。
+    if clause_context:
+        context_block = f"""条款上下文（该条命中所在的完整条款及相邻条款，改写以此为准）：
+{clause_context}
+
+合同整体背景（头尾采样）：
+{body}
+"""
+    else:
+        context_block = f"""合同全文（头尾采样）：
+{body}
+"""
     return f"""清单项：{item.get('name')}（id={item.get('id')}）
 规则引擎结论：{item.get('status')}
 规则备注：{item.get('note')}
@@ -273,9 +293,7 @@ def _build_user_prompt(question: str, item: dict[str, Any], contract_text: str) 
 
 用户问题：{question}
 
-合同全文：
-{body}
-"""
+{context_block}"""
 
 
 def _chat_deepseek(
