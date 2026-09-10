@@ -770,6 +770,9 @@
     const sug = $("precheck-dialog").dataset.suggested;
     if (sug) {
       $("category").value = sug;
+      // 程序赋值不触发 change 事件：立场必须显式重渲复位中性，否则残留
+      // 旧品类的立场重传会吃 422（用户界面上没有任何可修入口，交互死路）
+      renderStanceOptions();
       hidePrecheckConfirm();
       upload(sug, true); // 用户已拍板，带 force 防预审重跑死循环
     }
@@ -826,7 +829,8 @@
     $("stance-hint").textContent =
       v === "neutral"
         ? "将按中性视角阅读合同，不预设立场，报告会声明此视角。"
-        : `将按${(meta.labels && meta.labels[v]) || v}立场阅读合同，风险判断以该视角为准。`;
+        : // 措辞红线（老钱 Q4）：不得暗示立场会改变核查口径/风险判断
+        `将按${(meta.labels && meta.labels[v]) || v}立场阅读合同并在报告声明该视角；核查口径不变，仅结论读向不同。`;
   }
 
   function renderStanceOptions() {

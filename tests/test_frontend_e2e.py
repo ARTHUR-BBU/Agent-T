@@ -212,6 +212,86 @@ def test_stance_submitted_with_upload(home):
     assert "承租方" in home.inner_text("#results-meta")
 
 
+def test_category_switch_resets_stance(home):
+    """门禁 P1 回归：confirm 弹窗点「切换品类」后立场必须重渲复位中性——
+    程序赋值不触发 change 事件，残留旧立场重传会 422 死路。"""
+    import json
+
+    calls = {"n": 0}
+    captured = {}
+
+    def handler(route):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(
+                    {
+                        "review_id": None,
+                        "message": "category_confirm",
+                        "status": "category_confirm",
+                        "precheck": {
+                            "performed": True,
+                            "detected_type": "厂房租赁合同",
+                            "confidence": "high",
+                            "summary": "以租金换取厂房使用权",
+                        },
+                        "suggested_category": "lease",
+                        "supported_categories": [
+                            {"id": "procurement", "label": "采购合同"},
+                            {"id": "nda", "label": "保密协议（NDA）"},
+                            {"id": "lease", "label": "租赁合同"},
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        else:
+            captured["post"] = route.request.post_data or ""
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({"review_id": "e2estub000", "message": "uploaded", "status": "uploaded"}),
+            )
+
+    def review_route(route):
+        # 轮询返回假 done 记录（避免 404/500 触发 JS 错误守护）
+        route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "id": "e2estub000", "filename": "lease_sample.txt",
+                    "category": "lease", "category_label": "租赁合同",
+                    "status": "done", "stage": "done", "items": [],
+                    "scorecard": {"available": False}, "blind_enabled": False,
+                    "stance": "neutral", "stance_declaration": "测试声明",
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+    home.route("**/api/upload", handler)
+    home.route("**/api/review/e2estub000", review_route)
+    home.set_input_files("#file", str(FIXTURE))
+    home.select_option("#category", "procurement")
+    home.click("#stance-track label:has(input[value='buyer'])")
+    home.click("#btn-upload")
+    home.wait_for_selector("#precheck-dialog[open]")
+    # 点「切换」：程序赋值路径必须显式重渲立场（radio 换成租赁枚举 + 复位中性）
+    home.click("#btn-precheck-switch")
+    values = home.eval_on_selector_all(
+        "#stance-track input[name='stance']", "els => els.map(e => e.value)"
+    )
+    assert values == ["neutral", "lessee"], "切换品类后立场枚举必须重渲"
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    post = captured["post"]
+    assert "lease" in post, "重传品类应为 lease"
+    assert "neutral" in post, "重传立场必须已复位中性（残留 buyer 会 422 死路）"
+    assert "buyer" not in post
+
+
 def test_precheck_dialog_element_exists(home):
     """阶段 1.4⑤：确认弹窗为原生 <dialog>（渲染冒烟；confirm 路径无 Key 不触发）。"""
     assert home.evaluate("document.querySelector('#precheck-dialog') instanceof HTMLDialogElement")

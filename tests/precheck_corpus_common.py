@@ -42,7 +42,7 @@ CASES = [
     # ---- 边界与干扰组（容忍带：分类错 0 条） ----
     # pc11（卖方视角销售，2026-09-10 老钱立场裁决改判可审）：中性立场照审，
     # detected_type 必须带视角标记（报告层据此生成分支 C 知情提示，不阻断）
-    dict(id="pc11", file="pc11_sale_seller_view.txt", selected="procurement", kind="same"),
+    dict(id="pc11", file="pc11_sale_seller_view.txt", selected="procurement", kind="same", marker="卖方视角"),
     dict(id="pc15", file="pc15_mirror_proc_sla.txt", selected="procurement", kind="same"),
     dict(id="pc16", file="pc16_disguised_sale.txt", selected="lease", kind="blocked"),
     dict(id="pc17", file="pc17_mirror_service_contract.txt", selected="procurement", kind="blocked"),
@@ -99,6 +99,12 @@ def assert_case_expectation(case: dict, outcome, branch) -> str:
             f"[{cid}] 期望 {sel}，实得 {r.suggested_category}"
             f"（{r.detected_type}，{r.confidence}）"
         )
+        if case.get("marker"):
+            # 视角标记断言（肉饼 P3-1）：分支 C 知情提示整条链路依赖
+            # detected_type 携带标记，prompt 漂移丢标记时必须在这里炸
+            assert case["marker"] in r.detected_type, (
+                f"[{cid}] detected_type 丢失视角标记「{case['marker']}」：{r.detected_type}"
+            )
         if case.get("conf_floor"):
             # 通过率标准②：正例必须 medium 起，low=把握不足不该出现在简单正例上
             assert r.confidence in ("high", "medium"), (
