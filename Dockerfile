@@ -8,10 +8,13 @@ ENV PATH="/home/user/.local/bin:$PATH"
 
 WORKDIR /app
 
-# 先装依赖再拷代码，利用 Docker 层缓存
-COPY requirements.txt requirements-hf.txt ./
+# 先装依赖再拷代码，利用 Docker 层缓存。
+# 统一走 lock（外部审计批2-⑤）：CI 与国内服务器都用 requirements-lock.txt，
+# 演示镜像走 requirements.txt（全是 >=）会在重建时拿到另一套版本——
+# 测试环境 ≠ 部署环境 ≠ 演示环境。lock 与 CI/server 完全同源。
+COPY requirements-lock.txt requirements-hf.txt ./
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir -r requirements-lock.txt && \
     pip install --no-cache-dir -r requirements-hf.txt
 
 COPY --chown=user:user . .

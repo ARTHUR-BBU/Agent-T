@@ -98,6 +98,52 @@ def run_checklist(text: str, category: str = "procurement") -> dict[str, Any]:
     }
 
 
+def validate_checklist_configs() -> None:
+    """启动/CI 校验（外部审计批2-④）：全部品类的规则正则必须可编译、
+    item id 不得重复——配置坏了宁可起不来，也不要悄悄降级漏审
+    （_match 的 re.error→子串匹配回退是运行期容错，不是配置错误的豁免）。"""
+    problems: list[str] = []
+    for cat_info in list_categories():
+        category = cat_info["id"]
+        cfg = _load_yaml(CONFIG_DIR / f"checklist_{category}.yaml")
+        seen_ids: set[str] = set()
+        for item in cfg.get("items", []):
+            iid = str(item.get("id") or "")
+            if not iid:
+                problems.append(f"{category}: 存在无 id 的 item")
+                continue
+            if iid in seen_ids:
+                problems.append(f"{category}: item id 重复 {iid}")
+            seen_ids.add(iid)
+            for rule in (item.get("rules") or {}).get("need_attention") or []:
+                problems.extend(_regex_problems(category, iid, rule))
+            for rule in (item.get("rules") or {}).get("pass") or []:
+                problems.extend(_regex_problems(category, iid, rule))
+    if problems:
+        raise ValueError(
+            "checklist 配置校验失败（fail-closed）：\n- " + "\n- ".join(problems)
+        )
+
+
+def _regex_problems(category: str, item_id: str, rule: dict[str, Any]) -> list[str]:
+    """收集单条规则里所有正则的编译错误（含 unless/none_of 子规则）。"""
+    out: list[str] = []
+    specs: list[tuple[str, Any]] = [
+        ("pattern", rule.get("pattern")),
+        ("any_of", rule.get("any_of")),
+        ("all_of", rule.get("all_of")),
+        ("unless", rule.get("unless")),
+        ("none_of", rule.get("none_of")),
+    ]
+    for field, spec in specs:
+        for pat in _patterns_from_spec(spec):
+            try:
+                re.compile(pat, flags=re.IGNORECASE | re.DOTALL)
+            except re.error as exc:
+                out.append(f"{category}/{item_id} rules.{field} 非法正则 {pat!r}: {exc}")
+    return out
+
+
 def _load_yaml(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
@@ -190,11 +236,34 @@ def _unless_holds(text: str, rule: dict[str, Any]) -> bool:
 
     旧实现是全文域：合同任意位置的保护性表述会放空风险句——租赁终验实测
     「甲方未取得产权人书面同意对外转租」被全文另一处的「乙方不得擅自转租」
-    boilerplate 洗成通过（小智娘 2026-09-06 P1 根因）。规则没有 unless/none_of
-    时行为完全不变。
+    boilerplate 洗成通过（小智娘 2026-09-06 P1 根因）。
+
+    判定单位是**每个正向命中的 occurrence**（外部审计批2-①）：只要存在
+    一个邻近窗口内没有保护性表述的命中，规则即成立——只看首个命中的
+    邻域时，「前文保护句洗掉后文独立风险句」会造成漏检。规则没有
+    unless/none_of 时行为完全不变。
+    注意（承小智娘终验 P3②）：all_of 会被拆平为独立 conjunct 迭代，各
+    conjunct 命中点未必相邻——当前三品类无 all_of+unless 组合，若未来引入
+    需改为各 conjunct 命中区间的最小共同邻域。
     """
     if rule.get("unless") is None and rule.get("none_of") is None:
         return True
+    top = {k: rule[k] for k in ("pattern", "any_of", "all_of") if k in rule}
+    saw_any_match = False
+    for pattern in _patterns_from_spec(top):
+        try:
+            matches = re.finditer(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+        except re.error:
+            continue
+        for m in matches:
+            saw_any_match = True
+            lo = max(0, m.start() - _UNLESS_WINDOW)
+            hi = min(len(text), m.end() + _UNLESS_WINDOW)
+            if not _negative_evidence(text[lo:hi], rule):
+                return True  # 该 occurrence 邻近无保护 → 风险成立
+    if saw_any_match:
+        return False  # 全部命中的邻域都有保护性表述 → 放行
+    # 正向命中全部来自 re.error 降级路径：回退旧首命中邻域（保守）
     return not _negative_evidence(_match_neighborhood(text, rule), rule)
 
 
