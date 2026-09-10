@@ -257,6 +257,12 @@ textarea { resize: vertical; min-height: 88px; }
   color: var(--color-text-secondary);
   margin: 0 0 var(--space-1);
 }
+/* 阶段 1.1 条款锚点徽章：纯灰字定位信息（参考层语义，不占档位色） */
+.detail-clause {
+  margin: 0 0 var(--space-1);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
 .detail-note {
   margin: 0 0 var(--space-2);
   color: var(--color-text-primary);
@@ -431,7 +437,8 @@ mark.kw,
   background: var(--color-aside-bg);
 }
 /* 评分暂未开通的灰字注脚（肉饼审查 P3-2：不能渲染成正文黑） */
-.score-unavailable {
+.score-unavailable,
+.clause-count-note {
   font: var(--type-caption);
   color: var(--color-text-tertiary);
 }

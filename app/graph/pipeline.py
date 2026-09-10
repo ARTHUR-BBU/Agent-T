@@ -1,7 +1,9 @@
 """LangGraph library pipeline: parse → checklist → merged model pass → ask stub.
 
-M3.5: model pass = scorecard + targeted blind-spot in ONE LLM call
-(model_review). Uses langgraph as a library only — not LangGraph Platform.
+M3.5: model pass = scorecard + targeted blind-spot (model_review)。
+阶段 1.2 起调用结构分两档：短合同单次合并调用；长合同 map-reduce 分段
+阅读（详见 model_review 模块 docstring）。Uses langgraph as a library
+only — not LangGraph Platform.
 """
 from __future__ import annotations
 
@@ -11,6 +13,7 @@ from langgraph.graph import END, StateGraph
 
 from app.services.blind_spot import annotate_rule_items
 from app.services.checklist import run_checklist
+from app.services.clause_index import build_clause_index, map_items_to_clauses
 from app.services.extract import extract_text
 from app.services.model_review import run_model_review
 
@@ -32,12 +35,15 @@ class ReviewState(TypedDict, total=False):
     # 阶段 0.5：单次审查 LLM 预算对象（llm_budget.ReviewBudget | None），
     # 由 upload 请求创建、贯穿预审与审查线程；放 state 仅为透传给 model_review
     budget: Any
+    # 阶段 1.1：条款索引（clause_index.build_clause_index 产物），由 node_parse
+    # 基于入库同款全文构建，坐标锚定该 text；纯展示增强，error 路径不产出
+    clause_index: Any
 
 
 def node_parse(state: ReviewState) -> ReviewState:
     try:
         text = extract_text(state["filename"], state["raw_bytes"])
-        return {"text": text, "error": ""}
+        return {"text": text, "error": "", "clause_index": build_clause_index(text)}
     except Exception as exc:  # noqa: BLE001
         return {"text": "", "error": str(exc)}
 
@@ -47,6 +53,10 @@ def node_checklist(state: ReviewState) -> ReviewState:
         return {}
     result = run_checklist(state.get("text") or "", state.get("category") or "procurement")
     items = annotate_rule_items(result["items"])
+    # 条款归属映射（阶段 1.1）：纯展示增强，失败静默降级为空映射，不影响档位
+    clause_index = state.get("clause_index") or {}
+    if clause_index:
+        map_items_to_clauses(items, clause_index, state.get("text") or "")
     return {
         "items": items,
         "policies": result.get("policies") or [],
@@ -74,11 +84,17 @@ def node_model_review(state: ReviewState) -> ReviewState:
         items=state.get("items") or [],
         policies=state.get("policies") or [],
         category=state.get("category") or "procurement",
+        clause_index=state.get("clause_index"),
         budget=state.get("budget"),
     )
+    candidates = out.get("blind_candidates") or []
+    # 补盲候选同样标注条款归属（它们正是「中段条款被点名」的主要载体）
+    clause_index = state.get("clause_index") or {}
+    if candidates and clause_index:
+        map_items_to_clauses(candidates, clause_index, state.get("text") or "")
     return {
         "scorecard": out.get("scorecard") or {},
-        "blind_candidates": out.get("blind_candidates") or [],
+        "blind_candidates": candidates,
         "blind_skipped_messages": out.get("blind_skipped_messages") or [],
         "blind_skipped_reason": out.get("blind_skipped_reason"),
         "blind_enabled": bool(out.get("blind_enabled")),
@@ -146,6 +162,7 @@ def run_review(
         "category": final.get("category") or category,
         "category_label": final.get("category_label") or category,
         "error": final.get("error") or "",
+        "clause_index": final.get("clause_index"),
         "scorecard": final.get("scorecard") or {},
         "blind_candidates": final.get("blind_candidates") or [],
         "blind_skipped_messages": final.get("blind_skipped_messages") or [],

@@ -1,8 +1,13 @@
-"""M3.5 merged model pass: scorecard + targeted blind-spot in ONE LLM call.
+"""M3.5 merged model pass: scorecard + targeted blind-spot.
 
-Why one call: 定向补盲 targets gaps the scorecard names, so both halves need
-the same context — and the admin-config principle 「审查流水线在 run_checklist
-之后最多一次批量 LLM 调用」 still holds.
+调用结构（阶段 1.2 起废除「最多一次批量 LLM 调用」旧约束）：
+- 短合同（≤ MAX_CONTRACT_CHARS）：单次合并调用（评分+补盲同 payload），与
+  历史版本逐字节一致——现有全部测试 fixture 走此路径。
+- 长合同（> MAX_CONTRACT_CHARS）：map-reduce 分段阅读——每块一次 map 调用
+  产出观察素材（≤ LLM_REVIEW_MAX_SEGMENTS 块，默认 4，不重试），再一次
+  reduce 汇总调用（复用既有 system prompt 与输出 schema，禁语重试/降级/
+  封顶全链不变）。补盲候选仍由 reduce payload 承载、_quote_supported 对
+  全文校验（blind_spot 零改动）。
 
 Entry: run_model_review(text, items, policies, category, chat_fn=None).
 
@@ -16,12 +21,25 @@ Gating matrix (tests assert all of these):
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Optional
 
 from app.services import blind_spot, llm_ask, scorecard
 from app.services.checklist import STATUS_ATTENTION
 
 logger = logging.getLogger(__name__)
+
+# 分段阅读块数上限（env 调用时点读取，垃圾值回退默认——项目惯例）
+DEFAULT_MAX_SEGMENTS = 4
+
+
+def _max_segments() -> int:
+    raw = (os.getenv("LLM_REVIEW_MAX_SEGMENTS", "") or "").strip()
+    try:
+        n = int(raw)
+    except ValueError:
+        return DEFAULT_MAX_SEGMENTS
+    return n if n >= 1 else DEFAULT_MAX_SEGMENTS
 
 
 def run_model_review(
@@ -31,6 +49,8 @@ def run_model_review(
     policies: list[str] | None = None,
     category: str = "procurement",
     chat_fn: Optional[Any] = None,
+    map_chat_fn: Optional[Any] = None,
+    clause_index: Optional[dict[str, Any]] = None,
     budget: Optional[Any] = None,
 ) -> dict[str, Any]:
     """Run the merged pass. Returns scorecard + blind halves.
@@ -64,8 +84,30 @@ def run_model_review(
         # 旧品类没配 scorecard: 块 → 评分未开通，且不浪费 LLM 调用
         result["scorecard"] = scorecard.unavailable("no_scorecard_config")
         return result
-    system = scorecard.build_system_prompt(segments, policies or [])
-    user = scorecard.build_user_prompt(text or "", items)
+
+    # —— 路径选择：≤6000 字走历史单调用路径（逐字节保留）；超长走分段阅读 ——
+    observations: list[dict[str, Any]] = []
+    map_gap_ids: list[str] = []
+    segmented = len(text or "") > scorecard.MAX_CONTRACT_CHARS
+    if segmented:
+        observations, map_gap_ids, chunks_ok = _run_map_pass(
+            text or "", items, policies or [], clause_index,
+            deepseek, zhipu, xai, chat_fn, map_chat_fn, budget,
+        )
+        if chunks_ok == 0:
+            # map 全败（异常/解析失败）：可用性优先于覆盖 → 回退头尾采样单调用。
+            # 注意与「解析成功但无风险观察」区分——后者是合法结果，照走 reduce。
+            logger.warning("Segmented map pass produced nothing; falling back to clipped single call")
+            segmented = False
+
+    if segmented:
+        system = scorecard.build_system_prompt(segments, policies or [])
+        user = scorecard.build_reduce_user_prompt(
+            items, scorecard.format_observations(observations)
+        )
+    else:
+        system = scorecard.build_system_prompt(segments, policies or [])
+        user = scorecard.build_user_prompt(text or "", items)
 
     # 预算检查点（阶段 0.5）：调用前扣减，耗尽走软降级（同 llm_error 形态，
     # 不硬失败）。重试前同样检查——「第 1 次成功、重试时预算尽」也正确降级
@@ -112,7 +154,8 @@ def run_model_review(
     result["scorecard"] = final
 
     # ---- candidates half (定向补盲 v2) ----
-    named_ids = _named_gap_ids(payload)
+    # 分段路径：map 观察点名的缺口并入靶点（中段条款的「通过但表述弱」也值得补盲）
+    named_ids = _named_gap_ids(payload) + map_gap_ids
     if not blind_on:
         result["blind_skipped_reason"] = None
         return result
@@ -130,6 +173,66 @@ def run_model_review(
     result["blind_candidates"] = candidates
     result["blind_skipped_messages"] = skipped
     return result
+
+
+def _run_map_pass(
+    text: str,
+    items: list[dict[str, Any]],
+    policies: list[str],
+    clause_index: Optional[dict[str, Any]],
+    deepseek: Optional[str],
+    zhipu: Optional[str],
+    xai: Optional[str],
+    chat_fn: Optional[Any],
+    map_chat_fn: Optional[Any],
+    budget: Optional[Any],
+) -> tuple[list[dict[str, Any]], list[str], int]:
+    """map 阶段：按块阅读产出观察素材。
+
+    - 每块调用前预算检查，耗尽即停（已收观察直接进 reduce，reduce 额度优先）
+    - 单块失败（异常/解析失败）不重试、跳过继续（延迟护栏，2026-09-07 教训）
+    - 返回 (observations, map 点名的 gap item ids, 成功解析的块数)——
+      第三项用于区分「全败回退」与「成功但无风险」
+    """
+    chunks = scorecard.build_review_chunks(text, clause_index, max_segments=_max_segments())
+    if not chunks:
+        return [], [], 0
+    system = scorecard.build_map_system_prompt(policies)
+    total = len(chunks)
+    observations: list[dict[str, Any]] = []
+    gap_ids: list[str] = []
+    chunks_ok = 0
+    for part_no, chunk in enumerate(chunks, start=1):
+        # 预算预留：给 reduce 留最后 1 次额度（remaining()==-1 表示不限）——
+        # 否则段数调大时 map 会把预算吃光，长合同评分卡恒 unavailable（门禁 P3）
+        if budget is not None:
+            remaining = budget.remaining()
+            if remaining >= 0 and remaining <= 1:
+                logger.warning(
+                    "Map pass stopped: reserving last budget credit for reduce (%d/%d chunks)", part_no - 1, total
+                )
+                break
+            if not budget.try_consume():
+                logger.warning("Map pass stopped early: LLM budget exhausted (%d/%d chunks)", part_no - 1, total)
+                break
+        user = scorecard.build_map_user_prompt(chunk, items, part_no, total)
+        try:
+            raw = _call_llm(zhipu, xai, system, user, map_chat_fn or chat_fn, deepseek=deepseek)
+        except Exception:  # noqa: BLE001
+            logger.exception("Map pass chunk %d/%d LLM error; skipping chunk", part_no, total)
+            continue
+        parsed = scorecard.parse_map_payload(raw)
+        if parsed is None:
+            # 调用成功但结构错误：该块按失败计，不跳过后续块
+            logger.warning("Map pass chunk %d/%d returned unparseable payload", part_no, total)
+            continue
+        chunks_ok += 1
+        for obs in parsed:
+            observations.append(obs)
+            ids = obs.get("gap_item_ids")
+            if isinstance(ids, list):
+                gap_ids.extend(str(g) for g in ids)
+    return observations, gap_ids, chunks_ok
 
 
 def _named_gap_ids(payload: Optional[dict[str, Any]]) -> list[str]:

@@ -192,9 +192,10 @@
     // 快照 reviewId（小智娘复验 P3）：用户中途 Back 走人后，睡醒的循环不得
     // 拿着失效 rid 去 fetch/清 hash，干扰用户刚导航到的新审查
     const rid = state.reviewId;
-    // 审查已改为后台任务（上传秒回 review_id）：大合同含模型评分约 1-2 分钟，
-    // 轮询预算给足 5 分钟（150 × 2s），done/error 提前退出
-    for (let i = 0; i < 150; i++) {
+    // 审查已改为后台任务（上传秒回 review_id）：阶段 1.2 起长合同走分段阅读
+    // （最多 4 块 × 每块 ~1 分钟量级），轮询预算放宽到 10 分钟（300 × 2s），
+    // done/error 提前退出
+    for (let i = 0; i < 300; i++) {
       if (state.reviewId !== rid) return;
       const res = await fetch(`/api/review/${rid}`);
       const data = await res.json();
@@ -254,6 +255,15 @@
       `<strong>${escapeHtml(data.filename || "")}</strong>` +
       ` · ${escapeHtml(data.category_label || data.category || "")}` +
       `<br/>${metaExtra}`;
+
+    // 阶段 1.1 条款索引：meta 行露出「已识别 N 段」（无索引时静默，旧记录兼容）
+    const nClauses = data.clause_index && data.clause_index.count;
+    if (nClauses > 0) {
+      const clauseNote = document.createElement("span");
+      clauseNote.className = "clause-count-note";
+      clauseNote.textContent = ` · 已识别条款 ${nClauses} 段`;
+      $("results-meta").appendChild(clauseNote);
+    }
 
     // M4：审查完成后开放报告导出（GET /api/review/{id}/report）
     if (data.id) {
@@ -409,6 +419,16 @@
     return li;
   }
 
+  /** 阶段 1.1 条款锚点：clause_ids[0] → clause_index 查表，返回 heading。
+   *  无索引（旧记录）/未定位/查不到 → 空串（调用方据此隐藏徽章）。 */
+  function clauseHeadingFor(item) {
+    const ids = (item && item.clause_ids) || [];
+    const index = state.review && state.review.clause_index;
+    if (!ids.length || !index || !Array.isArray(index.clauses)) return "";
+    const target = index.clauses.find((c) => c.id === ids[0]);
+    return (target && target.heading) || "";
+  }
+
   function selectItem(item) {
     const selKey = item._blind ? `blind:${item.id}` : item.id;
     state.selectedItemId = selKey;
@@ -420,6 +440,18 @@
     const noteEl = $("detail-note");
     const quoteEl = $("detail-quote");
     const actions = $("detail-actions");
+    const clauseEl = $("detail-clause");
+
+    // 阶段 1.1 条款锚点：clause_ids[0] → clause_index 查表露出「所在条款」。
+    // 无索引（旧记录）/未定位到条款 → 静默隐藏，绝不占位。
+    const clauseInfo = clauseHeadingFor(item);
+    if (clauseInfo) {
+      clauseEl.textContent = `所在条款：${clauseInfo}`;
+      clauseEl.classList.remove("hidden");
+    } else {
+      clauseEl.textContent = "";
+      clauseEl.classList.add("hidden");
+    }
 
     noteEl.textContent = item.note || "（无说明）";
     if (item.quote) {

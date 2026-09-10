@@ -20,6 +20,8 @@ class ChecklistItemResult(BaseModel):
     category_na: bool = False
     tag_source: Optional[TagSource] = None
     needs_confirm: bool = False
+    # 阶段 1.1：命中所在条款（clause_index 的 id，如 c05）；未定位到为空
+    clause_ids: list[str] = Field(default_factory=list)
 
 
 class BlindCandidate(BaseModel):
@@ -32,6 +34,23 @@ class BlindCandidate(BaseModel):
     tag_source: Literal["blind"] = "blind"
     needs_confirm: bool = True
     named_by_scorecard: bool = False
+    clause_ids: list[str] = Field(default_factory=list)
+
+
+class ClauseInfo(BaseModel):
+    """条款索引单条元数据（阶段 1.1）：坐标锚定服务端存档全文，正文不下发。"""
+
+    id: str
+    heading: str
+    start: int
+    end: int
+    chars: int = 0
+
+
+class ClauseIndexInfo(BaseModel):
+    strategy: Literal["numbered", "paragraph"] = "paragraph"
+    count: int = 0
+    clauses: list[ClauseInfo] = Field(default_factory=list)
 
 
 class ScoreSegment(BaseModel):
@@ -84,6 +103,8 @@ class ReviewSummary(BaseModel):
     text_preview: str = ""
     ask_available: bool = False
     precheck: Optional[PrecheckInfo] = None
+    # 阶段 1.1：条款索引元数据（旧记录为 None；不含正文，全文不下发）
+    clause_index: Optional[ClauseIndexInfo] = None
 
 
 class UploadResponse(BaseModel):

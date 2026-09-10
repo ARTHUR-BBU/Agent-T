@@ -25,7 +25,8 @@ import threading
 
 logger = logging.getLogger(__name__)
 
-# 默认 12 = 现状最坏 4 次的 3 倍余量；阶段 2 分段阅读时再按实际调优。
+# 默认 12：阶段 1.2 分段阅读落地后的账目 = 预审 ≤2 + map ≤4（块数上限，
+# LLM_REVIEW_MAX_SEGMENTS）+ 汇总 1 + 汇总重试 1 = 最坏 8 ≤ 12，仍留余量。
 # 注意：配置 < 4 会影响现状最坏路径（重试被预算截断），文档已注明。
 DEFAULT_BUDGET = 12
 
