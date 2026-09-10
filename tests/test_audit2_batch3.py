@@ -136,3 +136,20 @@ def test_onesided_deposit_forfeit_still_flagged():
     text = open(ROOT / "fixtures/precheck/pc11_sale_seller_view.txt", encoding="utf-8").read()
     items = {i["id"]: i["status"] for i in run_checklist(text, "procurement")["items"]}
     assert items["unfair_terms"] == "需关注", "pc11 金标：单方定金没收仍需直捕"
+
+
+def test_onesided_deposit_forward_order_discriminative_lock():
+    """正序「定金…不予退还」判别性锁（小智娘批3 P3-2）：pc11 的 unfair_terms
+    实靠「逾期视为合格」命中、deposit 正序 pattern 对 pc11 从未命中——
+    本用例专锁独立定金子规则，删掉它本测试必须炸。"""
+    text = (
+        "设备采购合同\n甲方（买方）与乙方（卖方）约定：\n"
+        "合同签订后乙方支付定金，若乙方中途解约，定金不予退还。\n"
+        "货款验收合格后分期支付。\n争议向甲方所在地法院起诉。适用中华人民共和国法律。\n"
+    )
+    result = run_checklist(text, "procurement")
+    unfair = next(i for i in result["items"] if i["id"] == "unfair_terms")
+    assert unfair["status"] == "需关注"
+    assert any("定金" in h for h in unfair["hits"]), (
+        "必须由独立定金子规则直捕（判别性锁：命中词不含定金即说明锁失效）"
+    )
