@@ -186,7 +186,8 @@ def build_clause_context(
             total += len(body)
             if total >= max_chars:
                 break
-        return "\n".join(parts)
+        # join 后再截一次：分隔符不计入预算会超出 max_chars（小智娘门禁 P3）
+        return "\n".join(parts)[:max_chars]
     except Exception:  # noqa: BLE001 — 纯增强，绝不抛
         return ""
 

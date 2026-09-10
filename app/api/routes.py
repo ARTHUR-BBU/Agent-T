@@ -120,7 +120,11 @@ async def upload(
     # 影响）；worker 内的 node_parse 本就受 review 槽位（4）约束。
     precheck_record: dict | None = None
     contract_text: str | None = None
-    if _parse_slots.acquire(blocking=False):
+    if not _parse_slots.acquire(blocking=False):
+        # 降级必须留痕（肉饼门禁 P2-1，对齐 precheck busy 先例）：闸门满时
+        # 跳过预审是合法降级，但静默丢弃会失去品类存疑/立场知情提示且零痕迹
+        logger.warning("Parse slots exhausted, skipping precheck (category=%s)", category)
+    else:
         try:
             try:
                 contract_text = await run_in_threadpool(extract_text, filename, raw)

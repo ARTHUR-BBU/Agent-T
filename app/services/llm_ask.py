@@ -283,7 +283,9 @@ def _build_user_prompt(
 {body}
 """
     else:
-        context_block = f"""合同全文（头尾采样）：
+        # 回退路径形状红线（小智娘门禁 P2）：与历史版本逐字节一致——
+        # 「头尾采样」说明只出现在有条款上下文分支的「合同整体背景」标签
+        context_block = f"""合同全文：
 {body}
 """
     return f"""清单项：{item.get('name')}（id={item.get('id')}）

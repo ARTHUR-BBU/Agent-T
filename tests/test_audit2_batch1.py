@@ -46,12 +46,22 @@ def test_normal_size_upload_still_works():
 
 # ---------- 批1-② 解析闸门 ----------
 
-def test_parse_slots_exist_and_bounded():
+def test_parse_slots_capacity_matches_config():
+    """闸门容量=配置值（替换恒真断言，肉饼门禁 P3-1）。"""
     from app.api import routes
 
-    assert routes._parse_slots is not None
-    # 非阻塞语义：acquire(blocking=False) 满时返 False（不挂事件循环）
-    assert hasattr(routes._parse_slots, "acquire")
+    holders = []
+    try:
+        acquired = 0
+        while routes._parse_slots.acquire(blocking=False):
+            holders.append(True)
+            acquired += 1
+        assert acquired == routes.MAX_CONCURRENT_PARSES, (
+            f"闸门容量 {acquired} != 配置 {routes.MAX_CONCURRENT_PARSES}"
+        )
+    finally:
+        for _ in holders:
+            routes._parse_slots.release()
 
 
 def test_precheck_skipped_when_parse_slots_full(monkeypatch):
@@ -109,10 +119,11 @@ def test_build_clause_context_returns_hit_and_neighbors():
 
 
 def test_build_clause_context_caps_total_size():
-    text = "第一条 甲\n" + "内容。" * 3000 + "\n第二条 乙\n尾部。"
+    """总长硬上限含 join 分隔符（小智娘门禁 P3：多条款拼接不再超出预算）。"""
+    text = "第一条 甲\n" + "内容。" * 1500 + "\n第二条 乙\n" + "更多。" * 1500
     idx = build_clause_index(text)
     ctx = build_clause_context(text, idx, ["c01"], max_chars=2000)
-    assert len(ctx) <= 2000
+    assert len(ctx) <= 2000, "join 分隔符不得击穿 max_chars"
 
 
 def test_build_clause_context_fallbacks():
@@ -138,8 +149,19 @@ def test_ask_user_prompt_uses_clause_context_when_available():
 
 
 def test_ask_user_prompt_falls_back_without_context():
-    """无条款上下文（旧记录/未定位）→ prompt 形状与历史版本一致。"""
+    """无条款上下文（旧记录/未定位）→ prompt 形状与历史版本一致（全等锁死，
+    子串断言锁不住文案漂移——小智娘门禁 P2 的溜过原因）。"""
     item = {"name": "付款", "id": "payment", "status": "需关注", "note": "n", "quote": "q"}
     prompt = llm_ask._build_user_prompt("怎么改？", item, "全文内容。")
-    assert "条款上下文" not in prompt
-    assert "合同全文" in prompt
+    expected = (
+        "清单项：付款（id=payment）\n"
+        "规则引擎结论：需关注\n"
+        "规则备注：n\n"
+        "规则摘录：q\n"
+        "\n"
+        "用户问题：怎么改？\n"
+        "\n"
+        "合同全文：\n"
+        "全文内容。\n"
+    )
+    assert prompt == expected, "回退路径必须与历史版本逐字节一致"
