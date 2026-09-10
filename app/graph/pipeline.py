@@ -7,7 +7,8 @@ only — not LangGraph Platform.
 """
 from __future__ import annotations
 
-from typing import Any, TypedDict
+import logging
+from typing import Any, Callable, TypedDict
 
 from langgraph.graph import END, StateGraph
 
@@ -38,9 +39,26 @@ class ReviewState(TypedDict, total=False):
     # 阶段 1.1：条款索引（clause_index.build_clause_index 产物），由 node_parse
     # 基于入库同款全文构建，坐标锚定该 text；纯展示增强，error 路径不产出
     clause_index: Any
+    # 阶段 0.2 补课：stage 进度回调（Callable[[str], None] | None），由 routes
+    # worker 注入（写 store.stage），pipeline 自身不感知持久化
+    on_stage: Any
+
+
+def _emit_stage(state: ReviewState, stage: str) -> None:
+    """向 worker 回调上报进度；回调异常绝不影响审查主流程。"""
+    cb = state.get("on_stage")
+    if not cb:
+        return
+    try:
+        cb(stage)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning("on_stage callback failed for stage=%s", stage, exc_info=True)
 
 
 def node_parse(state: ReviewState) -> ReviewState:
+    # scanning 从解析入口起算：大 PDF 的 Docling 提取可达数十秒，算进「规则扫描」
+    # 才不会让等待页卡在上一段（triage 在 routes 的预审阶段已是完成态）
+    _emit_stage(state, "scanning")
     try:
         text = extract_text(state["filename"], state["raw_bytes"])
         return {"text": text, "error": "", "clause_index": build_clause_index(text)}
@@ -70,6 +88,7 @@ def node_model_review(state: ReviewState) -> ReviewState:
 
     Additive only — never mutates rule item statuses; score is advisory.
     """
+    _emit_stage(state, "scoring")
     if state.get("error"):
         return {
             # 解析已失败，与「有规则结果才出分」的 no_rule_results 门禁区分开（肉饼审查 P3-4）
@@ -145,6 +164,7 @@ def run_review(
     raw_bytes: bytes,
     category: str = "procurement",
     budget: Any = None,
+    on_stage: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     graph = get_graph()
     final: ReviewState = graph.invoke(
@@ -153,6 +173,7 @@ def run_review(
             "raw_bytes": raw_bytes,
             "category": category or "procurement",
             "budget": budget,
+            "on_stage": on_stage,
         }
     )
     return {

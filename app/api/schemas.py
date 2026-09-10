@@ -85,6 +85,10 @@ class PrecheckInfo(BaseModel):
     confidence: str = "low"
     summary: str = ""
     suspect: bool = False  # low 置信度但倾向与所选不一致 → 非阻断「品类存疑」
+    # 阶段 1.3 分支 C：中性立场 + 检出对方视角起草 → 非阻断「立场知情」提示
+    stance_notice: bool = False
+    # 提示文案由服务端单一来源（stance.counterparty_view_notice）生成下发
+    stance_notice_text: str = ""
 
 
 class ReviewSummary(BaseModel):
@@ -93,6 +97,9 @@ class ReviewSummary(BaseModel):
     category: str
     category_label: str
     status: Literal["pending", "processing", "done", "error"] = "pending"
+    # 阶段 0.2：进度段位 triage/scanning/scoring/done/error；旧记录为 None
+    # （status 仍是唯一终态权威，前端对 None 退化单行文案）
+    stage: Optional[str] = None
     items: list[ChecklistItemResult] = Field(default_factory=list)
     scorecard: ScorecardInfo = Field(default_factory=ScorecardInfo)
     blind_candidates: list[BlindCandidate] = Field(default_factory=list)
@@ -105,6 +112,10 @@ class ReviewSummary(BaseModel):
     precheck: Optional[PrecheckInfo] = None
     # 阶段 1.1：条款索引元数据（旧记录为 None；不含正文，全文不下发）
     clause_index: Optional[ClauseIndexInfo] = None
+    # 阶段 1.3：立场声明（元数据；declaration 由服务端单一来源生成，
+    # 前端与 docx 只渲染不拼接）
+    stance: str = "neutral"
+    stance_declaration: str = ""
 
 
 class UploadResponse(BaseModel):
@@ -115,7 +126,8 @@ class UploadResponse(BaseModel):
     status: Literal["uploaded", "category_confirm"] = "uploaded"
     precheck: Optional[PrecheckInfo] = None
     suggested_category: Optional[str] = None
-    supported_categories: list[dict[str, str]] = Field(default_factory=list)
+    # 阶段 1.3：元素含 stances 嵌套 dict（立场元数据随品类透传）
+    supported_categories: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class AskRequest(BaseModel):

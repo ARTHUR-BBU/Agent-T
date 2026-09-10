@@ -29,6 +29,8 @@
   --color-confirm-bg: #FFFAEB;
   /* 弱说明文字（隐私声明等，原硬编码收编） */
   --color-caption-muted: #8A8AA0;
+  /* 模态遮罩（阶段 1.4⑤ dialog，阳仔提案：主文字色派生的中性黑） */
+  --color-backdrop: rgba(29, 29, 31, 0.4);
 
   /* Type */
   --type-title: 600 30px/1.25 "PingFang SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
@@ -263,6 +265,111 @@ textarea { resize: vertical; min-height: 88px; }
   font-size: 13px;
   color: var(--color-text-secondary);
 }
+
+/* ===== 阶段 0.2 等待页三段真实进度（阳仔线框）=====
+   诚实进度：四态状态点 + 文字双通道，无百分比无 spinner（全局禁动画，
+   且后端给不出百分比——填充它就是假进度）。 */
+.stage-title {
+  font: var(--type-label);
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--space-2);
+}
+.stage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.stage {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  gap: var(--space-1);
+  align-items: start;
+  padding: var(--space-1) 0;
+  position: relative;
+}
+/* 左侧连接线：贯穿但最后一段不画 */
+.stage:not(:last-child)::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 26px;
+  bottom: -6px;
+  width: 2px;
+  background: var(--color-divider);
+}
+.stage-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid var(--color-divider);
+  background: transparent;
+  margin-top: 5px;
+  justify-self: center;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+.stage-text {
+  display: flex;
+  flex-direction: column;
+}
+.stage-name {
+  font: var(--type-label);
+  color: var(--color-text-tertiary);
+  transition: color 150ms ease;
+}
+.stage-sub {
+  font: var(--type-caption);
+  color: var(--color-text-tertiary);
+}
+.stage-badge {
+  font: var(--type-caption);
+  color: var(--color-text-tertiary);
+  transition: color 150ms ease;
+}
+/* active：实心圆 + 主文字色（双通道：圆点形态 + 文字） */
+.stage.is-active .stage-dot {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+.stage.is-active .stage-name,
+.stage.is-active .stage-badge {
+  color: var(--color-text-primary);
+}
+/* done：✓ 字符 + 通过色（badge 文案由 JS 切换，CSS 只管颜色） */
+.stage.is-done .stage-dot {
+  border: none;
+  background: transparent;
+  width: auto;
+  height: auto;
+  margin-top: 2px;
+}
+.stage.is-done .stage-dot::before {
+  content: "✓";
+  font-size: 13px;
+  color: var(--color-pass);
+}
+.stage.is-done .stage-name {
+  color: var(--color-text-secondary);
+}
+.stage.is-done .stage-badge {
+  color: var(--color-pass);
+}
+/* error：✕ 字符 + 危险色（文字+颜色双通道） */
+.stage.is-error .stage-dot {
+  border: none;
+  background: transparent;
+  width: auto;
+  height: auto;
+  margin-top: 2px;
+}
+.stage.is-error .stage-dot::before {
+  content: "✕";
+  font-size: 13px;
+  color: var(--color-danger);
+}
+.stage.is-error .stage-name,
+.stage.is-error .stage-badge {
+  color: var(--color-danger);
+}
 .detail-note {
   margin: 0 0 var(--space-2);
   color: var(--color-text-primary);
@@ -442,6 +549,79 @@ mark.kw,
   font: var(--type-caption);
   color: var(--color-text-tertiary);
 }
+/* 阶段 1.3 立场声明行：meta 卡内的中性灰小字（声明不是风险提示，不占档位色） */
+.stance-declaration {
+  margin: var(--space-1) 0 0;
+  font: var(--type-caption);
+  color: var(--color-text-secondary);
+}
+
+/* ===== 阶段 1.3 立场 segmented（阳仔线框①）=====
+   原生 radio 皮：键盘可达免手写；默认中性真选中（不是空态）；
+   选中态三通道（底色+描边+字重），零新增颜色 token */
+.seg {
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+.seg-track {
+  display: inline-flex;
+  max-width: 100%;
+  background: var(--color-aside-bg);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-btn);
+  padding: 2px;
+  gap: 2px;
+}
+.seg-item {
+  position: relative;
+  display: inline-flex;
+  flex: 1 1 0;
+}
+.seg-item input {
+  /* 视觉隐藏但保留键盘可达（不 display:none） */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.seg-item span {
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 88px;
+  height: var(--btn-height-sm);
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-btn);
+  font: var(--type-label);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  text-align: center;
+  transition: color 150ms ease, background 150ms ease, box-shadow 150ms ease;
+}
+.seg-item input:checked + span {
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  box-shadow: inset 0 0 0 1px var(--color-divider);
+}
+.seg-item input:focus-visible + span {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
+.seg:disabled .seg-item span {
+  opacity: 0.55;
+  cursor: default;
+}
+.stance-hint {
+  margin: var(--space-1) 0 0;
+  font-size: 12px;
+}
+.stance-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
 .score-head {
   display: flex;
   align-items: baseline;
@@ -563,16 +743,29 @@ mark.kw,
 /* 上传页隐私说明（外部审计 P1：原文发送至第三方模型须明示） */
 .privacy-note { font-size: 12px; color: var(--color-caption-muted); margin-top: 10px; line-height: 1.6; }
 
-/* LLM 预审确认与品类存疑提示（分类≠裁判：AI 只建议，用户拍板） */
-.precheck-confirm {
+/* LLM 预审确认（阶段 1.4⑤ dialog 化，阳仔线框）与品类存疑提示
+   （分类≠裁判：AI 只建议，用户拍板）——琥珀色=「AI 在等你决定」的认知延续 */
+.precheck-dialog {
+  width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
   border: 1px solid var(--color-confirm-edge);
   background: var(--color-confirm-bg);
-  margin-top: 10px;
+  border-radius: var(--radius-card);
+  padding: var(--space-2);
 }
-.precheck-confirm .precheck-actions {
+.precheck-dialog::backdrop {
+  /* 唯一新 token（阳仔提案）：从主文字色派生的中性黑遮罩 */
+  background: var(--color-backdrop);
+}
+.precheck-dialog .precheck-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: 10px;
+}
+.precheck-dialog .precheck-actions .primary {
+  flex: 1 1 auto;
 }
 .precheck-suspect {
   border: 1px solid var(--color-confirm-edge);
