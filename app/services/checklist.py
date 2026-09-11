@@ -244,48 +244,29 @@ def _unless_holds(text: str, rule: dict[str, Any]) -> bool:
     unless/none_of 时行为完全不变。
     注意（承小智娘终验 P3②）：all_of 会被拆平为独立 conjunct 迭代，各
     conjunct 命中点未必相邻——当前三品类无 all_of+unless 组合，若未来引入
-    需改为各 conjunct 命中区间的最小共同邻域。
+    需改为各 conjunct 命中区间的最小共同邻域。同理，三品类现无 pass+unless
+    组合；若引入，「存在干净 occurrence 即通过」的语义需重新设计（外部审计
+    批2 肉饼 P3-3 警示）。
     """
     if rule.get("unless") is None and rule.get("none_of") is None:
         return True
     top = {k: rule[k] for k in ("pattern", "any_of", "all_of") if k in rule}
-    saw_any_match = False
     for pattern in _patterns_from_spec(top):
         try:
             matches = re.finditer(pattern, text, flags=re.IGNORECASE | re.DOTALL)
         except re.error:
+            # 启动校验已保证正则可编译，运行期不可达（外部审计批3 收敛残余）：
+            # 旧回退会把窗口塌缩为全文域（小智娘批2 P3-1），改为视为无命中留痕
+            logging.getLogger(__name__).warning(
+                "Invalid regex treated as no-match in unless evaluation: %r", pattern
+            )
             continue
         for m in matches:
-            saw_any_match = True
             lo = max(0, m.start() - _UNLESS_WINDOW)
             hi = min(len(text), m.end() + _UNLESS_WINDOW)
             if not _negative_evidence(text[lo:hi], rule):
                 return True  # 该 occurrence 邻近无保护 → 风险成立
-    if saw_any_match:
-        return False  # 全部命中的邻域都有保护性表述 → 放行
-    # 正向命中全部来自 re.error 降级路径：回退旧首命中邻域（保守）
-    return not _negative_evidence(_match_neighborhood(text, rule), rule)
-
-
-def _match_neighborhood(text: str, rule: dict[str, Any]) -> str:
-    """第一个正向命中的邻近窗口。
-
-    注意（小智娘终验 P3②，2026-09-06）：_patterns_from_spec 会把 all_of 拆平，
-    本函数锚定的是第一个可匹配 conjunct 的位置——all_of 联合命中区间可能更宽，
-    「定位不到即回退全文」的安全网实际不存在（当前三品类无 all_of+unless 组合，
-    零影响）。若未来引入该组合，需改为各 conjunct 命中区间的最小共同邻域。
-    """
-    top = {k: rule[k] for k in ("pattern", "any_of", "all_of") if k in rule}
-    for pattern in _patterns_from_spec(top):
-        try:
-            m = re.search(pattern, text)
-        except re.error:
-            continue
-        if m:
-            lo = max(0, m.start() - _UNLESS_WINDOW)
-            hi = min(len(text), m.end() + _UNLESS_WINDOW)
-            return text[lo:hi]
-    return text
+    return False  # 无有效命中或全部命中邻域受保护 → 放行
 
 
 def _patterns_from_spec(spec: Any) -> list[str]:

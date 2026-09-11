@@ -52,6 +52,26 @@ _parse_slots = threading.Semaphore(MAX_CONCURRENT_PARSES)
 _READ_CHUNK = 1024 * 1024
 
 
+async def _read_limited(file: Any) -> tuple[bytes, bool]:
+    """分块流式读取上传文件（外部审计批1-②）。
+
+    返回 (已读字节, 是否超限)。超限时立即停止读取——剩余字节不进内存。
+    独立成函数便于真锁分块行为（肉饼 PR#23 P3-2：此前测试无法验证
+    「读取中途停止」这个资源语义）。
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(_READ_CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            return b"".join(chunks), True
+        chunks.append(chunk)
+    return b"".join(chunks), False
+
+
 @router.get("/categories")
 def categories():
     return {"categories": list_categories()}
@@ -81,21 +101,9 @@ async def upload(
     # 流式限额（外部审计批1-②）：分块读取，累计超限立即拒收——
     # 旧实现 await file.read() 先把整个文件读进内存才判长度，「10MB 以上
     # 不给审」做到了，「10MB 以上不进内存」没做到
-    chunks: list[bytes] = []
-    total = 0
-    over_limit = False
-    while True:
-        chunk = await file.read(_READ_CHUNK)
-        if not chunk:
-            break
-        total += len(chunk)
-        if total > MAX_UPLOAD_BYTES:
-            over_limit = True
-            break  # 立即停止读取，剩余字节由框架丢弃
-        chunks.append(chunk)
+    raw, over_limit = await _read_limited(file)
     if over_limit:
         raise HTTPException(status_code=413, detail="文件超过 10MB 上限，请压缩后上传")
-    raw = b"".join(chunks)
     if not raw:
         raise HTTPException(status_code=400, detail="空文件")
     filename = file.filename or "contract.txt"

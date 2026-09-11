@@ -1,7 +1,8 @@
 """SQLite review store（接口与旧内存版完全一致，外部审计 P1：内存仓库无上限）。
 
 - 行数据整体 JSON 序列化存单列，schema 演进零成本；
-- 每次写入带过期时间（默认 24h），create 时顺带清理过期行——
+- 每次写入带过期时间（默认 24h）：create 时顺带清理过期行，get/update
+  读到过期行即视为不存在并顺带物理删除（外部审计批3）——
   容器重启不丢（进程内数据换持久化），长期运行不涨内存；
 - 连接按操作开关（无长连接），天然线程安全，兼容后台审查线程；
 - 路径走环境变量 STORE_DB_PATH（容器内默认 /tmp，本地默认系统临时目录），
@@ -88,20 +89,28 @@ class ReviewStore:
         return self._ttl > 0 and created_at < time.time() - self._ttl
 
     def get(self, review_id: str) -> dict[str, Any] | None:
-        with closing(self._conn()) as conn:
+        with closing(self._conn()) as conn, conn:
             row = conn.execute(
                 "SELECT created_at, data FROM reviews WHERE id = ?", (review_id,)
             ).fetchone()
-        if not row or self._is_expired(row[0]):
-            return None
-        return json.loads(row[1])
+            if not row:
+                return None
+            if self._is_expired(row[0]):
+                # 顺带落盘清理（外部审计批3）：服务长期无新上传时，过期合同
+                # 文本不应一直滞留 SQLite——读到即删
+                conn.execute("DELETE FROM reviews WHERE id = ?", (review_id,))
+                return None
+            return json.loads(row[1])
 
     def update(self, review_id: str, **kwargs: Any) -> dict[str, Any] | None:
         with self._lock, closing(self._conn()) as conn, conn:
             row = conn.execute(
                 "SELECT created_at, data FROM reviews WHERE id = ?", (review_id,)
             ).fetchone()
-            if not row or self._is_expired(row[0]):
+            if not row:
+                return None
+            if self._is_expired(row[0]):
+                conn.execute("DELETE FROM reviews WHERE id = ?", (review_id,))
                 return None
             data = json.loads(row[1])
             data.update(kwargs)
