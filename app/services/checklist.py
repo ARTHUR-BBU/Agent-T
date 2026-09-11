@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 
@@ -177,31 +177,36 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
     pass_fulltext_fallback = bool(item.get("pass_fulltext_fallback"))
 
     # 1) need_attention first (highest priority)
+    # MatchEvidence（外部审计二轮 P1-1）：一次扫描同时定档位与证据坐标，
+    # quote/条款归属均从同一 occurrence 派生——旧实现判定与摘句各自重扫，
+    # 「风险在第二处、摘句引第一处」的结论-证据错位即源于此
     for rule in rules.get("need_attention") or []:
-        if _rule_matches(text, rule) and _unless_holds(text, rule):
+        evidence = _first_unprotected_occurrence(text, rule)
+        if evidence:
             if pass_fulltext_fallback and _pass_matches(rules, text):
                 break  # 补全信息在全文存在：完备型误报，交由 pass 定「通过」
-            quote = _extract_quote_from_rule(text, rule)
-            hits = _extract_hits_from_rule(text, rule)
             return {
                 **base,
                 "status": STATUS_ATTENTION,
                 "note": rule.get("note", "需关注"),
-                "quote": quote,
-                "hits": hits,
+                "quote": _quote_from_evidence(text, evidence),
+                "hits": _extract_hits_from_rule(text, rule),
+                "evidence_start": evidence["start"],
+                "evidence_end": evidence["end"],
             }
 
     # 2) pass
     for rule in rules.get("pass") or []:
-        if _rule_matches(text, rule) and _unless_holds(text, rule):
-            quote = _extract_quote_from_rule(text, rule)
-            hits = _extract_hits_from_rule(text, rule)
+        evidence = _first_unprotected_occurrence(text, rule)
+        if evidence:
             return {
                 **base,
                 "status": STATUS_PASS,
                 "note": rule.get("note", "条款基本可接受"),
-                "quote": quote,
-                "hits": hits,
+                "quote": _quote_from_evidence(text, evidence),
+                "hits": _extract_hits_from_rule(text, rule),
+                "evidence_start": evidence["start"],
+                "evidence_end": evidence["end"],
             }
 
     # 3) not found / missing
@@ -231,42 +236,57 @@ def _pass_matches(rules: dict[str, Any], text: str) -> bool:
     return False
 
 
-def _unless_holds(text: str, rule: dict[str, Any]) -> bool:
-    """unless/none_of 只在与正向命中邻近的局部窗口（±60 字符）内生效。
+def _first_unprotected_occurrence(text: str, rule: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """一次命中只产出一份证据（MatchEvidence，外部审计二轮 P1-1）。
 
-    旧实现是全文域：合同任意位置的保护性表述会放空风险句——租赁终验实测
-    「甲方未取得产权人书面同意对外转租」被全文另一处的「乙方不得擅自转租」
-    boilerplate 洗成通过（小智娘 2026-09-06 P1 根因）。
+    返回首个「邻近无保护」的风险 occurrence：{"start","end","text","pattern"}；
+    规则不成立（未命中 / all_of 缺 conjunct / 全部命中受保护 / 非法正则）返回
+    None。status、quote、primary_clause 全部从这一份坐标派生——旧行为是
+    判定、摘句、命中各自重扫，「结论正确、证据错误」（风险在第二处、摘句
+    引第一处）的结构性根因即此。
 
-    判定单位是**每个正向命中的 occurrence**（外部审计批2-①）：只要存在
-    一个邻近窗口内没有保护性表述的命中，规则即成立——只看首个命中的
-    邻域时，「前文保护句洗掉后文独立风险句」会造成漏检。规则没有
-    unless/none_of 时行为完全不变。
-    注意（承小智娘终验 P3②）：all_of 会被拆平为独立 conjunct 迭代，各
-    conjunct 命中点未必相邻——当前三品类无 all_of+unless 组合，若未来引入
-    需改为各 conjunct 命中区间的最小共同邻域。同理，三品类现无 pass+unless
-    组合；若引入，「存在干净 occurrence 即通过」的语义需重新设计（外部审计
-    批2 肉饼 P3-3 警示）。
+    unless/none_of 只与命中邻近的局部窗口（±60 字符）内生效（承批2 逐
+    occurrence 判定）：无 unless/none_of 的规则任何命中即证据（首个命中，
+    与历史行为一致）。all_of 先做全 conjunct 命中前置校验（对齐原
+    _rule_matches 的 AND 语义），证据取首个无保护的 conjunct occurrence。
+    非法正则视为无命中留痕（外部审计批3：启动校验已保证运行期不可达）。
     """
-    if rule.get("unless") is None and rule.get("none_of") is None:
-        return True
     top = {k: rule[k] for k in ("pattern", "any_of", "all_of") if k in rule}
+    if "all_of" in rule:
+        pats = _patterns_from_spec(top)
+        if not pats or not all(_match(text, p) for p in pats):
+            return None
     for pattern in _patterns_from_spec(top):
         try:
             matches = re.finditer(pattern, text, flags=re.IGNORECASE | re.DOTALL)
         except re.error:
-            # 启动校验已保证正则可编译，运行期不可达（外部审计批3 收敛残余）：
-            # 旧回退会把窗口塌缩为全文域（小智娘批2 P3-1），改为视为无命中留痕
             logging.getLogger(__name__).warning(
-                "Invalid regex treated as no-match in unless evaluation: %r", pattern
+                "Invalid regex treated as no-match in evidence scan: %r", pattern
             )
             continue
         for m in matches:
             lo = max(0, m.start() - _UNLESS_WINDOW)
             hi = min(len(text), m.end() + _UNLESS_WINDOW)
             if not _negative_evidence(text[lo:hi], rule):
-                return True  # 该 occurrence 邻近无保护 → 风险成立
-    return False  # 无有效命中或全部命中邻域受保护 → 放行
+                return {
+                    "start": m.start(),
+                    "end": m.end(),
+                    "text": m.group(0),
+                    "pattern": pattern,
+                }
+    return None
+
+
+def _quote_from_evidence(text: str, evidence: dict[str, Any], window: int = 40) -> str:
+    """摘句从证据坐标切窗（替代旧 re.search 重扫首处）。"""
+    start = max(0, evidence["start"] - window)
+    end = min(len(text), evidence["end"] + window)
+    snippet = text[start:end].replace("\n", " ").strip()
+    if start > 0:
+        snippet = "…" + snippet
+    if end < len(text):
+        snippet = snippet + "…"
+    return snippet
 
 
 def _patterns_from_spec(spec: Any) -> list[str]:
@@ -377,42 +397,4 @@ def _extract_hits_from_rule(text: str, rule: dict[str, Any]) -> list[str]:
     return hits
 
 
-def _extract_quote_from_rule(text: str, rule: dict[str, Any], window: int = 40) -> str:
-    """Quote around the first hitting positive pattern in the rule."""
-    candidates: list[str] = []
-    if "all_of" in rule:
-        candidates = _patterns_from_spec(rule["all_of"])
-    elif "any_of" in rule:
-        candidates = _patterns_from_spec(rule["any_of"])
-    elif "pattern" in rule:
-        candidates = [rule.get("pattern", "")]
-    for pat in candidates:
-        quote = _extract_quote(text, pat, window=window)
-        if quote:
-            return quote
-    return ""
 
-
-def _extract_quote(text: str, pattern: str, window: int = 40) -> str:
-    if not pattern:
-        return ""
-    try:
-        m = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
-    except re.error:
-        m = None
-        idx = text.find(pattern)
-        if idx >= 0:
-            start = max(0, idx - window)
-            end = min(len(text), idx + len(pattern) + window)
-            return text[start:end].strip()
-        return ""
-    if not m:
-        return ""
-    start = max(0, m.start() - window)
-    end = min(len(text), m.end() + window)
-    snippet = text[start:end].replace("\n", " ").strip()
-    if start > 0:
-        snippet = "…" + snippet
-    if end < len(text):
-        snippet = snippet + "…"
-    return snippet

@@ -367,6 +367,7 @@ def ask(body: AskRequest):
             row.get("text") or "",
             row.get("clause_index") or {},
             item.get("clause_ids") or [],
+            primary_clause_id=item.get("primary_clause_id") or "",
         ),
     )
     return AskResponse(

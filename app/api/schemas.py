@@ -22,6 +22,9 @@ class ChecklistItemResult(BaseModel):
     needs_confirm: bool = False
     # 阶段 1.1：命中所在条款（clause_index 的 id，如 c05）；未定位到为空
     clause_ids: list[str] = Field(default_factory=list)
+    # 外部审计二轮 P1-1：MatchEvidence（规则命中证据坐标）所在条款——
+    # 真正触发风险的条款，Ask 上下文第一顺位；旧记录为空
+    primary_clause_id: Optional[str] = None
 
 
 class BlindCandidate(BaseModel):
@@ -35,6 +38,7 @@ class BlindCandidate(BaseModel):
     needs_confirm: bool = True
     named_by_scorecard: bool = False
     clause_ids: list[str] = Field(default_factory=list)
+    primary_clause_id: Optional[str] = None
 
 
 class ClauseInfo(BaseModel):
