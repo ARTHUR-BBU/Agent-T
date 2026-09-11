@@ -80,8 +80,12 @@ def _split_numbered(text: str) -> list[dict[str, Any]]:
 
     for i, m in enumerate(matches):
         end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        # 空条款（标题行之后直到下一标题零内容）跳过不建档
-        if not text[m.end() : end].strip():
+        # 空条款跳过不建档。注意标题正则的 (.*)$ 会把同行内容一并捕获——
+        # 「第五条 违约责任：甲方…」这类单行条款在 m.end() 之后零内容但
+        # group(2) 有标题文字，不算空（审计二轮 P1 实证：否则整条被吞、
+        # 证据坐标落进上一条款）。标题 token 后无文字且后随零内容才算空。
+        title_tail = (m.group(2) or "").strip()
+        if not title_tail and not text[m.end() : end].strip():
             continue
         clauses.append({"heading": m.group(0).strip(), "start": m.start(), "end": end})
     return clauses
@@ -148,30 +152,53 @@ def build_clause_context(
     clause_ids: list[str],
     max_chars: int = 4000,
     neighbors: int = 1,
+    primary_clause_id: str = "",
 ) -> str:
-    """按命中条款构造追问上下文（外部审计批1-③）。
+    """按命中条款构造追问上下文（外部审计批1-③；二轮 P2 升级装填顺序）。
 
-    取命中条款完整正文 + 前后各 `neighbors` 条相邻条款（改写常依赖
-    违约/争议等关联条款），总量截到 max_chars（延迟护栏：2026-09-07 事故
-    的教训是追问输入也要有预算）。任何异常/未定位返回空串，调用方回退
+    装填顺序：**primary 条款（证据所在）→ primary 邻居 → 其他相关条款**，
+    不再按文档顺序——同词（如「违约」）在数十个条款出现时，真风险条款
+    （证据坐标所在）可能排在很后，按顺序装填会被前面的挤出预算。
+    总量截到 max_chars（延迟护栏）。任何异常/未定位返回空串，调用方回退
     头尾采样——本函数是纯增强，绝不成为追问失败原因。
     """
     try:
         clauses = clause_index.get("clauses") or []
-        if not clauses or not clause_ids or not text:
+        if not clauses or not text:
             return ""
         id_set = {cid for cid in clause_ids if isinstance(cid, str)}
+        if primary_clause_id:
+            id_set.add(primary_clause_id)
+        if not id_set:
+            return ""
+        id_to_idx = {str(c.get("id")): i for i, c in enumerate(clauses)}
+
         wanted: list[int] = []
+
+        def _add_with_neighbors(i: int) -> None:
+            # primary 居首，邻居按距离（前/后）随后——保证块内 primary 最先装填
+            order = [i]
+            for d in range(1, neighbors + 1):
+                if i - d >= 0:
+                    order.append(i - d)
+                if i + d < len(clauses):
+                    order.append(i + d)
+            for j in order:
+                if j not in wanted:
+                    wanted.append(j)
+
+        # 1) primary 条款与其邻居绝对优先
+        primary_idx = id_to_idx.get(primary_clause_id, -1) if primary_clause_id else -1
+        if primary_idx >= 0:
+            _add_with_neighbors(primary_idx)
+        # 2) 其他相关条款按序补入
         for i, c in enumerate(clauses):
-            if c.get("id") in id_set:
-                lo = max(0, i - neighbors)
-                hi = min(len(clauses), i + neighbors + 1)
-                for j in range(lo, hi):
-                    if j not in wanted:
-                        wanted.append(j)
-        wanted.sort()
+            if c.get("id") in id_set and i not in wanted:
+                _add_with_neighbors(i)
+
         parts: list[str] = []
         total = 0
+        # 按插入序装填（primary 块在最前）——sorted 会把优先级打回文档序
         for j in wanted:
             c = clauses[j]
             start, end = c.get("start", -1), c.get("end", -1)
@@ -195,22 +222,38 @@ def build_clause_context(
 def map_items_to_clauses(
     items: list[dict[str, Any]], clause_index: dict[str, Any], text: str
 ) -> None:
-    """给每个 item 就地附加 clause_ids（命中所在的条款 id 列表，升序去重）。
+    """给每个 item 就地附加条款归属（外部审计二轮 P1-1 升级）：
 
-    锚点优先用 hits（规则命中的全文逐字子串，比装饰过的 quote 可靠——
-    quote 有 … 装饰且换行被替换为空格）；hits 定位不到时用 quote 去装饰
-    后的空白压缩匹配回退。映射是纯展示增强：任何异常静默降级为空映射。
+    - primary_clause_id：MatchEvidence 坐标（evidence_start）所在条款——
+      真正触发风险的条款，Ask 上下文的第一顺位；
+    - clause_ids：hits 全部出现位置映射的相关条款（primary 置首）——
+      同词多条款时的 related 语义。
+
+    锚点优先用 hits（规则命中的全文逐字子串）；evidence 坐标由规则引擎
+    一次扫描产出，不再二次 find 猜测。映射是纯展示增强：任何异常静默
+    降级为空映射。
     """
     try:
         clauses = clause_index.get("clauses") or []
         starts = [c["start"] for c in clauses]
         for item in items:
-            item["clause_ids"] = _locate_item(item, clauses, starts, text)
+            related = _locate_item(item, clauses, starts, text)
+            primary = ""
+            ev_start = item.get("evidence_start")
+            if isinstance(ev_start, int) and ev_start >= 0:
+                idx = _bucket_for(ev_start, starts)
+                if 0 <= idx < len(clauses):
+                    primary = str(clauses[idx].get("id") or "")
+            item["clause_ids"] = ([primary] if primary else []) + [
+                c for c in related if c != primary
+            ]
+            item["primary_clause_id"] = primary
     except Exception:  # noqa: BLE001 — 展示增强不允许影响审查主流程
         logger.warning("clause mapping failed; falling back to empty mapping", exc_info=True)
         for item in items or []:
             try:
                 item["clause_ids"] = []
+                item["primary_clause_id"] = ""
             except Exception:  # noqa: BLE001
                 pass
 

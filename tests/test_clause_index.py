@@ -42,8 +42,10 @@ def test_numbered_heading_captures_title_line():
 def test_empty_clause_between_headings_skipped():
     text = "第一条 甲\n内容存在。\n第二条 乙\n\n第三条 丙\n也有内容。"
     idx = build_clause_index(text)
-    # 「第二条 乙」标题后无正文（仅空行）→ 不建档，但坐标仍连续覆盖
-    assert idx["count"] == 2
+    # 「第二条 乙」：标题 token 后同行还有标题文字「乙」→ 是真条款（审计二轮
+    # 修复：单行条款不得因「标题行之后零正文」被吞）；真正全空的第X条才跳过
+    assert idx["count"] == 3
+    assert any("第二条 乙" in c["heading"] for c in idx["clauses"])
 
 
 # ---------- paragraph 回退 ----------
@@ -217,7 +219,7 @@ def test_map_items_does_not_touch_existing_fields():
     map_items_to_clauses([item], idx, text)
     for k, v in snapshot.items():
         assert item[k] == v
-    assert set(item.keys()) == {*snapshot.keys(), "clause_ids"}
+    assert set(item.keys()) == {*snapshot.keys(), "clause_ids", "primary_clause_id"}
 
 
 @pytest.mark.parametrize("strategy_text", ["", "无编号短句"])
