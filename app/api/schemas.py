@@ -79,6 +79,8 @@ class ScorecardInfo(BaseModel):
     disclaimer: str = ""
     advisory_only: bool = True
     degraded: bool = False
+    # 外部审计二轮：长合同分段阅读覆盖明示 {chunks_total, chunks_reviewed, limited}
+    coverage: Optional[dict[str, Any]] = None
 
 
 class PrecheckInfo(BaseModel):

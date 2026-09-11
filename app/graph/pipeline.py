@@ -1,4 +1,4 @@
-"""LangGraph library pipeline: parse → checklist → merged model pass → ask stub.
+"""LangGraph library pipeline: parse → checklist → merged model pass。
 
 M3.5: model pass = scorecard + targeted blind-spot (model_review)。
 阶段 1.2 起调用结构分两档：短合同单次合并调用；长合同 map-reduce 分段
@@ -126,26 +126,15 @@ def node_model_review(state: ReviewState) -> ReviewState:
     }
 
 
-def node_ask_ready(state: ReviewState) -> ReviewState:
-    """Marker node: Ask LLM is only invoked later via /api/ask on 需关注 items.
-
-    Kept in the graph so the wiring parse→checklist→optional ask is explicit.
-    """
-    _ = state
-    return {}
-
-
 def build_graph():
     g = StateGraph(ReviewState)
     g.add_node("parse", node_parse)
     g.add_node("checklist", node_checklist)
     g.add_node("model_review", node_model_review)
-    g.add_node("ask_ready", node_ask_ready)
     g.set_entry_point("parse")
     g.add_edge("parse", "checklist")
     g.add_edge("checklist", "model_review")
-    g.add_edge("model_review", "ask_ready")
-    g.add_edge("ask_ready", END)
+    g.add_edge("model_review", END)
     return g.compile()
 
 

@@ -78,6 +78,100 @@ def categories():
 
 
 # 限频依赖先于 handler 执行：超频请求在读文件/预审之前就被廉价拒绝（阶段 0.5）
+def _start_review(
+    *,
+    filename: str,
+    raw: bytes,
+    category: str,
+    stance: str,
+    budget: object | None,
+    precheck_record: dict | None,
+) -> str:
+    """建档 + 启动后台审查线程（外部审计二轮 PR-C 从 upload 抽取）。
+
+    槽位所有权约定：调用方已 acquire _review_slots；本函数任何启动前异常
+    直接上抛（调用方负责还槽），线程成功启动后所有权转移给 worker 的
+    finally——「一定成对释放」不依赖 worker 是否真的跑起来。
+    """
+    rid = store.create(
+        filename=filename,
+        category=category,
+        category_label=category,
+        created_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        status="processing",
+        # 阶段 0.2：进度段位（triage→scanning→scoring→done/error）；预审已在
+        # 本请求内完成，建档即 triage 完成态，等待页首屏看到的是扫描进行中
+        stage="triage",
+        # 阶段 1.3：用户声明立场（仅元数据+声明，不进规则引擎）
+        stance=stance,
+        items=[],
+        scorecard={},
+        blind_candidates=[],
+        blind_skipped_messages=[],
+        blind_skipped_reason=None,
+        blind_enabled=False,
+        text="",
+        policies=[],
+        error=None,
+        precheck=precheck_record,
+    )
+
+    # 审查放后台线程：上传立即返回 review_id（外部审计 P1：同步等待模型
+    # 会拖死请求，前端的 processing 轮询此前形同虚设）
+    def _run_review_worker(
+        review_id: str, fname: str, content: bytes, cat: str, budget: object | None
+    ) -> None:
+        # stage 回调：pipeline 节点入口上报 → 逐步落库；update 自身有兜底，
+        # 回调失败不影响审查（pipeline 侧还包了一层 try/except）
+        def on_stage(stage: str) -> None:
+            store.update(review_id, stage=stage)
+
+        try:
+            try:
+                result = run_review(fname, content, category=cat, budget=budget, on_stage=on_stage)
+                if result.get("error"):
+                    store.update(
+                        review_id,
+                        status="error",
+                        stage="error",
+                        error=result["error"],
+                        text=result.get("text") or "",
+                    )
+                else:
+                    preview = (result.get("text") or "")[:500]
+                    store.update(
+                        review_id,
+                        status="done",
+                        stage="done",
+                        items=result.get("items") or [],
+                        scorecard=result.get("scorecard") or {},
+                        blind_candidates=result.get("blind_candidates") or [],
+                        blind_skipped_messages=result.get("blind_skipped_messages") or [],
+                        blind_skipped_reason=result.get("blind_skipped_reason"),
+                        blind_enabled=bool(result.get("blind_enabled")),
+                        text=result.get("text") or "",
+                        policies=result.get("policies") or [],
+                        category=result.get("category") or cat,
+                        category_label=result.get("category_label") or cat,
+                        clause_index=result.get("clause_index"),
+                        text_preview=preview,
+                        error=None,
+                    )
+            except Exception:  # noqa: BLE001
+                logger.exception("后台审查失败 review_id=%s", review_id)
+                store.update(review_id, status="error", stage="error", error="审查失败，请重新上传")
+        except Exception:  # noqa: BLE001
+            # 兜底（小智娘 P3-3）：update 自身失败（如 DB 锁超时）不得裸抛线程
+            logger.exception("后台审查状态写入失败 review_id=%s", review_id)
+        finally:
+            _review_slots.release()
+
+    threading.Thread(
+        target=_run_review_worker, args=(rid, filename, raw, category, budget), daemon=True
+    ).start()
+    return rid
+
+
 @router.post(
     "/upload",
     response_model=UploadResponse,
@@ -101,17 +195,18 @@ async def upload(
     # 流式限额（外部审计批1-②）：分块读取，累计超限立即拒收——
     # 旧实现 await file.read() 先把整个文件读进内存才判长度，「10MB 以上
     # 不给审」做到了，「10MB 以上不进内存」没做到
-    raw, over_limit = await _read_limited(file)
-    if over_limit:
-        raise HTTPException(status_code=413, detail="文件超过 10MB 上限，请压缩后上传")
-    if not raw:
-        raise HTTPException(status_code=400, detail="空文件")
     filename = file.filename or "contract.txt"
+    # 扩展名检查前移（外部审计二轮 PR-C）：零成本的拒绝不该等 body 读完
     if Path(filename).suffix.lower() not in ALLOWED_SUFFIXES:
         raise HTTPException(
             status_code=400,
             detail="不支持的文件类型（支持 .txt / .md / .pdf / .docx / .doc）",
         )
+    raw, over_limit = await _read_limited(file)
+    if over_limit:
+        raise HTTPException(status_code=413, detail="文件超过 10MB 上限，请压缩后上传")
+    if not raw:
+        raise HTTPException(status_code=400, detail="空文件")
 
     # 单次审查 LLM 预算（阶段 0.5）：每个 upload 请求一个 Budget 对象，
     # 按引用贯穿预审与审查线程，随 GC 清理；force 重传天然新预算。
@@ -189,82 +284,17 @@ async def upload(
     if not _review_slots.acquire(blocking=False):
         raise HTTPException(status_code=429, detail="当前审查排队已满，请稍后再试")
 
-    rid = store.create(
-        filename=filename,
-        category=category,
-        category_label=category,
-        created_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
-        status="processing",
-        # 阶段 0.2：进度段位（triage→scanning→scoring→done/error）；预审已在
-        # 本请求内完成，建档即 triage 完成态，等待页首屏看到的是扫描进行中
-        stage="triage",
-        # 阶段 1.3：用户声明立场（仅元数据+声明，不进规则引擎）
-        stance=stance,
-        items=[],
-        scorecard={},
-        blind_candidates=[],
-        blind_skipped_messages=[],
-        blind_skipped_reason=None,
-        blind_enabled=False,
-        text="",
-        policies=[],
-        error=None,
-        precheck=precheck_record,
-    )
-
-    # 审查放后台线程：上传立即返回 review_id（外部审计 P1：同步等待模型
-    # 会拖死请求，前端的 processing 轮询此前形同虚设）
-    def _run_review_worker(
-        review_id: str, fname: str, content: bytes, cat: str, budget: object | None
-    ) -> None:
-        # stage 回调：pipeline 节点入口上报 → 逐步落库；update 自身有兜底，
-        # 回调失败不影响审查（pipeline 侧还包了一层 try/except）
-        def on_stage(stage: str) -> None:
-            store.update(review_id, stage=stage)
-
-        try:
-            try:
-                result = run_review(fname, content, category=cat, budget=budget, on_stage=on_stage)
-                if result.get("error"):
-                    store.update(
-                        review_id,
-                        status="error",
-                        stage="error",
-                        error=result["error"],
-                        text=result.get("text") or "",
-                    )
-                else:
-                    preview = (result.get("text") or "")[:500]
-                    store.update(
-                        review_id,
-                        status="done",
-                        stage="done",
-                        items=result.get("items") or [],
-                        scorecard=result.get("scorecard") or {},
-                        blind_candidates=result.get("blind_candidates") or [],
-                        blind_skipped_messages=result.get("blind_skipped_messages") or [],
-                        blind_skipped_reason=result.get("blind_skipped_reason"),
-                        blind_enabled=bool(result.get("blind_enabled")),
-                        text=result.get("text") or "",
-                        policies=result.get("policies") or [],
-                        category=result.get("category") or cat,
-                        category_label=result.get("category_label") or cat,
-                        clause_index=result.get("clause_index"),
-                        text_preview=preview,
-                        error=None,
-                    )
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("后台审查失败 review_id=%s", review_id)
-                store.update(review_id, status="error", stage="error", error="审查失败，请重新上传")
-        except Exception:  # noqa: BLE001
-            # 兜底（小智娘 P3-3）：update 自身失败（如 DB 锁超时）不得裸抛线程
-            logger.exception("后台审查状态写入失败 review_id=%s", review_id)
-        finally:
-            _review_slots.release()
-
-    threading.Thread(
-        target=_run_review_worker, args=(rid, filename, raw, category, budget), daemon=True
-    ).start()
+    # 槽位生命周期收口（外部审计二轮 PR-C）：worker 的 finally 只覆盖「线程
+    # 已启动」的情形——store.create / Thread.start 在启动前抛异常时槽位无人
+    # 归还，4 槽漏光 = 服务永久 429 必须重启。启动期任何异常：还槽再抛。
+    try:
+        rid = _start_review(
+            filename=filename, raw=raw, category=category,
+            stance=stance, budget=budget, precheck_record=precheck_record,
+        )
+    except Exception:
+        _review_slots.release()
+        raise
 
     return UploadResponse(review_id=rid, message="uploaded")
 

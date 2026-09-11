@@ -49,7 +49,8 @@ def load_checklist(category: str) -> dict[str, Any]:
         if not path.exists():
             raise FileNotFoundError(f"No checklist config for category={category}")
     cfg = _load_yaml(path)
-    _validate_segment_mapping(cfg, category)
+    # 读时校验与启动/CI 同源（外部审计二轮 PR-D 合一）：完整品类校验
+    _validate_category_config(category, cfg)
     return cfg
 
 
@@ -99,30 +100,47 @@ def run_checklist(text: str, category: str = "procurement") -> dict[str, Any]:
 
 
 def validate_checklist_configs() -> None:
-    """启动/CI 校验（外部审计批2-④）：全部品类的规则正则必须可编译、
-    item id 不得重复——配置坏了宁可起不来，也不要悄悄降级漏审
-    （_match 的 re.error→子串匹配回退是运行期容错，不是配置错误的豁免）。"""
+    """启动/CI 校验（外部审计批2-④；二轮 PR-D 合一）：全部品类走同一套
+    完整校验（segment 映射 + 规则正则 + item id，即 _validate_category_config）
+    ——不再「load 时查一半、启动时查另一半」。配置坏了宁可起不来，
+    也不要悄悄降级漏审。"""
     problems: list[str] = []
     for cat_info in list_categories():
         category = cat_info["id"]
         cfg = _load_yaml(CONFIG_DIR / f"checklist_{category}.yaml")
-        seen_ids: set[str] = set()
-        for item in cfg.get("items", []):
-            iid = str(item.get("id") or "")
-            if not iid:
-                problems.append(f"{category}: 存在无 id 的 item")
-                continue
-            if iid in seen_ids:
-                problems.append(f"{category}: item id 重复 {iid}")
-            seen_ids.add(iid)
-            for rule in (item.get("rules") or {}).get("need_attention") or []:
-                problems.extend(_regex_problems(category, iid, rule))
-            for rule in (item.get("rules") or {}).get("pass") or []:
-                problems.extend(_regex_problems(category, iid, rule))
+        try:
+            _validate_category_config(category, cfg)
+        except ValueError as exc:
+            problems.append(str(exc))
     if problems:
         raise ValueError(
             "checklist 配置校验失败（fail-closed）：\n- " + "\n- ".join(problems)
         )
+
+
+def _validate_category_config(category: str, cfg: dict[str, Any]) -> None:
+    """单品类完整校验（外部审计二轮 PR-D 合一入口）：
+
+    1. item id 非空且不重复；2. 规则正则全部可编译（含 unless/none_of）；
+    3. segment 映射（_validate_segment_mapping：分段 key 不重复、item.segment
+    指向存在分段）。load_checklist 读时与 validate_checklist_configs
+    启动/CI 同源，规则写坏在任何入口都 fail-closed。"""
+    problems: list[str] = []
+    seen_ids: set[str] = set()
+    for item in cfg.get("items", []):
+        iid = str(item.get("id") or "")
+        if not iid:
+            problems.append(f"{category}: 存在无 id 的 item")
+            continue
+        if iid in seen_ids:
+            problems.append(f"{category}: item id 重复 {iid}")
+        seen_ids.add(iid)
+        for phase in ("need_attention", "pass"):
+            for rule in (item.get("rules") or {}).get(phase) or []:
+                problems.extend(_regex_problems(category, iid, rule))
+    if problems:
+        raise ValueError("\n".join(problems))
+    _validate_segment_mapping(cfg, category)
 
 
 def _regex_problems(category: str, item_id: str, rule: dict[str, Any]) -> list[str]:

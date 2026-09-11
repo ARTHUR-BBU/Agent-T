@@ -23,8 +23,27 @@ from typing import Any
 _DEFAULT_DB = os.path.join(
     tempfile.gettempdir(), "agent-t-reviews.db"
 )
-# 审查结果默认保留 24h（可 STORE_TTL_HOURS 覆盖；0 = 永不过期）
-_TTL_SECONDS = float(os.getenv("STORE_TTL_HOURS", "24")) * 3600
+
+
+def _parse_ttl_seconds() -> float:
+    """STORE_TTL_HOURS 解析（外部审计二轮 PR-D）：旧实现 float() 静默容错——
+    负数会悄悄变成永久保存、垃圾值会裸 ValueError。合同数据的保留语义
+    不许静默容错：非法配置 fail-closed，报错说人话。"""
+    raw = (os.getenv("STORE_TTL_HOURS") or "24").strip()
+    try:
+        hours = float(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"STORE_TTL_HOURS 配置非法：{raw!r}（须为 ≥0 的数字；0 = 永不过期）"
+        ) from exc
+    if hours < 0:
+        raise RuntimeError(
+            f"STORE_TTL_HOURS 配置非法：{raw!r}（负数无意义；0 = 永不过期）"
+        )
+    return hours * 3600
+
+
+_TTL_SECONDS = _parse_ttl_seconds()
 
 
 class ReviewStore:

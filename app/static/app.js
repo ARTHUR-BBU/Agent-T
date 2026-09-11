@@ -412,7 +412,10 @@
     $("score-grade").textContent = [tier.label, tier.hint].filter(Boolean).join("：");
     $("score-summary").textContent = sc.summary || "";
     $("score-disclaimer").textContent =
-      sc.disclaimer || "模型评分仅供参考，以逐条规则结论为准";
+      (sc.disclaimer || "模型评分仅供参考，以逐条规则结论为准") +
+      ((sc.coverage && sc.coverage.limited)
+        ? "（长合同超出分段阅读预算，模型参考层为有限覆盖；规则扫描仍为全文）"
+        : "");
     const capsEl = $("score-caps");
     const caps = sc.caps_applied || [];
     if (caps.length) {

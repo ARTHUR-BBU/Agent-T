@@ -24,7 +24,9 @@ import os
 import re
 from typing import Any, Optional, Protocol
 
-import httpx
+import httpx  # noqa: F401 保留：测试与异常类型引用
+
+from app.services import llm_client
 
 logger = logging.getLogger(__name__)
 
@@ -303,96 +305,54 @@ def _chat_deepseek(
     timeout: float | None = None, purpose: str = "review",
 ) -> str:
     """DeepSeek（OpenAI 兼容 /chat/completions）。"""
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": _model_for("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL, purpose),
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "temperature": 0.3,
-    }
     llm_timeout = timeout if timeout is not None else float(os.getenv("LLM_TIMEOUT_SECONDS", "180"))
-    with httpx.Client(timeout=llm_timeout) as client:
-        resp = client.post(_deepseek_chat_url(), headers=headers, json=payload)
-        if resp.status_code >= 400:
-            detail = resp.text[:300]
-            raise httpx.HTTPStatusError(
-                f"{resp.status_code} {detail}",
-                request=resp.request,
-                response=resp,
-            )
-        data = resp.json()
-    msg = data["choices"][0]["message"]
-    return (msg.get("content") or "").strip()
+    return llm_client.chat_completion(
+        api_key=api_key,
+        url=_deepseek_chat_url(),
+        model=_model_for("DEEPSEEK_MODEL", DEFAULT_DEEPSEEK_MODEL, purpose),
+        system=system,
+        user=user,
+        temperature=0.3,
+        timeout=llm_timeout,
+    )
 
 
 def _chat_zhipu(
     api_key: str, system: str, user: str,
     timeout: float | None = None, purpose: str = "review",
 ) -> str:
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": _model_for("GLM_MODEL", DEFAULT_GLM_MODEL, purpose),
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "temperature": 0.3,
-    }
-    url = _zhipu_chat_url()
     # glm-5.2 对大合同评分实测可超 90s（6000 字单轮已 31s，12000 字+清单提示更久），
     # 写死 90s 会把整个同步上传拖到超时降级（2026-09-07 线上事故）；
     # 超时后走环境变量可调，服务器容器配 LLM_TIMEOUT_SECONDS=240
     llm_timeout = timeout if timeout is not None else float(os.getenv("LLM_TIMEOUT_SECONDS", "180"))
-    with httpx.Client(timeout=llm_timeout) as client:
-        resp = client.post(url, headers=headers, json=payload)
-        if resp.status_code >= 400:
-            detail = resp.text[:300]
-            raise httpx.HTTPStatusError(
-                f"{resp.status_code} {detail}",
-                request=resp.request,
-                response=resp,
-            )
-        data = resp.json()
-    msg = data["choices"][0]["message"]
-    content = (msg.get("content") or "").strip()
-    if not content:
-        # some GLM coding responses put text in reasoning_content briefly
-        content = (msg.get("reasoning_content") or "").strip()
-    return content
+    return llm_client.chat_completion(
+        api_key=api_key,
+        url=_zhipu_chat_url(),
+        model=_model_for("GLM_MODEL", DEFAULT_GLM_MODEL, purpose),
+        system=system,
+        user=user,
+        temperature=0.3,
+        timeout=llm_timeout,
+        fallback_reasoning=True,  # GLM 推理模型文本可能短暂落在 reasoning_content
+    )
 
 
 def _chat_xai(
     api_key: str, system: str, user: str,
     timeout: float | None = None, purpose: str = "review",
 ) -> str:
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": _model_for("GROK_MODEL", DEFAULT_GROK_MODEL, purpose),
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "temperature": 0.2,
-    }
     # 原写死 60s；提为可配但默认不变。预审路径由 PRECHECK_TIMEOUT_SECONDS
     # 经 timeout 参数传入（修复：此前预审超时配置对 xAI 分支不生效）
     llm_timeout = timeout if timeout is not None else float(os.getenv("XAI_TIMEOUT_SECONDS", "60"))
-    with httpx.Client(timeout=llm_timeout) as client:
-        resp = client.post(XAI_CHAT_URL, headers=headers, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-    return data["choices"][0]["message"]["content"]
+    return llm_client.chat_completion(
+        api_key=api_key,
+        url=XAI_CHAT_URL,
+        model=_model_for("GROK_MODEL", DEFAULT_GROK_MODEL, purpose),
+        system=system,
+        user=user,
+        temperature=0.2,
+        timeout=llm_timeout,
+    )
 
 
 def _parse_structured(raw: str) -> dict[str, Any]:
