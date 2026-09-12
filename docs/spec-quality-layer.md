@@ -88,7 +88,7 @@ quality 排预算末位（链上最后一层，先到先得）：预算紧张时
 
 - store：row 新增 `quality` 键（单行 JSON，旧记录无键 → API `quality=None`）；
 - schema：`ReviewSummary.quality: Optional[QualityInfo]`（observations/dimension/title/quote/clause_id/comment/needs_confirm/disclaimer/dropped_count/coverage）；
-- pipeline：第 4 节点 quality（parse→checklist→model_review→quality→END）；进度段位新增 `analyzing`（第 4 段「AI 观察」；quality 关闭/降级时不发该段，等待页自然三段）；
+- pipeline：第 4 节点 quality（parse→checklist→model_review→quality→END）；进度段位新增 `analyzing`（第 4 段「AI 观察」；开关关闭时不发该段，等待页自然三段——开启但降级（如 no_llm_key）时该段仍会短暂点亮后完成）；
 - 前端：#item-list 之后 #quality-panel 虚线容器（1.5px dashed var(--color-divider) + var(--color-aside-bg) 灰底，零新 token）；描边徽章「AI 观察」；三维度 chip 同款中性灰仅文字区分（零新档位色）；模型态字段一律 textContent 零 innerHTML 拼接；质量条目不可点击进详情/追问。
 
 ## 十、明确不做（批 1 范围外）

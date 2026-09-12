@@ -272,8 +272,9 @@ def _run_consistency_round(
     """跨块矛盾轮：无全文、素材=已过 quote 校验的观察摘要（进门先 scrub，
     防禁语经素材回流——对齐 scorecard.format_observations 先例）。
 
-    返回 (新观察, 丢弃数, 是否失败降级)。失败降级时保留 map 产出
-    （部分成功好过全无），由调用方决定 reason。
+    返回 (新观察, 丢弃数, 是否失败降级)。失败降级（failed=True）时调用方
+    丢弃全部产出走 parse_failed 整卡隐藏——偏保守取舍：一致性轮失败说明
+    模型输出不可信，宁缺毋滥。
     """
     if budget is not None:
         remaining = budget.remaining()
