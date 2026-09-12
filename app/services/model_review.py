@@ -90,7 +90,7 @@ def run_model_review(
     map_gap_ids: list[str] = []
     segmented = len(text or "") > scorecard.MAX_CONTRACT_CHARS
     if segmented:
-        observations, map_gap_ids, chunks_ok = _run_map_pass(
+        observations, map_gap_ids, chunks_ok, chunks_total = _run_map_pass(
             text or "", items, policies or [], clause_index,
             deepseek, zhipu, xai, chat_fn, map_chat_fn, budget,
         )
@@ -151,6 +151,14 @@ def run_model_review(
     final = scorecard.postprocess(payload, items, segments)
     if degraded or not scorecard.naming_complete(final, items):
         final = scorecard.degrade_to_score_only(final)
+    # 覆盖明示（外部审计二轮：不要让用户以为 AI 逐字读完了 8 万字合同；
+    # 规则引擎仍全文扫描，模型参考层是预算内有限覆盖）
+    if segmented:
+        final["coverage"] = {
+            "chunks_total": chunks_total,
+            "chunks_reviewed": chunks_ok,
+            "limited": chunks_ok < chunks_total,
+        }
     result["scorecard"] = final
 
     # ---- candidates half (定向补盲 v2) ----
@@ -186,17 +194,17 @@ def _run_map_pass(
     chat_fn: Optional[Any],
     map_chat_fn: Optional[Any],
     budget: Optional[Any],
-) -> tuple[list[dict[str, Any]], list[str], int]:
+) -> tuple[list[dict[str, Any]], list[str], int, int]:
     """map 阶段：按块阅读产出观察素材。
 
     - 每块调用前预算检查，耗尽即停（已收观察直接进 reduce，reduce 额度优先）
     - 单块失败（异常/解析失败）不重试、跳过继续（延迟护栏，2026-09-07 教训）
-    - 返回 (observations, map 点名的 gap item ids, 成功解析的块数)——
-      第三项用于区分「全败回退」与「成功但无风险」
+    - 返回 (observations, map 点名的 gap item ids, 成功解析的块数, 总块数)
+      ——第三项区分「全败回退」与「成功但无风险」；第四项供 coverage 明示
     """
     chunks = scorecard.build_review_chunks(text, clause_index, max_segments=_max_segments())
     if not chunks:
-        return [], [], 0
+        return [], [], 0, 0
     system = scorecard.build_map_system_prompt(policies)
     total = len(chunks)
     observations: list[dict[str, Any]] = []
@@ -232,7 +240,7 @@ def _run_map_pass(
             ids = obs.get("gap_item_ids")
             if isinstance(ids, list):
                 gap_ids.extend(str(g) for g in ids)
-    return observations, gap_ids, chunks_ok
+    return observations, gap_ids, chunks_ok, total
 
 
 def _named_gap_ids(payload: Optional[dict[str, Any]]) -> list[str]:

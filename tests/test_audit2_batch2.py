@@ -84,11 +84,12 @@ def test_rule_without_unless_unchanged():
 # ---------- 批2-② TTL 读时强制过期 ----------
 
 def test_expired_record_inaccessible_via_get_and_update(tmp_path):
-    store = ReviewStore(db_path=str(tmp_path / "t.db"), ttl_seconds=0.05)
+    # 窗口 0.5s（负载下 create→get 超 0.05s 即脆断，同 test_audit_fixes 加固）
+    store = ReviewStore(db_path=str(tmp_path / "t.db"), ttl_seconds=0.5)
     rid = store.create(filename="a.txt", category="lease", status="done")
     assert store.get(rid) is not None, "TTL 内可读"
     assert store.update(rid, filename="b.txt") is not None
-    time.sleep(0.08)
+    time.sleep(0.6)
     assert store.get(rid) is None, "过期后 get 必须视为不存在（不再依赖 create 触发 purge）"
     assert store.update(rid, filename="c.txt") is None, "过期后 update 不得复活记录"
 

@@ -151,10 +151,11 @@ def test_store_persists_across_instances(tmp_path):
 
 
 def test_store_ttl_expires(tmp_path):
-    st = ReviewStore(db_path=str(tmp_path / "ttl.db"), ttl_seconds=0.05)
+    # 窗口 0.5s（原 0.05s 在高负载机器上 create→get 间超窗即脆断，精简批实测）
+    st = ReviewStore(db_path=str(tmp_path / "ttl.db"), ttl_seconds=0.5)
     rid = st.create(filename="a.txt", status="done")
     assert st.get(rid) is not None
-    time.sleep(0.1)
+    time.sleep(0.6)
     st.create(filename="b.txt", status="done")  # 触发过期清理
     assert st.get(rid) is None, "过期记录应被清除"
 

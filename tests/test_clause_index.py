@@ -39,7 +39,7 @@ def test_numbered_heading_captures_title_line():
     assert idx["clauses"][0]["heading"] == "第一条 押金"
 
 
-def test_empty_clause_between_headings_skipped():
+def test_titled_heading_counts_as_clause():
     text = "第一条 甲\n内容存在。\n第二条 乙\n\n第三条 丙\n也有内容。"
     idx = build_clause_index(text)
     # 「第二条 乙」：标题 token 后同行还有标题文字「乙」→ 是真条款（审计二轮
