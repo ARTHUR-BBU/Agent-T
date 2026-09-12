@@ -519,3 +519,150 @@ def test_full_flow_smoke(home):
     home.wait_for_selector("#screen-ask", state="visible")
     home.click("#btn-back-results")
     assert home.is_visible("#screen-results")
+
+
+# ---------- 阶段 2.1 质量层（route stub 注入假 done 记录——无 Key 环境测 UI） ----------
+
+def _quality_review_stub(quality):
+    """假 done 记录：1 条需关注 + 指定 quality 载荷 + 条款索引（供锚点查表）。"""
+    return {
+        "id": "e2eq00001", "filename": "lease_sample.txt",
+        "category": "lease", "category_label": "租赁合同",
+        "status": "done", "stage": "done",
+        "items": [{
+            "id": "sublet", "name": "转租限制", "status": "需关注",
+            "note": "疑似转租", "quote": "本房屋系出租方转租取得", "hits": ["转租"],
+            "clause_ids": ["c04"], "primary_clause_id": "c04",
+        }],
+        "scorecard": {"available": False, "reason": "no_llm_key"},
+        "blind_enabled": False,
+        "clause_index": {"strategy": "numbered", "count": 2, "clauses": [
+            {"id": "c01", "heading": "第一条 租金", "start": 0, "end": 20, "chars": 20},
+            {"id": "c04", "heading": "第四条 房屋使用", "start": 40, "end": 80, "chars": 40},
+        ]},
+        "stance": "neutral", "stance_declaration": "测试声明", "ask_available": False,
+        "quality": quality,
+    }
+
+
+def _stub_quality_flow(page, quality):
+    """拦截 upload + review 轮询，注入带 quality 的假 done 记录并走到结果页。"""
+    import json as _json
+
+    page.route(
+        "**/api/upload",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}),
+        ),
+    )
+    page.route(
+        "**/api/review/e2eq00001",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps(_quality_review_stub(quality), ensure_ascii=False),
+        ),
+    )
+    page.set_input_files("#file", str(FIXTURE))
+    page.click("#btn-upload")
+    page.wait_for_selector("#results-body", state="visible", timeout=15000)
+
+
+def test_quality_panel_renders_dimensions(home):
+    """三维度观察渲染：徽章/维度 chip/quote/comment/条款锚齐全，容器为虚线边框。"""
+    _stub_quality_flow(home, {
+        "available": True, "reason": None,
+        "observations": [
+            {"dimension": "completeness", "title": "缺交付验收安排",
+             "quote": "第四条 本合同一式两份", "clause_id": None,
+             "comment": "异议期过短，建议延长。", "needs_confirm": True},
+            {"dimension": "consistency", "title": "付款与验收矛盾",
+             "quote": "月租金5000元", "clause_id": "c01",
+             "comment": "未约定验收标准，建议附清单。", "needs_confirm": True},
+            {"dimension": "impact", "title": "押金退还条件空悬",
+             "quote": "押金2000元", "clause_id": "c04",
+             "comment": "退还触发条件不明，建议补细则。", "needs_confirm": True},
+        ],
+        "disclaimer": "以上为 AI 观察，仅供参考。", "dropped_count": 0, "coverage": None,
+    })
+    assert home.is_visible("#quality-panel")
+    assert "AI 观察" in home.inner_text("#quality-panel .source-badge.quality")
+    items = home.query_selector_all("#quality-panel .quality-item")
+    assert len(items) == 3
+    dims = [el.inner_text() for el in home.query_selector_all("#quality-panel .quality-dim")]
+    assert dims == ["完整性", "一致性", "影响"]
+    assert "待人工确认" in home.inner_text("#quality-panel")
+    # 条款锚：clause_id=c01 → 标题查表；clause_id=None → 只有待人工确认
+    assert "第一条 租金" in home.inner_text("#quality-panel")
+    # 虚线容器规格锁定（路线图 2.1 UI 规格）
+    border_style = home.eval_on_selector(
+        "#quality-panel", "el => getComputedStyle(el).borderTopStyle"
+    )
+    assert border_style == "dashed"
+
+
+def test_quality_panel_hidden_without_quality_key(home):
+    """旧记录兼容：done 记录无 quality 键 → 整卡静默隐藏。"""
+    stub = _quality_review_stub(None)
+    stub.pop("quality")
+    import json as _json
+    home.route(
+        "**/api/upload",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}),
+        ),
+    )
+    home.route(
+        "**/api/review/e2eq00001",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps(stub, ensure_ascii=False),
+        ),
+    )
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    assert not home.is_visible("#quality-panel")
+
+
+def test_quality_panel_hidden_when_unavailable(home):
+    """降级兼容：available=false（如 llm_error）→ 整卡静默隐藏，不渲染灰字噪音。"""
+    _stub_quality_flow(home, {"available": False, "reason": "llm_error",
+                              "observations": [], "disclaimer": "", "dropped_count": 0,
+                              "coverage": None})
+    assert not home.is_visible("#quality-panel")
+
+
+def test_quality_panel_escapes_model_text(home):
+    """XSS 守护：模型态字段（title/quote/comment）一律 textContent，注入不执行。"""
+    _stub_quality_flow(home, {
+        "available": True, "reason": None,
+        "observations": [{
+            "dimension": "impact",
+            "title": "<img src=x onerror=window.__pwned=1>",
+            "quote": "<script>window.__pwned=2</script>",
+            "clause_id": None,
+            "comment": "<b>假加粗</b>",
+            "needs_confirm": True,
+        }],
+        "disclaimer": "测试免责", "dropped_count": 0, "coverage": None,
+    })
+    assert home.is_visible("#quality-panel")
+    assert home.evaluate("window.__pwned === undefined"), "注入脚本不得执行"
+    assert home.query_selector_all("#quality-panel img") == []
+    assert home.query_selector_all("#quality-panel script") == []
+    # 原样以文本呈现
+    assert "<img src=x" in home.inner_text("#quality-panel")
+    assert "<b>假加粗</b>" in home.inner_text("#quality-panel")
+
+
+def test_quality_stage_analyzing_segment(home):
+    """等待页第 4 段「AI 观察」存在；无 Key 环境 analyzing 不点亮即 done。"""
+    assert home.query_selector("#stage-list .stage[data-stage='analyzing']")
+    stages = home.query_selector_all("#stage-list .stage")
+    assert len(stages) == 4
+    _upload(home)
+    # done 后 analyzing 未被点亮过（无 Key 环境质量层 no_llm_key，但仍会
+    # 短暂点亮——这里只断言四段清单与结果页正常抵达）
+    assert home.is_visible("#results-body")

@@ -1,9 +1,10 @@
-"""LangGraph library pipeline: parse → checklist → merged model pass。
+"""LangGraph library pipeline: parse → checklist → merged model pass → 质量层。
 
 M3.5: model pass = scorecard + targeted blind-spot (model_review)。
 阶段 1.2 起调用结构分两档：短合同单次合并调用；长合同 map-reduce 分段
-阅读（详见 model_review 模块 docstring）。Uses langgraph as a library
-only — not LangGraph Platform.
+阅读（详见 model_review 模块 docstring）。阶段 2.1 追加第 4 节点 quality
+（AI 质量分析：三维度参考观察，铁律 5——不计分、不改档位）。
+Uses langgraph as a library only — not LangGraph Platform.
 """
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ from typing import Any, Callable, TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from app.services import quality as quality_service
 from app.services.blind_spot import annotate_rule_items
 from app.services.checklist import run_checklist
 from app.services.clause_index import build_clause_index, map_items_to_clauses
@@ -33,6 +35,8 @@ class ReviewState(TypedDict, total=False):
     blind_skipped_messages: list[str]
     blind_skipped_reason: str
     blind_enabled: bool
+    # 阶段 2.1 质量层：quality_service.run_quality 产物（QualityInfo 形状 dict）
+    quality: dict[str, Any]
     # 阶段 0.5：单次审查 LLM 预算对象（llm_budget.ReviewBudget | None），
     # 由 upload 请求创建、贯穿预审与审查线程；放 state 仅为透传给 model_review
     budget: Any
@@ -126,15 +130,44 @@ def node_model_review(state: ReviewState) -> ReviewState:
     }
 
 
+def node_quality(state: ReviewState) -> ReviewState:
+    """阶段 2.1 质量层：三维度参考观察。
+
+    铁律 5：输出只进 quality 键，不计分、不改档位；任何失败软降级
+    （QualityInfo.available=False），绝不影响既有链路。
+    """
+    if state.get("error") or not (state.get("text") or "").strip():
+        # 解析已失败：quality 走 error 短路，语义不掩盖上游错误
+        return {"quality": quality_service.outcome_unavailable("error")}
+    # 只在真要跑时点亮 analyzing 段位——关闭态不让等待页闪过一段
+    if quality_service.is_quality_enabled():
+        _emit_stage(state, "analyzing")
+    try:
+        out = quality_service.run_quality(
+            text=state.get("text") or "",
+            items=state.get("items") or [],
+            policies=state.get("policies") or [],
+            category=state.get("category") or "procurement",
+            clause_index=state.get("clause_index"),
+            budget=state.get("budget"),
+        )
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("Quality pass failed")
+        out = quality_service.outcome_unavailable("error")
+    return {"quality": out}
+
+
 def build_graph():
     g = StateGraph(ReviewState)
     g.add_node("parse", node_parse)
     g.add_node("checklist", node_checklist)
     g.add_node("model_review", node_model_review)
+    g.add_node("quality", node_quality)
     g.set_entry_point("parse")
     g.add_edge("parse", "checklist")
     g.add_edge("checklist", "model_review")
-    g.add_edge("model_review", END)
+    g.add_edge("model_review", "quality")
+    g.add_edge("quality", END)
     return g.compile()
 
 
@@ -184,4 +217,5 @@ def run_review(
         "blind_skipped_messages": final.get("blind_skipped_messages") or [],
         "blind_skipped_reason": final.get("blind_skipped_reason"),
         "blind_enabled": bool(final.get("blind_enabled")),
+        "quality": final.get("quality") or {},
     }

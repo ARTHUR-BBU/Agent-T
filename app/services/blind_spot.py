@@ -161,6 +161,11 @@ def _quote_supported(text: str, quote: str) -> bool:
     return False
 
 
+# 公共名（阶段 2 质量层复用）：全文校验这道防线不允许出现第二份实现，
+# quality.py 从公共名 import，行为与本函数逐字节一致。
+quote_supported = _quote_supported
+
+
 def _parse_candidates(raw: str) -> list[Any]:
     if not raw:
         return []

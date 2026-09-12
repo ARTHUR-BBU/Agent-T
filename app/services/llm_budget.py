@@ -25,10 +25,15 @@ import threading
 
 logger = logging.getLogger(__name__)
 
-# 默认 12：阶段 1.2 分段阅读落地后的账目 = 预审 ≤2 + map ≤4（块数上限，
-# LLM_REVIEW_MAX_SEGMENTS）+ 汇总 1 + 汇总重试 1 = 最坏 8 ≤ 12，仍留余量。
-# 注意：配置 < 4 会影响现状最坏路径（重试被预算截断），文档已注明。
-DEFAULT_BUDGET = 12
+# 默认 16：阶段 2.1 质量层上线后的全链最坏账目——
+#   预审 ≤2（1+重试1）
+# + 评分/补盲 ≤6（长合同 map 4 + reduce 1 + reduce 重试 1）
+# + 质量层 ≤6（长合同 map ≤4 + 一致性轮 1 + 重试 1；短合同 1+1）
+# = 最坏 14 ≤ 16，留余量。
+# 优先级约定：quality 排预算末位（链上最后一层，先到先得）——预算紧张时
+# quality 最先 budget_exceeded 软降级，规则引擎与既有参考层不受稀释。
+# 注意：配置 < 8 会影响现状最坏路径（重试被预算截断），文档已注明。
+DEFAULT_BUDGET = 16
 
 
 class ReviewBudget:

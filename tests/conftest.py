@@ -20,6 +20,14 @@ def _precheck_off(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _quality_off(monkeypatch):
+    """质量层默认关闭（生产默认开）：与 _precheck_off 同构——质量层自己的
+    测试用 monkeypatch.setenv("QUALITY_ENABLED", "true") 显式打开，
+    其余全套测试的上传路径不依赖 LLM 观察层（确定性红线）。"""
+    monkeypatch.setenv("QUALITY_ENABLED", "false")
+
+
+@pytest.fixture(autouse=True)
 def _rate_limit_off(monkeypatch):
     # 时序提醒（小智娘门禁 P3-5）：本 fixture 是 function 级，module/session 级
     # fixture 的 setup 发生在它之前，若未来有人在模块级 fixture 里打 API 且
