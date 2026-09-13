@@ -915,3 +915,51 @@ mark.kw,
 .ask-followups li:hover {
   text-decoration: underline;
 }
+
+/* —— 阶段 2.4 详情/追问屏升级（桌面同步受益） —— */
+.ask-status-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+  min-height: 0;
+}
+.ask-status-line:empty { display: none; }
+/* 说明卡正文黑（阳仔：摘要段升权重；桌面 ask 屏同步受益） */
+#ask-context {
+  color: var(--color-text-primary);
+  font-size: 17px;
+  margin: 0 0 var(--space-1);
+}
+
+/* —— 阶段 2.4 移动端：480px 单断点（阳仔线框定案；零新 token 零动画；
+   断点值内联不立变量——单断点无复用场景） —— */
+@media (max-width: 480px) {
+  /* 组件1 立场 segmented：铺满均分 + 44px 触控 */
+  .seg-track { display: flex; width: 100%; }
+  .seg-item span { min-width: 0; height: var(--btn-height); padding: 0 8px; }
+
+  /* 组件2 清单行：允许换行（长名独占一行、徽章掉行；摘要 ellipsis 不动） */
+  .item-head { flex-wrap: wrap; row-gap: 6px; }
+  .item-name { flex: 1 1 auto; min-width: 0; }
+
+  /* 组件3 评分卡：summary 两行（hint 是文字通道不能藏）+ 明细两列 */
+  .score-fold > summary { flex-wrap: wrap; align-items: center; min-height: 44px; }
+  .score-fold .score-fold-hint { flex-basis: 100%; margin-left: 0; white-space: normal; }
+  .score-seg { grid-template-columns: auto 1fr; }
+  .score-seg .score-seg-note { grid-column: 1 / -1; }
+
+  /* 组件5 AI 观察：维度 chip + 标题允许换行 */
+  .quality-title-line { flex-wrap: wrap; }
+
+  /* 组件4 详情/追问屏：答案（含四段式+chips）提到输入之上，纯 CSS order */
+  .ask-interact { display: flex; flex-direction: column; }
+  .ask-interact .answer { order: -1; }
+
+  /* 触控目标 44px（仅移动；--btn-height 即标准值） */
+  .top .link { display: inline-flex; align-items: center; min-height: 44px; }
+  .detail-actions .link { display: inline-flex; align-items: center; min-height: 44px; }
+  .ask-followups li { display: flex; align-items: center; min-height: 44px; }
+  .score-details summary { display: flex; align-items: center; min-height: 44px; }
+  .rewrite-copy, .report-link { height: var(--btn-height); }
+}

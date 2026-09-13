@@ -124,15 +124,31 @@ def pw_browser():
         browser.close()
 
 
-@pytest.fixture()
-def page(pw_browser):
-    """每个用例独立 context + page；JS 异常/Console error 在 teardown 统一守护
-    （小智娘 P2：只挂在单条用例里会让其余 15 条静默放过 JS 错误）。"""
-    ctx = pw_browser.new_context()
+def _new_page(pw_browser, viewport=None):
+    """独立 context + page；JS 异常/Console error 在 teardown 统一守护
+    （小智娘 P2：只挂在单条用例里会让其余用例静默放过 JS 错误）。"""
+    ctx = pw_browser.new_context(viewport=viewport)
     pg = ctx.new_page()
     js_errors: list[str] = []
     pg.on("pageerror", lambda e: js_errors.append(str(e)))
     pg.on("console", lambda m: js_errors.append(m.text) if m.type == "error" else None)
+    return pg, ctx, js_errors
+
+
+@pytest.fixture()
+def page(pw_browser):
+    """桌面视口（Playwright 默认 1280×720）。"""
+    pg, ctx, js_errors = _new_page(pw_browser)
+    yield pg
+    ctx.close()
+    assert js_errors == [], f"前端 JS 错误：{js_errors}"
+
+
+@pytest.fixture()
+def mobile_page(pw_browser):
+    """阶段 2.4 移动视口（375×800，命中 480px 断点）：复用 module 级
+    server/browser，JS 错误守护与桌面同规格。"""
+    pg, ctx, js_errors = _new_page(pw_browser, viewport={"width": 375, "height": 800})
     yield pg
     ctx.close()
     assert js_errors == [], f"前端 JS 错误：{js_errors}"
@@ -148,6 +164,13 @@ def home(page, base_url):
     page._e2e_base = base_url  # type: ignore[attr-defined]
     _goto_home(page)
     return page
+
+
+@pytest.fixture()
+def mobile_home(mobile_page, base_url):
+    mobile_page._e2e_base = base_url  # type: ignore[attr-defined]
+    _goto_home(mobile_page)
+    return mobile_page
 
 
 def _upload(page, path: Path = FIXTURE, category: str = "lease", stance: str | None = None):
@@ -534,6 +557,11 @@ def _quality_review_stub(quality):
             "id": "sublet", "name": "转租限制", "status": "需关注",
             "note": "疑似转租", "quote": "本房屋系出租方转租取得", "hits": ["转租"],
             "clause_ids": ["c04"], "primary_clause_id": "c04",
+        }, {
+            # 门禁 P1 回归素材：snake_case 清单 id（正则漏下划线时此条路由失败）
+            "id": "early_termination", "name": "提前解约", "status": "通过",
+            "note": "约定了提前解约的书面通知义务", "quote": "本合同一式两份",
+            "hits": [], "clause_ids": [], "primary_clause_id": None,
         }],
         "scorecard": {"available": False, "reason": "no_llm_key"},
         "blind_enabled": False,
@@ -814,3 +842,195 @@ def test_ask_answer_raw_fallback_kept(home):
     home.click("#btn-ask")
     home.wait_for_selector("#ask-answer pre", state="visible")
     assert "原始输出" in home.inner_text("#ask-answer pre")
+
+
+# ---------- 阶段 2.4 移动端（375×800 命中 480px 断点） ----------
+
+def test_mobile_item_tap_opens_detail_route(mobile_home):
+    """移动端点条目 = 独立详情页：hash 带 /item/、五段结构、Back 回清单。"""
+    _upload(mobile_home)
+    mobile_home.evaluate("window.scrollTo(0, 600)")
+    # JS 原生 click：Playwright .click() 会自动把目标滚进视野，破坏
+    # 「点击时滚动位置」的断言前提（这里恰恰要测位置保持）
+    mobile_home.evaluate(
+        "document.querySelector('#item-list .item.attention').click()"
+    )
+    # hash 路由生效
+    mobile_home.wait_for_selector("#screen-ask", state="visible")
+    assert "/item/" in mobile_home.evaluate("window.location.hash")
+    # 详情页头：条目名 + 档位 tag（双通道）
+    assert mobile_home.inner_text("#ask-title").strip() != ""
+    assert mobile_home.query_selector("#ask-status-line .tag.attention")
+    # 阅读顺序：说明卡在原文卡之前
+    note_box = mobile_home.locator("#ask-note-card")
+    quote_box = mobile_home.locator("#ask-quote-card")
+    assert note_box.bounding_box()["y"] < quote_box.bounding_box()["y"]
+    assert mobile_home.inner_text("#ask-context").strip() != ""
+    # Back 手势（真实历史栈）：回结果页 + 滚动位置恢复
+    mobile_home.go_back()
+    mobile_home.wait_for_selector("#screen-results", state="visible")
+    assert "/item/" not in mobile_home.evaluate("window.location.hash")
+    scroll_y = mobile_home.evaluate("window.scrollY")
+    assert abs(scroll_y - 600) < 120, f"清单位置应恢复（实际 {scroll_y}）"
+
+
+def test_mobile_blind_item_hides_ask_card(mobile_home):
+    """待核实条目：追问卡整卡隐藏（不能误渲染成「追问暂未开通」）。"""
+    stub = _quality_review_stub(None)
+    stub["blind_enabled"] = True
+    stub["blind_candidates"] = [{
+        "id": "sig01", "name": "签署与印章", "status": "需关注",
+        "note": "规则未标需关注，模型提出候选风险", "quote": "甲方（签字）：____",
+        "hits": [], "tag_source": "blind", "needs_confirm": True,
+    }]
+    import json as _json
+
+    mobile_home.route(
+        "**/api/upload",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}),
+        ),
+    )
+    mobile_home.route(
+        "**/api/review/e2eq00001",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps(stub, ensure_ascii=False),
+        ),
+    )
+    mobile_home.set_input_files("#file", str(FIXTURE))
+    mobile_home.click("#btn-upload")
+    mobile_home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    mobile_home.locator("#item-list .item.blind-candidate").first.click()
+    mobile_home.wait_for_selector("#screen-ask", state="visible")
+    assert "blind:" in mobile_home.evaluate("window.location.hash")
+    # 说明/原文卡照常；追问卡隐藏且不出现「追问暂未开通」横幅
+    assert mobile_home.is_visible("#ask-note-card")
+    assert not mobile_home.is_visible("#screen-ask .ask-interact")
+    assert not mobile_home.is_visible("#ask-unavailable")
+
+
+def test_mobile_followup_chips_meet_touch_target(mobile_home):
+    """还想问 chips：480 内触控高度 ≥44px（现状 ≈20px 是最严重不达标项）。"""
+    _stub_ask_flow(
+        mobile_home,
+        {"原文在哪": "第五条", "问题是啥": "影响说明。", "建议怎么改": "改法。",
+         "改写稿": "", "还想问": "解除的赔偿怎么算？"},
+    )
+    mobile_home.locator("#item-list .item.attention").first.click()
+    mobile_home.wait_for_selector("#screen-ask", state="visible")
+    mobile_home.fill("#ask-input", "这条有什么问题？")
+    mobile_home.click("#btn-ask")
+    mobile_home.wait_for_selector("#ask-followups li", state="visible")
+    box = mobile_home.query_selector("#ask-followups li").bounding_box()
+    assert box["height"] >= 44, f"chips 触控高度应 ≥44（实际 {box['height']}）"
+
+
+def test_desktop_item_click_keeps_inline_panel(home):
+    """桌面回归：≥481px 点条目仍走行内面板，不产生 /item/ hash 路由。"""
+    _upload(home)
+    home.evaluate("window.scrollTo(0, 0)")
+    home.locator("#item-list .item.attention").first.click()
+    home.wait_for_selector("#item-detail", state="visible")
+    assert "/item/" not in home.evaluate("window.location.hash")
+    assert not home.is_visible("#screen-ask")
+
+
+def test_precheck_keep_button_has_secondary_style(home):
+    """双端 bug 顺手修：#btn-precheck-keep 此前漏挂 .secondary（浏览器默认
+    高度不达标），现在应有 44px 标准按钮样式。"""
+    import json as _json
+
+    calls = {"n": 0}
+
+    def handler(route):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            route.fulfill(
+                status=200, content_type="application/json",
+                body=_json.dumps(
+                    {
+                        "review_id": None, "message": "category_confirm",
+                        "status": "category_confirm",
+                        "precheck": {"performed": True, "detected_type": "厂房租赁合同",
+                                     "confidence": "high", "summary": "以租金换取厂房使用权"},
+                        "suggested_category": "lease", "supported_categories": [],
+                    },
+                    ensure_ascii=False,
+                ),
+            )
+        else:
+            route.fulfill(
+                status=200, content_type="application/json",
+                body=_json.dumps({"review_id": "e2estub000", "message": "uploaded", "status": "uploaded"}),
+            )
+
+    def review_route(route):
+        route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({
+                "id": "e2estub000", "filename": "lease_sample.txt", "category": "lease",
+                "category_label": "租赁合同", "status": "done", "stage": "done", "items": [],
+                "scorecard": {"available": False}, "blind_enabled": False,
+                "stance": "neutral", "stance_declaration": "",
+            }, ensure_ascii=False),
+        )
+
+    home.route("**/api/upload", handler)
+    home.route("**/api/review/e2estub000", review_route)
+    home.set_input_files("#file", str(FIXTURE))
+    home.select_option("#category", "procurement")
+    home.click("#btn-upload")
+    home.wait_for_selector("#precheck-dialog[open]")
+    keep = home.locator("#btn-precheck-keep")
+    assert "secondary" in (keep.get_attribute("class") or "")
+    assert keep.bounding_box()["height"] >= 40
+
+
+def test_mobile_underscore_id_item_route(mobile_home):
+    """门禁 P1 回归：snake_case 条目 id（early_termination 等）与
+    blind:governing_law 形态的 key 在路由里必须完整匹配——正则漏下划线
+    会让整体匹配失败，用户被踢回上传页。"""
+    stub = _quality_review_stub(None)
+    stub["blind_enabled"] = True
+    stub["blind_candidates"] = [{
+        "id": "governing_law", "name": "管辖法律", "status": "需关注",
+        "note": "候选说明", "quote": "本合同一式两份", "hits": [],
+        "tag_source": "blind", "needs_confirm": True,
+    }]
+    import json as _json
+
+    mobile_home.route(
+        "**/api/upload",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}),
+        ),
+    )
+    mobile_home.route(
+        "**/api/review/e2eq00001",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps(stub, ensure_ascii=False),
+        ),
+    )
+    mobile_home.set_input_files("#file", str(FIXTURE))
+    mobile_home.click("#btn-upload")
+    mobile_home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    # ① blind:下划线 key
+    mobile_home.evaluate(
+        "document.querySelector('#item-list .item.blind-candidate').click()"
+    )
+    mobile_home.wait_for_selector("#screen-ask", state="visible")
+    assert "blind:governing_law" in mobile_home.evaluate("window.location.hash")
+    # ② Back 回清单，再直达 snake_case 真实清单 id
+    mobile_home.go_back()
+    mobile_home.wait_for_selector("#screen-results", state="visible")
+    mobile_home.evaluate(
+        "window.location.hash = window.location.hash + '/item/early_termination'"
+    )
+    mobile_home.wait_for_selector("#screen-ask", state="visible")
+    assert "/item/early_termination" in mobile_home.evaluate("window.location.hash")
+    assert mobile_home.inner_text("#ask-title").strip() != ""
+    assert not mobile_home.is_visible("#screen-upload"), "不得被踢回上传页"
