@@ -81,13 +81,13 @@
             </span>
             <span class="stage-badge">等待中</span>
           </li>
-          <!-- 阶段 2.1 质量层第 4 段：quality 关闭/降级时后端不发 analyzing，
-               等待页自然停在已完成的三段 -->
+          <!-- 阶段 2.1 质量层第 4 段：quality 关闭时后端不发 analyzing，
+               等待页自然停在已完成的三段（开启但降级时该段仍会短暂点亮） -->
           <li class="stage" data-stage="analyzing">
             <span class="stage-dot" aria-hidden="true"></span>
             <span class="stage-text">
               <span class="stage-name">AI 观察</span>
-              <span class="stage-sub">从完整性、一致性、影响三个角度补充参考</span>
+              <span class="stage-sub">再帮您看三点：有没有漏写、有没有自相矛盾、对您的影响，仅供参考</span>
             </span>
             <span class="stage-badge">等待中</span>
           </li>
@@ -99,36 +99,27 @@
         <div id="precheck-suspect" class="card precheck-suspect hidden"></div>
         <!-- 阶段 1.3 分支 C 立场知情提示（非阻断，文案服务端下发） -->
         <div id="stance-notice" class="card precheck-suspect hidden"></div>
-        <div class="meta card" id="results-meta"></div>
-        <!-- M4 审查报告导出：与页面同源的 store 数据，无二次 LLM 调用 -->
-        <div class="report-actions hidden" id="report-actions">
-          <a class="rewrite-copy report-link" id="btn-export-report" download>导出报告（Word）</a>
-        </div>
-        <!-- M3.5 评分卡：参考层（灰底、无彩色），规则清单仍是唯一权威层 -->
-        <div class="card score-card hidden" id="score-card">
-          <div class="score-head">
-            <span class="score-value"><span id="score-total">–</span><span class="score-unit">/100</span></span>
-            <span class="score-grade" id="score-grade"></span>
+        <!-- 阶段 2.3 IA 重排：meta 卡吸收导出按钮。JS 只整写 #results-meta-main，
+             #meta-actions 是静态兄弟（防止 innerHTML 抹掉按钮） -->
+        <div class="meta card" id="results-meta">
+          <div id="results-meta-main"></div>
+          <!-- M4 审查报告导出：与页面同源的 store 数据，无二次 LLM 调用 -->
+          <div class="meta-actions hidden" id="meta-actions">
+            <a class="rewrite-copy report-link" id="btn-export-report" download>导出报告（Word）</a>
           </div>
-          <p class="score-summary" id="score-summary"></p>
-          <p class="score-caps hidden" id="score-caps"></p>
-          <p class="score-disclaimer" id="score-disclaimer">模型评分仅供参考，以逐条规则结论为准</p>
-          <details class="score-details">
-            <summary>分段明细</summary>
-            <ul class="score-breakdown" id="score-breakdown"></ul>
-          </details>
         </div>
-        <div class="legend card">
+        <!-- 阶段 2.3 IA 重排：图例降级为清单正上方一行（去卡片化，tag 色块保留=
+             文字+颜色双通道），九哥 caption 做档位翻译 -->
+        <div class="legend" id="legend">
           <span class="tag pass">通过</span>
           <span class="tag attention">需关注</span>
           <span class="tag notfound">未找到</span>
           <span class="tag na">不适用</span>
         </div>
+        <p class="legend-caption">结论怎么看：通过＝这条查了、写得没问题；需关注＝建议重点看；未找到＝合同里没找到这条；不适用＝这类合同不涉及</p>
         <ul id="item-list" class="item-list"></ul>
-        <!-- 阶段 2.1 质量层：清单之后的虚线容器（参谋不是裁判——不计分、
-             不改档位；不可用/旧记录整卡静默隐藏）。renderResults 填充 -->
-        <section id="quality-panel" class="quality-card hidden" aria-label="AI 观察"></section>
-        <!-- Detail panel: 原文摘句 when a row is selected -->
+        <!-- Detail panel: 原文摘句 when a row is selected（阶段 2.3 上移到清单后，
+             补盲说明由 JS 动态插在清单与本面板之间） -->
         <div id="item-detail" class="item-detail hidden" aria-live="polite">
           <!-- 阶段 1.1 条款锚点：命中落在哪个条款（无条款索引/未定位时隐藏） -->
           <p id="detail-clause" class="detail-clause hidden"></p>
@@ -140,6 +131,32 @@
             <button type="button" class="link ask-link" id="detail-ask">问清楚一点 →</button>
           </div>
         </div>
+        <!-- 阶段 2.1 质量层：清单之后的虚线容器（参谋不是裁判——不计分、
+             不改档位；不可用/旧记录整卡静默隐藏）。renderResults 填充 -->
+        <section id="quality-panel" class="quality-card hidden" aria-label="AI 观察"></section>
+        <!-- 阶段 2.3 IA 重排：评分卡沉底+默认折叠（原生 details 零 JS 零动画）。
+             铁律：分数与档位永远灰字不套档位色；免责声明常驻收起态不能被折没 -->
+        <details class="card score-card score-fold hidden" id="score-card">
+          <summary class="score-fold-summary">
+            <span class="score-head">
+              <span class="score-value"><span id="score-total">–</span><span class="score-unit">/100</span></span>
+              <span class="score-grade" id="score-grade"></span>
+            </span>
+            <span class="score-fold-hint">
+              <span class="when-closed">仅供参考，点开看明细</span>
+              <span class="when-open">仅供参考，点开收起</span>
+            </span>
+          </summary>
+          <p class="score-disclaimer" id="score-disclaimer">模型评分仅供参考，以逐条规则结论为准</p>
+          <div class="score-fold-body">
+            <p class="score-summary" id="score-summary"></p>
+            <p class="score-caps hidden" id="score-caps"></p>
+            <details class="score-details">
+              <summary>分段明细</summary>
+              <ul class="score-breakdown" id="score-breakdown"></ul>
+            </details>
+          </div>
+        </details>
       </div>
     </section>
 
@@ -159,15 +176,18 @@
       <div class="card">
         <p id="ask-unavailable" class="muted hidden">追问暂未开通</p>
         <div id="ask-context" class="ask-context"></div>
+        <!-- 阶段 2.2 四段式：「还想问」建议不进答案正文，做成输入框上方
+             可点 chips（点击回填输入框，九哥裁定） -->
+        <div id="ask-followups-wrap" class="ask-followups-wrap hidden">
+          <span class="ask-followups-label">不知道问什么？可以试试：</span>
+          <ul id="ask-followups" class="ask-followups"></ul>
+        </div>
         <textarea id="ask-input" rows="3" placeholder="例如：违约金风险大吗？"></textarea>
         <button id="btn-ask" class="primary" type="button">发送</button>
         <p id="ask-error" class="error hidden"></p>
-        <div id="ask-answer" class="answer hidden">
-          <p class="detail-label">人话解释</p>
-          <div id="ask-explain" class="detail-note"></div>
-          <p class="detail-label">建议改法</p>
-          <div id="ask-rewrite" class="detail-note"></div>
-        </div>
+        <!-- 阶段 2.2 四段式：renderAnswer 整体重写本容器（原文依据/实际影响/
+             建议改法/待确认的事；缺段静默隐藏；raw_text 退化兜底保留） -->
+        <div id="ask-answer" class="answer hidden"></div>
       </div>
     </section>
   </div>
