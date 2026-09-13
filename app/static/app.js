@@ -724,6 +724,8 @@
     const ans = $("ask-answer");
     err.classList.add("hidden");
     ans.classList.add("hidden");
+    // 重新提问即弃上一轮建议 chips（门禁 P3：失败路径不得残留旧建议）
+    renderFollowups([]);
     const question = $("ask-input").value.trim();
     if (!question) {
       err.textContent = "请输入问题。";
@@ -759,13 +761,14 @@
     }
   }
 
-  /** 阶段 2.3 摘要行：取 note 第一句（。！？\n 切分），≤60 字；
+  /** 阶段 2.3 摘要行：取 note 第一句（。！？\n 切分），去句末标点，≤60 字；
    * 空返回空串（调用方不渲染占位）。 */
   function firstSentence(note) {
     const text = String(note || "").trim();
     if (!text) return "";
     const m = text.match(/^[\s\S]*?[。！？\n]/);
-    const first = (m ? m[0] : text).trim();
+    // 含分隔符匹配会带进句末标点：strip 尾部（门禁 P2：与 e2e 断言口径对齐）
+    const first = (m ? m[0] : text).trim().replace(/[。！？]+$/, "").trim();
     if (!first) return "";
     return first.length <= 60 ? first : first.slice(0, 60) + "…";
   }
