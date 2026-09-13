@@ -15,6 +15,7 @@ from app.api.schemas import (
     AskResponse,
     ClauseIndexInfo,
     PrecheckInfo,
+    QualityInfo,
     ReviewSummary,
     ScorecardInfo,
     UploadResponse,
@@ -110,6 +111,7 @@ def _start_review(
         blind_skipped_messages=[],
         blind_skipped_reason=None,
         blind_enabled=False,
+        quality=None,
         text="",
         policies=[],
         error=None,
@@ -136,6 +138,7 @@ def _start_review(
                         stage="error",
                         error=result["error"],
                         text=result.get("text") or "",
+                        quality=result.get("quality") or {},
                     )
                 else:
                     preview = (result.get("text") or "")[:500]
@@ -149,6 +152,7 @@ def _start_review(
                         blind_skipped_messages=result.get("blind_skipped_messages") or [],
                         blind_skipped_reason=result.get("blind_skipped_reason"),
                         blind_enabled=bool(result.get("blind_enabled")),
+                        quality=result.get("quality") or {},
                         text=result.get("text") or "",
                         policies=result.get("policies") or [],
                         category=result.get("category") or cat,
@@ -313,6 +317,7 @@ def get_review(review_id: str):
         )}
     clause_index = row.get("clause_index")
     stance = row.get("stance") or "neutral"
+    quality = row.get("quality")
     return ReviewSummary(
         precheck=PrecheckInfo(**pc) if pc else None,
         id=row["id"],
@@ -330,6 +335,7 @@ def get_review(review_id: str):
         blind_skipped_messages=row.get("blind_skipped_messages") or [],
         blind_skipped_reason=row.get("blind_skipped_reason"),
         blind_enabled=bool(row.get("blind_enabled")),
+        quality=QualityInfo(**quality) if quality else None,
         error=row.get("error"),
         text_preview=row.get("text_preview") or "",
         ask_available=bool(llm_ask.get_api_key()),

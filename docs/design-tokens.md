@@ -60,6 +60,13 @@ styles.css 仍存在 6 值 8 处硬编码（#1B7A3D、#9A6700×2、#FAFAFA×2 �
 --color-aside-bg 同值、#F0F7FF、#F3E5FF/#EBD7FF），后续批次统一收编；
 新代码禁止新增硬编码色。
 
+## 质量层视觉（阶段 2.1，2026-09-12）
+
+「AI 观察」虚线容器**零新 token**：边框 `1.5px dashed var(--color-divider)`、
+底色 `var(--color-aside-bg)`、徽章描边/维度 chip 全走中性文字色
+（`--color-text-secondary` / `--color-text-tertiary`）。三维度 chip 同款
+中性灰仅文字区分——「零新档位色」铁律达成，且天然满足「文字+颜色双通道」。
+
 ## 补盲视觉（M2.5）
 
 - 规则「需关注」：琥珀左边条 `--color-attention-bar` + 实心徽章「规则」

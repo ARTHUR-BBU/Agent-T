@@ -102,12 +102,15 @@ NDA 红线（风险金标 / 对抗样例须为「需关注」，不得「通过�
 | LLM 预审 | `PRECHECK_ENABLED`（默认 `true`；上传时 LLM 分类+支持性判断，不支持类型不开审）；`PRECHECK_TIMEOUT_SECONDS`（预审独立超时，默认 30；**阶段 0.5 起对 xAI 分支同样生效**——此前 xAI 写死 60s 不吃此配置） |
 | 模型分级（阶段 0.5） | `DEEPSEEK_MODEL_PRECHECK` / `DEEPSEEK_MODEL_REVIEW`（智谱 `GLM_MODEL_*`、xAI `GROK_MODEL_*` 同理）：未设回落 `DEEPSEEK_MODEL` 等，**默认配置零行为变化** |
 | 限频（阶段 0.5） | `RATE_LIMIT_UPLOAD_PER_MINUTE`（默认 10）、`RATE_LIMIT_ASK_PER_MINUTE`（默认 20）；`0`=关闭；超限 429「过于频繁」+ Retry-After；单进程假设，多 worker 限额按 worker 数放大。注意：按客户端 IP 计数，办公室/校园等 NAT 共享出口时是**全体共享额度**，误伤则调大或设 0 关闭 |
-| 单次审查预算（阶段 0.5） | `LLM_BUDGET_PER_REVIEW`（默认 12；`0`=不限）：预审+评分/补盲的 LLM 调用总量，超限走软降级（评分卡 `unavailable(budget_exceeded)`、预审 skip），规则引擎照常。阶段 1.2 分段阅读后最坏 8 次（预审 2 + 分段 map 4 + 汇总 2） |
+| 单次审查预算（阶段 0.5） | `LLM_BUDGET_PER_REVIEW`（默认 **16**（阶段 2.1 起上调，此前 12）；`0`=不限）：预审+评分/补盲+质量层的 LLM 调用总量，超限走软降级（评分卡 `unavailable(budget_exceeded)`、预审 skip、质量层 `budget_exceeded`），规则引擎照常。阶段 2.1 全链最坏 14 次（预审 2 + 评分 6 + 质量层 6）。**质量层排预算末位**：紧张时最先被牺牲，既有参考层不受稀释 |
 | 分段阅读块数（阶段 1.2） | `LLM_REVIEW_MAX_SEGMENTS`（默认 4）：长合同（>6000 字）评分/补盲分段阅读的块数上限，每块 ≤6000 字；超限尾部并块走头尾采样。短合同（≤6000 字）不受影响，仍走单次调用。**调大前先核对预算**：需满足「段数 × 1 + 汇总 2 + 预审 2 ≤ `LLM_BUDGET_PER_REVIEW`」，否则 map 中途会因预留 reduce 额度被截断，长合同覆盖率下降（引擎已自动兜底，不会报错） |
+| 质量层（阶段 2.1） | `QUALITY_ENABLED`（默认 `true`；AI 三维参考观察——**一键回滚开关**，`false` 即回原状且规则引擎零感知）；`QUALITY_TIMEOUT_SECONDS`（未设回落 `LLM_TIMEOUT_SECONDS`）；`QUALITY_MAX_SEGMENTS`（未设回落 `LLM_REVIEW_MAX_SEGMENTS`，只砍质量层延迟的独立旋钮）。详见 docs/spec-quality-layer.md |
+| STORE_TTL 非法值 | `STORE_TTL_HOURS` 配负数或非数字 → **启动即拒绝**（fail-closed，PR #30；不再静默当永久保存） |
+| 请求体上限 | 整站 12MB body 上限（BasicAuth 之后第一个闸门），超限 413（PR #30） |
 | 追问实现 | `app/services/llm_ask.py` |
 | 无 Key 时 | 界面/接口提示「追问暂未开通」；清单审查照常可跑 |
 
-数据流向备案：配置模型 Key 后，上传合同的文本会发送至所配大模型（DeepSeek/智谱）用于评分、补盲与追问；不配 Key 则纯本地规则审查。上传页已向用户明示。
+数据流向备案：配置模型 Key 后，上传合同的文本会发送至所配大模型（DeepSeek/智谱）用于评分、补盲、质量观察与追问；不配 Key 则纯本地规则审查。上传页已向用户明示。
 
 「问清楚一点」只做：把难懂条款说成人话、必要时翻译。  
 **不做**：改写检查单状态、盖「没问题」章、替管理员拍板。

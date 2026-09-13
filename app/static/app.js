@@ -196,9 +196,11 @@
     }
   }
 
-  // ===== 阶段 0.2 等待页三段真实进度（阳仔线框）=====
-  // 诚实进度：只点亮后端真实到达的段位，无百分比无倒计时
-  const STAGE_ORDER = ["triage", "scanning", "scoring"];
+  // ===== 阶段 0.2 等待页真实进度（阳仔线框）=====
+  // 诚实进度：只点亮后端真实到达的段位，无百分比无倒计时。
+  // 阶段 2.1 追加第 4 段 analyzing（质量层）——quality 关闭/降级时后端不发，
+  // 等待页自然停在已完成的三段
+  const STAGE_ORDER = ["triage", "scanning", "scoring", "analyzing"];
   const STAGE_BADGE = { pending: "等待中", active: "进行中", done: "已完成", error: "未能完成" };
 
   function resetStages() {
@@ -389,6 +391,91 @@
       skipEl.textContent = "";
       skipEl.classList.add("hidden");
     }
+
+    renderQuality(data);
+  }
+
+  /** 阶段 2.1 质量层：清单之后的「AI 观察」虚线容器。
+   * 参谋不是裁判：不计分、不改档位；每条带原文引用+待人工确认。
+   * 不可用（available=false）与旧记录（quality=null）同走静默隐藏。
+   * 模型态字段一律 textContent，零 innerHTML 拼接（escapeHtml 之上再不给拼接机会）。 */
+  const QUALITY_DIM_LABEL = { completeness: "完整性", consistency: "一致性", impact: "影响" };
+
+  function renderQuality(data) {
+    const panel = $("quality-panel");
+    if (!panel) return;
+    const q = data.quality;
+    const obs = (q && q.available && Array.isArray(q.observations)) ? q.observations : [];
+    if (!obs.length) {
+      panel.innerHTML = "";
+      panel.classList.add("hidden");
+      return;
+    }
+    panel.innerHTML = "";
+
+    const head = document.createElement("div");
+    head.className = "quality-head";
+    const badge = document.createElement("span");
+    badge.className = "source-badge quality";
+    badge.textContent = "AI 观察";
+    head.appendChild(badge);
+    const disclaimer = document.createElement("span");
+    disclaimer.className = "quality-disclaimer";
+    disclaimer.textContent = (q && q.disclaimer) || "AI 观察仅供参考，需人工确认。";
+    head.appendChild(disclaimer);
+    panel.appendChild(head);
+
+    const ul = document.createElement("ul");
+    ul.className = "quality-list";
+    obs.forEach((o) => {
+      const li = document.createElement("li");
+      li.className = "quality-item";
+
+      const line1 = document.createElement("p");
+      line1.className = "quality-title-line";
+      const dim = document.createElement("span");
+      dim.className = "quality-dim";
+      dim.textContent = QUALITY_DIM_LABEL[o.dimension] || "观察";
+      line1.appendChild(dim);
+      const title = document.createElement("span");
+      title.className = "quality-title";
+      title.textContent = o.title || "";
+      line1.appendChild(title);
+      li.appendChild(line1);
+
+      if (o.quote) {
+        const quote = document.createElement("div");
+        quote.className = "quality-quote";
+        quote.textContent = "原文：" + o.quote;
+        li.appendChild(quote);
+      }
+
+      if (o.comment) {
+        const comment = document.createElement("p");
+        comment.className = "quality-comment";
+        comment.textContent = o.comment;
+        li.appendChild(comment);
+      }
+
+      const line4 = document.createElement("p");
+      line4.className = "quality-meta-line";
+      const heading = clauseHeadingById(o.clause_id);
+      if (heading) {
+        const clause = document.createElement("span");
+        clause.className = "quality-clause";
+        clause.textContent = "条款 " + heading;
+        line4.appendChild(clause);
+      }
+      const confirm = document.createElement("span");
+      confirm.className = "quality-confirm";
+      confirm.textContent = "待人工确认";
+      line4.appendChild(confirm);
+      li.appendChild(line4);
+
+      ul.appendChild(li);
+    });
+    panel.appendChild(ul);
+    panel.classList.remove("hidden");
   }
 
   /** M3.5 评分卡：参考层。不可用时整卡不渲染（无 Key 在 meta 加一行灰字）。 */
@@ -516,6 +603,16 @@
     const index = state.review && state.review.clause_index;
     if (!ids.length || !index || !Array.isArray(index.clauses)) return "";
     const target = index.clauses.find((c) => c.id === ids[0]);
+    return (target && target.heading) || "";
+  }
+
+  /** 阶段 2.1 质量层：按单个 clause_id 查条款标题（查不到静默——
+   * 伪造 id 已在服务端归一 null，此处只防旧记录/索引缺失）。 */
+  function clauseHeadingById(clauseId) {
+    if (!clauseId) return "";
+    const index = state.review && state.review.clause_index;
+    if (!index || !Array.isArray(index.clauses)) return "";
+    const target = index.clauses.find((c) => c.id === clauseId);
     return (target && target.heading) || "";
   }
 

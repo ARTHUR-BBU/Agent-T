@@ -97,6 +97,30 @@ class PrecheckInfo(BaseModel):
     stance_notice_text: str = ""
 
 
+class QualityObservation(BaseModel):
+    """质量层单条观察（阶段 2.1）：铁律 5——带原文引用+待人工确认。"""
+
+    dimension: str  # completeness / consistency / impact
+    title: str = ""
+    quote: str = ""
+    clause_id: Optional[str] = None
+    comment: str = ""
+    needs_confirm: bool = True  # 代码强制 True（模型无权声明免确认）
+
+
+class QualityInfo(BaseModel):
+    """AI 质量分析（阶段 2.1）：参谋不是裁判——不计分、不改档位。"""
+
+    available: bool = False
+    # disabled / no_llm_key / llm_error / parse_failed / budget_exceeded /
+    # error / not_attempted（前端对不可用整卡静默隐藏）
+    reason: Optional[str] = None
+    observations: list[QualityObservation] = Field(default_factory=list)
+    disclaimer: str = ""
+    dropped_count: int = 0
+    coverage: Optional[dict[str, Any]] = None
+
+
 class ReviewSummary(BaseModel):
     id: str
     filename: str
@@ -122,6 +146,8 @@ class ReviewSummary(BaseModel):
     # 前端与 docx 只渲染不拼接）
     stance: str = "neutral"
     stance_declaration: str = ""
+    # 阶段 2.1 质量层（旧记录为 None；不可用时 available=False 前端静默隐藏）
+    quality: Optional[QualityInfo] = None
 
 
 class UploadResponse(BaseModel):

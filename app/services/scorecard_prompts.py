@@ -10,6 +10,8 @@ import json
 import re
 from typing import Any, Optional
 
+from app.prompts.guards import with_untrusted_guard
+
 # 单次文本上限（2026-09-07 线上事故常量：12000 字 + 评分指令让 glm-5.2 超 240s；
 # 压到 6000 后回到 ~30-60s。头+尾采样——主体在头部、签署区在尾部）
 MAX_CONTRACT_CHARS = 6000
@@ -32,7 +34,7 @@ def build_system_prompt(segments: list[dict[str, Any]], policies: list[str]) -> 
         seg_lines.append(f"- {s['key']}：{s['name']} {na_note}")
     seg_block = "\n".join(seg_lines)
     policy_block = "\n".join(f"- {p}" for p in policies) or "- （无额外政策）"
-    return f"""你是合同审查「评分卡」助手。规则引擎已对合同逐项打标（通过/需关注/未找到/本类不适用）；你的任务是**解释与汇总**规则结果，给出百分制评分卡。
+    prompt = f"""你是合同审查「评分卡」助手。规则引擎已对合同逐项打标（通过/需关注/未找到/本类不适用）；你的任务是**解释与汇总**规则结果，给出百分制评分卡。
 
 {_CONSISTENCY_CLAUSES}
 
@@ -57,6 +59,7 @@ def build_system_prompt(segments: list[dict[str, Any]], policies: list[str]) -> 
 
 segments[].gap_item_ids 说明：该段内你认为「表述弱、有缺口、值得补盲」的条目 id（含规则已标「通过」但表述单薄的项），没有则输出 []。系统会把点名条目纳入定向补盲，供人工确认——这只是点名，不改规则档位。
 candidates 说明：对「规则未标需关注、但你发现真实风险且能引用原文」的条目提出候选；quote 必须是合同原文连续摘录，没有原文依据就不要输出该项；无候选输出 []。禁止改写规则已有结论。"""
+    return with_untrusted_guard(prompt)
 
 
 def _clip_for_scoring(text: str) -> str:
@@ -100,7 +103,7 @@ def build_user_prompt(text: str, items: list[dict[str, Any]]) -> str:
 
 def build_map_system_prompt(policies: list[str]) -> str:
     policy_block = "\n".join(f"- {p}" for p in policies) or "- （无额外政策）"
-    return f"""你是合同审查「分段阅读」助手。长合同被切成若干片段分批阅读，你只看到一个片段。任务：通读本片段，找出与规则清单相关的真实风险信号，产出**观察素材**。你不下结论、不打分、不改任何档位——汇总由另一轮完成。
+    prompt = f"""你是合同审查「分段阅读」助手。长合同被切成若干片段分批阅读，你只看到一个片段。任务：通读本片段，找出与规则清单相关的真实风险信号，产出**观察素材**。你不下结论、不打分、不改任何档位——汇总由另一轮完成。
 
 政策参考（为什么这样找）：
 {policy_block}
@@ -116,6 +119,7 @@ def build_map_system_prompt(policies: list[str]) -> str:
 - segment 填该风险点所属的评分段 key；与清单无关的片段输出 {{"observations":[]}}。
 - quote 必须是**本片段原文连续摘录**，没有原文依据就不要输出候选。
 - 禁止整体性背书（如"没有问题""可以放心签署"）、禁止效力越权判断（如"该条款无效"）、禁止推翻规则档位的表述（如"提示可以忽略"）。"""
+    return with_untrusted_guard(prompt)
 
 
 def build_map_user_prompt(chunk_text: str, items: list[dict[str, Any]], part_no: int, part_total: int) -> str:

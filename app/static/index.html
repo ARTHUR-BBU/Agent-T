@@ -42,7 +42,7 @@
         </label>
         <button id="btn-upload" class="primary" type="button">开始审查</button>
         <p id="upload-error" class="error hidden"></p>
-        <p class="privacy-note">审查说明：上传后合同文本将发送至所配置的大模型（DeepSeek / 智谱）用于评分与条款解释；不配置模型 Key 时仅在本机做规则审查、数据不出服务器。审查记录定期自动清除。</p>
+        <p class="privacy-note">审查说明：上传后合同文本将发送至所配置的大模型（DeepSeek / 智谱）用于评分、AI 观察与条款解释；不配置模型 Key 时仅在本机做规则审查、数据不出服务器。审查记录定期自动清除。</p>
       </div>
     </section>
 
@@ -81,6 +81,16 @@
             </span>
             <span class="stage-badge">等待中</span>
           </li>
+          <!-- 阶段 2.1 质量层第 4 段：quality 关闭/降级时后端不发 analyzing，
+               等待页自然停在已完成的三段 -->
+          <li class="stage" data-stage="analyzing">
+            <span class="stage-dot" aria-hidden="true"></span>
+            <span class="stage-text">
+              <span class="stage-name">AI 观察</span>
+              <span class="stage-sub">从完整性、一致性、影响三个角度补充参考</span>
+            </span>
+            <span class="stage-badge">等待中</span>
+          </li>
         </ol>
         <p class="muted stage-legacy hidden" id="stage-legacy">正在审查…（大合同含模型评分约需 1-2 分钟，请勿关闭页面）</p>
       </div>
@@ -115,6 +125,9 @@
           <span class="tag na">不适用</span>
         </div>
         <ul id="item-list" class="item-list"></ul>
+        <!-- 阶段 2.1 质量层：清单之后的虚线容器（参谋不是裁判——不计分、
+             不改档位；不可用/旧记录整卡静默隐藏）。renderResults 填充 -->
+        <section id="quality-panel" class="quality-card hidden" aria-label="AI 观察"></section>
         <!-- Detail panel: 原文摘句 when a row is selected -->
         <div id="item-detail" class="item-detail hidden" aria-live="polite">
           <!-- 阶段 1.1 条款锚点：命中落在哪个条款（无条款索引/未定位时隐藏） -->
