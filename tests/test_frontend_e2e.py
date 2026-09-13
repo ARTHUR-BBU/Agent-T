@@ -424,7 +424,8 @@ def test_scorecard_hidden_with_no_key_note(home):
 
 def test_export_report_button_and_download(home):
     _upload(home)
-    assert home.is_visible("#report-actions")
+    # 阶段 2.3 IA 重排：导出按钮并入 meta 卡（#meta-actions 静态子容器）
+    assert home.is_visible("#meta-actions")
     href = home.get_attribute("#btn-export-report", "href")
     assert href and href.startswith("/api/review/") and href.endswith("/report")
     with home.expect_download() as dl_info:
@@ -590,7 +591,8 @@ def test_quality_panel_renders_dimensions(home):
     items = home.query_selector_all("#quality-panel .quality-item")
     assert len(items) == 3
     dims = [el.inner_text() for el in home.query_selector_all("#quality-panel .quality-dim")]
-    assert dims == ["完整性", "一致性", "影响"]
+    # 九哥人话化文案（09-13）：等待页副标题与结果页 chip 逐字呼应
+    assert dims == ["有没有漏写", "有没有自相矛盾", "对您的影响"]
     assert "待人工确认" in home.inner_text("#quality-panel")
     # 条款锚：clause_id=c01 → 标题查表；clause_id=None → 只有待人工确认
     assert "第一条 租金" in home.inner_text("#quality-panel")
@@ -666,3 +668,149 @@ def test_quality_stage_analyzing_segment(home):
     # done 后 analyzing 未被点亮过（无 Key 环境质量层 no_llm_key，但仍会
     # 短暂点亮——这里只断言四段清单与结果页正常抵达）
     assert home.is_visible("#results-body")
+
+
+# ---------- 阶段 2.3 IA 重排 + 2.2 四段式 ----------
+
+def test_scorecard_folded_with_summary_line(home):
+    """评分卡沉底折叠：默认收起、摘要行自带「仅供参考」轻量免责、点开见明细。"""
+    stub = _quality_review_stub(None)
+    stub["scorecard"] = {
+        "available": True, "reason": None, "total": 66,
+        "tier": {"label": "有实质风险", "hint": "核心条款有硬伤，先改完再谈签的事"},
+        "summary": "规则结果汇总评分 66 分。", "segments": [], "caps_applied": [],
+        "disclaimer": "模型评分仅供参考，以逐条规则结论为准", "advisory_only": True,
+    }
+    import json as _json
+
+    home.route(
+        "**/api/upload",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}),
+        ),
+    )
+    home.route(
+        "**/api/review/e2eq00001",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps(stub, ensure_ascii=False),
+        ),
+    )
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+
+    assert home.is_visible("#score-card")
+    # 默认收起：分段明细不可见；摘要行自带轻量免责
+    assert not home.locator("#score-card").evaluate("el => el.hasAttribute('open')")
+    summary_text = home.inner_text("#score-card summary")
+    assert "66" in summary_text and "仅供参考，点开看明细" in summary_text
+    assert not home.is_visible("#score-breakdown")
+    # 点开：明细可见、hint 切换
+    home.click("#score-card > summary")
+    assert home.locator("#score-card").evaluate("el => el.hasAttribute('open')")
+    assert home.is_visible("#score-card .score-fold-body")
+    assert "点开收起" in home.inner_text("#score-card summary")
+
+
+def test_item_rows_show_note_summary(home):
+    """清单行两行结构：每条露 note 首句摘要（caption 灰字）；空 note 不渲染。"""
+    _upload(home)
+    rows = home.query_selector_all("#item-list .item")
+    assert rows
+    with_caption = [r for r in rows if r.query_selector(".item-caption")]
+    assert with_caption, "至少部分行应有摘要（fixture 合同的 note 均非空）"
+    for r in with_caption:
+        cap = r.query_selector(".item-caption").inner_text().strip()
+        assert cap, "摘要不应为空串"
+        # 首句截断：不含句末标点（首句即第一句）
+        assert not cap.endswith(("。", "！", "？")), "摘要应是首句截断（不含句末标点）"
+
+
+def _stub_ask_flow(page, answer_payload, raw_text=None):
+    """注入 ask 可用的假 done 记录 + /api/ask 假答案（无 Key 环境测四段式
+    渲染的唯一路径：UI 门禁看 review.ask_available，网络层拦截 ask 响应）。"""
+    import json as _json
+
+    stub = _quality_review_stub(None)
+    stub["ask_available"] = True
+    page.route(
+        "**/api/upload",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}),
+        ),
+    )
+    page.route(
+        "**/api/review/e2eq00001",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps(stub, ensure_ascii=False),
+        ),
+    )
+    page.route(
+        "**/api/ask",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({
+                "ok": True, "item_id": "sublet", "item_name": "转租限制",
+                "answer": answer_payload, "raw_text": raw_text, "error": None,
+            }, ensure_ascii=False),
+        ),
+    )
+    page.set_input_files("#file", str(FIXTURE))
+    page.click("#btn-upload")
+    page.wait_for_selector("#results-body", state="visible", timeout=15000)
+    page.wait_for_selector(".item.attention", state="visible", timeout=5000)
+
+
+def test_ask_answer_renders_four_segment_layout(home):
+    """四段式答案：原文依据→实际影响→建议改法(+改写稿)→「还想问」chips。"""
+    _stub_ask_flow(home, {
+        "风险等级": "高",
+        "这条在查啥": "单方解除权约定",
+        "原文在哪": "第五条 甲方有权随时解除本合同",
+        "问题是啥": "甲方可以随时解约，您的工作安排没有保障。",
+        "建议怎么改": "约定解除需提前 30 日书面通知。",
+        "改写稿": "第五条 甲方解除本合同须提前三十日书面通知乙方。",
+        "还想问": "解除的赔偿怎么算？\n提前通知期可以更长吗？",
+    })
+    home.locator("#item-list .item.attention").first.click()
+    home.click("#detail-ask")
+    home.wait_for_selector("#screen-ask", state="visible")
+    home.fill("#ask-input", "这条有什么问题？")
+    home.click("#btn-ask")
+    home.wait_for_selector("#ask-answer.answer:not(.hidden)", state="visible")
+
+    labels = [
+        el.inner_text().strip()
+        for el in home.query_selector_all("#ask-answer .detail-label")
+    ]
+    assert labels[0] == "原文依据"
+    assert labels[1] == "实际影响"
+    assert labels[2] == "建议改法"
+    # 「不伪造风险等级」禁令：风险等级/这条在查啥不得出现在答案里
+    text = home.inner_text("#ask-answer")
+    assert "高" != text.strip() and "风险等级" not in text and "单方解除权约定" not in text
+    # 改写稿块与复制按钮原样保留
+    assert home.is_visible("#ask-rewrite-text")
+    assert home.is_visible("#btn-copy-rewrite")
+    # 「还想问」chips：输入框上方可点回填
+    assert home.is_visible("#ask-followups-wrap")
+    chips = home.query_selector_all("#ask-followups li")
+    assert len(chips) == 2
+    chips[0].click()
+    assert home.input_value("#ask-input") == "解除的赔偿怎么算？"
+
+
+def test_ask_answer_raw_fallback_kept(home):
+    """结构化解析失败：raw_text <pre> 兜底保留（坏了不许装正常）。"""
+    _stub_ask_flow(home, {}, raw_text="模型的原始输出（结构化失败）")
+    home.locator("#item-list .item.attention").first.click()
+    home.click("#detail-ask")
+    home.wait_for_selector("#screen-ask", state="visible")
+    home.fill("#ask-input", "为什么？")
+    home.click("#btn-ask")
+    home.wait_for_selector("#ask-answer pre", state="visible")
+    assert "原始输出" in home.inner_text("#ask-answer pre")

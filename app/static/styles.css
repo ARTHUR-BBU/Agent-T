@@ -162,11 +162,18 @@ textarea { resize: vertical; min-height: 88px; }
   margin-top: var(--space-1);
 }
 
+/* 阶段 2.3 IA 重排：图例去卡片化，缩成清单正上方一行（tag 色块保留=双通道） */
 .legend {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-1);
-  padding: var(--space-2);
+  margin: 0 0 var(--space-1);
+  padding: 0;
+}
+.legend-caption {
+  font: var(--type-caption);
+  color: var(--color-text-tertiary);
+  margin: 0 0 var(--space-1);
 }
 
 .tag {
@@ -209,7 +216,8 @@ textarea { resize: vertical; min-height: 88px; }
 
 .item {
   min-height: var(--row-height);
-  padding: 0 var(--space-2);
+  /* 阶段 2.3 两行结构（名称行+摘要行）：上下各留呼吸 */
+  padding: var(--space-1) var(--space-2);
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -433,16 +441,6 @@ mark.kw,
   border-top: 1px solid var(--color-divider);
   padding-top: var(--space-2);
 }
-.answer dl { margin: 0; }
-.answer dt {
-  font-weight: 600;
-  margin-top: var(--space-1);
-  color: var(--color-text-primary);
-}
-.answer dd {
-  margin: 4px 0 0;
-  color: var(--color-text-secondary);
-}
 
 .meta.card {
   font: var(--type-caption);
@@ -516,6 +514,10 @@ mark.kw,
   font: var(--type-caption);
   color: var(--color-text-secondary);
   margin-top: 2px;
+  /* 阶段 2.3 摘要行单行省略兜底（窄屏自动省略 = 批 3 移动端单断点接口） */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .item.blind-candidate {
   background: var(--color-blind-bg);
@@ -722,7 +724,10 @@ mark.kw,
   color: var(--color-text-secondary);
 }
 /* M4 报告导出：复用次级小按钮样式（阳仔：结果页不抢主视觉） */
-.report-actions {
+/* 阶段 2.3 IA 重排：导出按钮并入 meta 卡右下（原 #report-actions 独立块已删） */
+.meta-actions {
+  display: flex;
+  justify-content: flex-end;
   margin-top: var(--space-1);
 }
 .report-link {
@@ -855,3 +860,58 @@ mark.kw,
 }
 .quality-clause { color: var(--color-text-secondary); }
 .quality-confirm { color: var(--color-text-tertiary); }
+
+/* —— 阶段 2.3 IA 重排：评分卡沉底+默认折叠（原生 details 零 JS 零动画；
+   分数/档位永远灰字不套档位色；免责常驻收起态不能被折没） —— */
+.score-fold > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+.score-fold > summary::-webkit-details-marker { display: none; }
+.score-fold > summary .score-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-1);
+}
+.score-fold .score-fold-hint {
+  font: var(--type-caption);
+  color: var(--color-text-tertiary);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.score-fold .score-fold-hint .when-open { display: none; }
+.score-fold[open] .score-fold-hint .when-open { display: inline; }
+.score-fold[open] .score-fold-hint .when-closed { display: none; }
+.score-fold .score-disclaimer {
+  margin: 0 0 var(--space-1);
+}
+.score-fold .score-fold-body {
+  border-top: 1px solid var(--color-divider);
+  padding-top: var(--space-1);
+}
+
+/* —— 阶段 2.2 四段式：「还想问」建议 chips（点击回填输入框，caption 灰） —— */
+.ask-followups-wrap {
+  margin-bottom: var(--space-1);
+}
+.ask-followups-label {
+  font: var(--type-caption);
+  color: var(--color-text-tertiary);
+}
+.ask-followups {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  font: var(--type-caption);
+  color: var(--color-text-secondary);
+}
+.ask-followups li {
+  margin-top: 4px;
+  cursor: pointer;
+}
+.ask-followups li:hover {
+  text-decoration: underline;
+}

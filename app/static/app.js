@@ -309,7 +309,7 @@
     const nBlind = blinds.length;
     let metaExtra = `需关注 ${nAtt} 项 · 已通过 ${nPass} 项`;
     if (nBlind > 0) {
-      metaExtra += ` · 补盲候选 ${nBlind} 项`;
+      metaExtra += ` · 待核实 ${nBlind} 项`;
     }
     // 品类存疑非阻断提示（老钱金标：知情权不能省，打断权必须不给）
     const suspectBox = $("precheck-suspect");
@@ -333,7 +333,10 @@
     }
     // 立场声明（老钱裁决书：中性也声明——按哪个方向读必须摆在明面上）
     const stanceDecl = data.stance_declaration || "";
-    $("results-meta").innerHTML =
+    // 阶段 2.3 IA 重排：JS 只整写 #results-meta-main（导出按钮在静态兄弟
+    // #meta-actions 里，防 innerHTML 抹除）；#results-meta 外层仍含全部文本，
+    // e2e/读屏语义不变
+    $("results-meta-main").innerHTML =
       `<strong>${escapeHtml(data.filename || "")}</strong>` +
       ` · ${escapeHtml(data.category_label || data.category || "")}` +
       `<br/>${metaExtra}`;
@@ -344,20 +347,20 @@
       const clauseNote = document.createElement("span");
       clauseNote.className = "clause-count-note";
       clauseNote.textContent = ` · 已识别条款 ${nClauses} 段`;
-      $("results-meta").appendChild(clauseNote);
+      $("results-meta-main").appendChild(clauseNote);
     }
     // 阶段 1.3 立场声明行（服务端生成，含「核查口径不因立场而改变」语义）
     if (stanceDecl) {
       const decl = document.createElement("p");
       decl.className = "stance-declaration";
       decl.textContent = stanceDecl;
-      $("results-meta").appendChild(decl);
+      $("results-meta-main").appendChild(decl);
     }
 
     // M4：审查完成后开放报告导出（GET /api/review/{id}/report）
     if (data.id) {
       $("btn-export-report").href = `/api/review/${data.id}/report`;
-      $("report-actions").classList.remove("hidden");
+      $("meta-actions").classList.remove("hidden");
     }
     renderScorecard(data);
     const list = $("item-list");
@@ -399,7 +402,13 @@
    * 参谋不是裁判：不计分、不改档位；每条带原文引用+待人工确认。
    * 不可用（available=false）与旧记录（quality=null）同走静默隐藏。
    * 模型态字段一律 textContent，零 innerHTML 拼接（escapeHtml 之上再不给拼接机会）。 */
-  const QUALITY_DIM_LABEL = { completeness: "完整性", consistency: "一致性", impact: "影响" };
+  // 阶段 2.1 三维度人话化显示（九哥裁定 09-13）：枚举英文不变，只换显示文案，
+  // 与等待页副标题「有没有漏写、有没有自相矛盾、对您的影响」逐字呼应
+  const QUALITY_DIM_LABEL = {
+    completeness: "有没有漏写",
+    consistency: "有没有自相矛盾",
+    impact: "对您的影响",
+  };
 
   function renderQuality(data) {
     const panel = $("quality-panel");
@@ -489,7 +498,8 @@
         const note = document.createElement("span");
         note.className = "score-unavailable";
         note.textContent = " · 评分暂未开通（其余逐条结果不受影响）";
-        $("results-meta").appendChild(note);
+        // 阶段 2.3：跟随正文区（#results-meta-main），不落到导出按钮后面
+        $("results-meta-main").appendChild(note);
       }
       return;
     }
@@ -561,13 +571,13 @@
     if (!isBlind && item.status === "需关注") {
       const ruleBadge = document.createElement("span");
       ruleBadge.className = "source-badge rule";
-      ruleBadge.textContent = "规则";
+      ruleBadge.textContent = "系统核查";
       badges.appendChild(ruleBadge);
     }
     if (isBlind) {
       const blindBadge = document.createElement("span");
       blindBadge.className = "source-badge blind";
-      blindBadge.textContent = "补盲";
+      blindBadge.textContent = "待核实";
       badges.appendChild(blindBadge);
     }
 
@@ -583,6 +593,15 @@
         ? "候选，需人工确认 · 来自评分卡点名"
         : "候选，需人工确认";
       li.appendChild(cap);
+    } else {
+      // 阶段 2.3 IA 重排：每条露一句话摘要（note 首句，≤60 字；空则不渲染）
+      const summary = firstSentence(item.note || "");
+      if (summary) {
+        const cap = document.createElement("div");
+        cap.className = "item-caption";
+        cap.textContent = summary;
+        li.appendChild(cap);
+      }
     }
 
     const viewItem = { ...item, _blind: isBlind };
@@ -670,6 +689,8 @@
     $("ask-error").classList.add("hidden");
     $("ask-answer").classList.add("hidden");
     $("ask-answer").innerHTML = "";
+    // 阶段 2.2：换条目追问时清掉上一轮的「还想问」建议 chips
+    renderFollowups([]);
 
     const quoteBox = $("ask-quote");
     if (item.quote) {
@@ -738,26 +759,82 @@
     }
   }
 
+  /** 阶段 2.3 摘要行：取 note 第一句（。！？\n 切分），≤60 字；
+   * 空返回空串（调用方不渲染占位）。 */
+  function firstSentence(note) {
+    const text = String(note || "").trim();
+    if (!text) return "";
+    const m = text.match(/^[\s\S]*?[。！？\n]/);
+    const first = (m ? m[0] : text).trim();
+    if (!first) return "";
+    return first.length <= 60 ? first : first.slice(0, 60) + "…";
+  }
+
+  /** 阶段 2.2：「还想问」建议 chips（九哥裁定——不进答案正文，输入框上方
+   * 可点回填；建议变一步发起）。空列表整块隐藏。 */
+  function renderFollowups(questions) {
+    const wrap = $("ask-followups-wrap");
+    const ul = $("ask-followups");
+    ul.innerHTML = "";
+    const items = (questions || [])
+      .map((q) => String(q || "").trim())
+      .filter(Boolean)
+      .slice(0, 3);
+    if (!items.length) {
+      wrap.classList.add("hidden");
+      return;
+    }
+    items.forEach((q) => {
+      const li = document.createElement("li");
+      li.textContent = q;
+      li.addEventListener("click", () => {
+        const input = $("ask-input");
+        input.value = q;
+        input.focus();
+      });
+      ul.appendChild(li);
+    });
+    wrap.classList.remove("hidden");
+  }
+
+  /** 阶段 2.2 四段式（与质量层共用规范，呈现层映射——后端七键不动）：
+   * 段① 原文依据 ←「原文在哪」（caption 灰字一行，钉顶原文卡已承载摘句）
+   * 段② 实际影响 ←「问题是啥」（正文黑主权重；「这条在查啥」「风险等级」
+   *     不上 UI——后者是「不伪造风险等级」设计禁令的落地）
+   * 段③ 建议改法 ←「建议怎么改」+ 改写稿块（原样保留）
+   * 段④ 待确认的事 ← 当前键无内容源，缺段静默隐藏
+   * raw_text <pre> 兜底保留（结构化失败不装正常）。 */
   function renderAnswer(answer, raw) {
     const box = $("ask-answer");
-    const explain = [answer && answer["问题是啥"], answer && answer["这条在查啥"], answer && answer["风险等级"]]
-      .filter(Boolean)
-      .map(String)
-      .join("\n");
+    const where = (answer && answer["原文在哪"]) || "";
+    const impact = (answer && answer["问题是啥"]) || "";
     const rewrite = (answer && answer["建议怎么改"]) || "";
     const rewriteDraft = (answer && answer["改写稿"]) || "";
-    const extra = [answer && answer["原文在哪"], answer && answer["还想问"]].filter(Boolean).map(String).join("\n");
     let html = "";
-    html += `<p class="detail-label">人话解释</p>`;
-    if (explain) {
-      html += `<div class="detail-note">${escapeHtml(explain)}</div>`;
+
+    // 段① 原文依据（caption 灰字，不造第二个引块）
+    if (where) {
+      html += `<p class="detail-label">原文依据</p>`;
+      html += `<div class="detail-note muted">${escapeHtml(where)}</div>`;
+    }
+
+    // 段② 实际影响（主权重；raw 兜底挂这一段）
+    html += `<p class="detail-label">实际影响</p>`;
+    if (impact) {
+      html += `<div class="detail-note">${escapeHtml(impact)}</div>`;
     } else if (raw) {
       html += `<pre style="white-space:pre-wrap">${escapeHtml(raw)}</pre>`;
     } else {
       html += `<div class="detail-note muted">暂无</div>`;
     }
+
+    // 段③ 建议改法
     html += `<p class="detail-label">建议改法</p>`;
-    html += `<div class="detail-note">${escapeHtml(rewrite || "暂无")}</div>`;
+    if (rewrite) {
+      html += `<div class="detail-note">${escapeHtml(rewrite)}</div>`;
+    } else if (!rewriteDraft) {
+      html += `<div class="detail-note muted">暂无</div>`;
+    }
     if (rewriteDraft) {
       // M3.5 建议改写稿：可粘贴，但必须对照原文核对（阳仔交互 + 九哥文案）
       html += `<div class="rewrite-block">`;
@@ -770,15 +847,17 @@
       html += `<p class="rewrite-hint">复制前先对照原文核一遍（确认意思没跑偏）</p>`;
       html += `</div>`;
     }
-    if (extra) {
-      html += `<p class="detail-label">补充</p><div class="detail-note">${escapeHtml(extra)}</div>`;
-    }
+
     box.innerHTML = html;
 
     const copyBtn = $("btn-copy-rewrite");
     if (copyBtn) {
       copyBtn.addEventListener("click", () => copyRewrite(copyBtn, rewriteDraft));
     }
+
+    // 「还想问」→ 输入框上方 chips（换行切分，最多 3 条）
+    const followups = String((answer && answer["还想问"]) || "").split(/\n/);
+    renderFollowups(followups);
   }
 
   async function copyRewrite(btn, text) {
