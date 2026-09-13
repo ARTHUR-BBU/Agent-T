@@ -988,10 +988,12 @@
   }
 
   /** 阶段 2.4 hash 路由：#/review/{rid} → 结果页；#/review/{rid}/item/{key}
-   *  → 移动详情页。blind 条目 key 含冒号（blind:c07），hash 内合法不编码。 */
+   *  → 移动详情页。blind 条目 key 含冒号（blind:c07），清单 id 是
+   *  snake_case（early_termination）——itemId 字符集必须含下划线
+   *  （门禁 P1：漏下划线会让正则整体匹配失败，用户被踢回上传页）。 */
   function routeFromHash() {
     const m = (window.location.hash || "").match(
-      /^#\/review\/([A-Za-z0-9]+)(?:\/item\/([A-Za-z0-9:]+))?$/
+      /^#\/review\/([A-Za-z0-9]+)(?:\/item\/([A-Za-z0-9_:]+))?$/
     );
     return m ? { rid: m[1], itemId: m[2] || null } : { rid: null, itemId: null };
   }

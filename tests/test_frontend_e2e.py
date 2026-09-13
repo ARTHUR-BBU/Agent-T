@@ -557,6 +557,11 @@ def _quality_review_stub(quality):
             "id": "sublet", "name": "转租限制", "status": "需关注",
             "note": "疑似转租", "quote": "本房屋系出租方转租取得", "hits": ["转租"],
             "clause_ids": ["c04"], "primary_clause_id": "c04",
+        }, {
+            # 门禁 P1 回归素材：snake_case 清单 id（正则漏下划线时此条路由失败）
+            "id": "early_termination", "name": "提前解约", "status": "通过",
+            "note": "约定了提前解约的书面通知义务", "quote": "本合同一式两份",
+            "hits": [], "clause_ids": [], "primary_clause_id": None,
         }],
         "scorecard": {"available": False, "reason": "no_llm_key"},
         "blind_enabled": False,
@@ -981,3 +986,51 @@ def test_precheck_keep_button_has_secondary_style(home):
     keep = home.locator("#btn-precheck-keep")
     assert "secondary" in (keep.get_attribute("class") or "")
     assert keep.bounding_box()["height"] >= 40
+
+
+def test_mobile_underscore_id_item_route(mobile_home):
+    """门禁 P1 回归：snake_case 条目 id（early_termination 等）与
+    blind:governing_law 形态的 key 在路由里必须完整匹配——正则漏下划线
+    会让整体匹配失败，用户被踢回上传页。"""
+    stub = _quality_review_stub(None)
+    stub["blind_enabled"] = True
+    stub["blind_candidates"] = [{
+        "id": "governing_law", "name": "管辖法律", "status": "需关注",
+        "note": "候选说明", "quote": "本合同一式两份", "hits": [],
+        "tag_source": "blind", "needs_confirm": True,
+    }]
+    import json as _json
+
+    mobile_home.route(
+        "**/api/upload",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}),
+        ),
+    )
+    mobile_home.route(
+        "**/api/review/e2eq00001",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps(stub, ensure_ascii=False),
+        ),
+    )
+    mobile_home.set_input_files("#file", str(FIXTURE))
+    mobile_home.click("#btn-upload")
+    mobile_home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    # ① blind:下划线 key
+    mobile_home.evaluate(
+        "document.querySelector('#item-list .item.blind-candidate').click()"
+    )
+    mobile_home.wait_for_selector("#screen-ask", state="visible")
+    assert "blind:governing_law" in mobile_home.evaluate("window.location.hash")
+    # ② Back 回清单，再直达 snake_case 真实清单 id
+    mobile_home.go_back()
+    mobile_home.wait_for_selector("#screen-results", state="visible")
+    mobile_home.evaluate(
+        "window.location.hash = window.location.hash + '/item/early_termination'"
+    )
+    mobile_home.wait_for_selector("#screen-ask", state="visible")
+    assert "/item/early_termination" in mobile_home.evaluate("window.location.hash")
+    assert mobile_home.inner_text("#ask-title").strip() != ""
+    assert not mobile_home.is_visible("#screen-upload"), "不得被踢回上传页"
