@@ -160,22 +160,30 @@
       </div>
     </section>
 
-    <!-- Screen 3: Ask -->
+    <!-- Screen 3: 详情/追问（阶段 2.4 升级：移动端点条目 hash 直达本屏=独立
+         详情页；桌面仍走 行内面板→问清楚一点 进来，路径不变。阅读顺序按
+         roadmap 裁决：说明→原文→(答案)→追问输入） -->
     <section id="screen-ask" class="screen hidden">
       <header class="top">
         <button type="button" class="link" id="btn-back-results">← 返回结果</button>
-        <h1>问清楚一点</h1>
-        <p class="sub">对「需关注」点开，用人话解释或给改法</p>
-        <p class="sub" id="ask-subtitle"></p>
+        <h1 id="ask-title">问清楚一点</h1>
+        <p class="sub">用人话解释或给改法（答案仅供参考）</p>
+        <p class="ask-status-line" id="ask-status-line"></p>
       </header>
-      <!-- Fixed top trust card -->
+      <!-- 段1 说明卡：note 全文 + 条款锚点（摘要的首句截断是清单的事，这里给全文） -->
+      <div class="card" id="ask-note-card">
+        <p class="detail-label">说明</p>
+        <p id="ask-context" class="ask-context"></p>
+        <p id="ask-clause" class="detail-clause hidden"></p>
+      </div>
+      <!-- 段2 原文卡（钉顶=页头下第一个内容位之后，不做 sticky） -->
       <div class="card quote-card" id="ask-quote-card">
         <p class="quote-title">原文</p>
         <div id="ask-quote" class="quote-body"></div>
       </div>
-      <div class="card">
+      <!-- 段3/4 追问输入卡：480px 内答案（order:-1）提到输入之上 -->
+      <div class="card ask-interact">
         <p id="ask-unavailable" class="muted hidden">追问暂未开通</p>
-        <div id="ask-context" class="ask-context"></div>
         <!-- 阶段 2.2 四段式：「还想问」建议不进答案正文，做成输入框上方
              可点 chips（点击回填输入框，九哥裁定） -->
         <div id="ask-followups-wrap" class="ask-followups-wrap hidden">
@@ -199,7 +207,7 @@
     <p id="precheck-question" class="detail-note"></p>
     <div class="precheck-actions">
       <button id="btn-precheck-switch" class="primary" type="button"></button>
-      <button id="btn-precheck-keep" type="button">按原类型继续</button>
+      <button id="btn-precheck-keep" class="secondary" type="button">按原类型继续</button>
     </div>
   </dialog>
   <script src="/static/app.js"></script>

@@ -72,3 +72,15 @@ styles.css 仍存在 6 值 8 处硬编码（#1B7A3D、#9A6700×2、#FAFAFA×2 �
 - 规则「需关注」：琥珀左边条 `--color-attention-bar` + 实心徽章「规则」
 - 补盲候选：薰衣草左边条 `--color-blind` + 描边徽章「补盲」+ 灰字说明「候选，需人工确认」；行底 `--color-blind-bg`
 - 开关关闭（`BLIND_SPOT_ENABLED` 非真）：不出现补盲样式与文案
+
+## 移动端（阶段 2.4，2026-09-13）
+
+- **断点**：`@media (max-width: 480px)` 单断点，值直接内联（单断点无复用场景，
+  不立 token；未来出现第二断点再收编）。覆盖 iPhone 全系（Pro Max 430）与
+  主流安卓（360–430）；481–720 平板竖屏沿用 720 单列。
+- **触控目标**：44px 标准，引用既有 `--btn-height`；文字链接（.link）、chips、
+  segmented、折叠 summary 在 480 内提至 44。
+- **滚动恢复**：`history.scrollRestoration = "manual"`（JS 接管——原生
+  same-document 恢复晚于 hashchange 处理器，会覆盖 Back 回清单的精确恢复）。
+- **路由**：`#/review/{rid}/item/{itemId}`（移动详情页）；桌面 hash 无 item 段。
+- **明确不做**：转场动画（零动画红线）、缩字号、新断点变量。

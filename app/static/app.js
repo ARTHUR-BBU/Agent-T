@@ -4,6 +4,7 @@
     review: null,
     askItem: null,
     selectedItemId: null,
+    resultsScrollY: 0,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -636,6 +637,12 @@
   }
 
   function selectItem(item) {
+    // 阶段 2.4：移动端点条目 = 独立详情页（hash 路由）；桌面保持行内面板，
+    // 路径与 DOM 逐字节不变
+    if (mqMobile.matches) {
+      navigateItem(item);
+      return;
+    }
     const selKey = item._blind ? `blind:${item.id}` : item.id;
     state.selectedItemId = selKey;
     document.querySelectorAll(".item").forEach((el) => {
@@ -671,7 +678,7 @@
     // Blind candidates need human confirm; do not offer rule-style ask as if stamped
     if (item.status === "需关注" && !item._blind) {
       actions.classList.remove("hidden");
-      $("detail-ask").onclick = () => openAsk(item);
+      $("detail-ask").onclick = () => openAskDetail(item);
     } else {
       actions.classList.add("hidden");
       $("detail-ask").onclick = null;
@@ -681,17 +688,59 @@
     detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
-  function openAsk(item) {
-    state.askItem = item;
-    $("ask-subtitle").textContent = `${item.name} · 需关注`;
-    $("ask-context").textContent = item.note || "";
-    $("ask-input").value = "";
-    $("ask-error").classList.add("hidden");
-    $("ask-answer").classList.add("hidden");
-    $("ask-answer").innerHTML = "";
-    // 阶段 2.2：换条目追问时清掉上一轮的「还想问」建议 chips
-    renderFollowups([]);
+  /** 阶段 2.4：移动端点条目 = 独立详情页。hash 是唯一事实源——写 hash 后由
+   * hashchange 统一驱动视图（Back 手势/返回键免费获得）；同 hash 重复点击
+   * 不触发事件（已在页上，符合直觉）。 */
+  function navigateItem(item) {
+    state.resultsScrollY = window.scrollY;
+    const key = item._blind ? "blind:" + item.id : item.id;
+    try {
+      window.location.hash = "#/review/" + state.reviewId + "/item/" + key;
+    } catch (e) {
+      openAskDetail(item); // 隐私模式等 hash 不可写场景：直接渲染不路由
+    }
+  }
 
+  /** 阶段 2.4 详情/追问屏（#screen-ask 升级兼任，桌面桌面入口与移动 hash
+   * 直达共用）。阅读顺序=说明→原文→(答案)→追问输入（roadmap 裁决 1/2）。
+   * 三类条目分流追问卡（阳仔 3.3）：仅「需关注且非待核实」出追问卡——
+   * 待核实渲染成「追问暂未开通」是把「待人工确认」误读成「未开通」。 */
+  function openAskDetail(item) {
+    state.askItem = item;
+    const selKey = item._blind ? "blind:" + item.id : item.id;
+    state.selectedItemId = selKey;
+    document.querySelectorAll(".item").forEach((el) => {
+      el.classList.toggle("selected", el.dataset.itemId === selKey);
+    });
+
+    // 页头：条目名 + 档位/来源双通道（tag 文字+底色；徽章描边）
+    $("ask-title").textContent = item.name || "问清楚一点";
+    const statusLine = $("ask-status-line");
+    statusLine.innerHTML = "";
+    const tag = document.createElement("span");
+    tag.className = `tag ${statusClass(item.status)}`;
+    tag.textContent = statusLabel(item.status);
+    statusLine.appendChild(tag);
+    if (item.status === "需关注") {
+      const badge = document.createElement("span");
+      badge.className = item._blind ? "source-badge blind" : "source-badge rule";
+      badge.textContent = item._blind ? "待核实" : "系统核查";
+      statusLine.appendChild(badge);
+    }
+
+    // 段1 说明卡：note 全文 + 条款锚点（首句截断是清单的事，这里给全文）
+    $("ask-context").textContent = item.note || "（无说明）";
+    const clauseInfo = clauseHeadingFor(item);
+    const clauseEl = $("ask-clause");
+    if (clauseInfo) {
+      clauseEl.textContent = `所在条款：${clauseInfo}`;
+      clauseEl.classList.remove("hidden");
+    } else {
+      clauseEl.textContent = "";
+      clauseEl.classList.add("hidden");
+    }
+
+    // 段2 原文卡（高亮复用，无 quote 走 .empty 退化）
     const quoteBox = $("ask-quote");
     if (item.quote) {
       quoteBox.classList.remove("empty");
@@ -701,22 +750,37 @@
       quoteBox.textContent = "暂无原文摘句";
     }
 
+    // 段3/4 追问卡显隐分流 + 可用性门禁（现状逻辑收编）
+    const askable = item.status === "需关注" && !item._blind;
+    const interactCard = $("screen-ask").querySelector(".ask-interact");
     const available = !!(state.review && state.review.ask_available);
     const banner = $("ask-unavailable");
     const btn = $("btn-ask");
     const input = $("ask-input");
-    if (available) {
-      banner.classList.add("hidden");
-      btn.disabled = false;
-      input.disabled = false;
+    if (!askable) {
+      interactCard.classList.add("hidden");
     } else {
-      banner.classList.remove("hidden");
-      banner.textContent = "追问暂未开通";
-      btn.disabled = true;
-      input.disabled = true;
+      interactCard.classList.remove("hidden");
+      $("ask-input").value = "";
+      $("ask-error").classList.add("hidden");
+      $("ask-answer").classList.add("hidden");
+      $("ask-answer").innerHTML = "";
+      // 阶段 2.2：换条目追问时清掉上一轮的「还想问」建议 chips
+      renderFollowups([]);
+      if (available) {
+        banner.classList.add("hidden");
+        btn.disabled = false;
+        input.disabled = false;
+      } else {
+        banner.classList.remove("hidden");
+        banner.textContent = "追问暂未开通";
+        btn.disabled = true;
+        input.disabled = true;
+      }
     }
 
     show("ask");
+    window.scrollTo(0, 0);
   }
 
   async function sendAsk() {
@@ -753,6 +817,11 @@
       }
       renderAnswer(data.answer || {}, data.raw_text);
       ans.classList.remove("hidden");
+      // 阶段 2.4：移动详情页答案在输入之上，发问成功后滚到答案（即时滚动，
+      // 长文里 smooth 反而晕；桌面答案在输入下方，保持原行为不跳）
+      if (mqMobile.matches) {
+        ans.scrollIntoView({ block: "start" });
+      }
     } catch (e) {
       err.textContent = e.message || String(e);
       err.classList.remove("hidden");
@@ -915,8 +984,37 @@
   }
 
   function reviewIdFromHash() {
-    const m = (window.location.hash || "").match(/^#\/review\/([A-Za-z0-9]+)/);
-    return m ? m[1] : null;
+    return routeFromHash().rid;
+  }
+
+  /** 阶段 2.4 hash 路由：#/review/{rid} → 结果页；#/review/{rid}/item/{key}
+   *  → 移动详情页。blind 条目 key 含冒号（blind:c07），hash 内合法不编码。 */
+  function routeFromHash() {
+    const m = (window.location.hash || "").match(
+      /^#\/review\/([A-Za-z0-9]+)(?:\/item\/([A-Za-z0-9:]+))?$/
+    );
+    return m ? { rid: m[1], itemId: m[2] || null } : { rid: null, itemId: null };
+  }
+
+  const mqMobile = window.matchMedia("(max-width: 480px)");
+
+  // 阶段 2.4：滚动恢复由 JS 接管——浏览器原生 same-document 滚动恢复晚于
+  // hashchange 处理器执行，会把 Back 回清单的精确恢复覆盖掉
+  if ("scrollRestoration" in history) {
+    history.scrollRestoration = "manual";
+  }
+
+  /** 按 key（id 或 blind:{id}）在已渲染的审查数据里找条目（含 _blind 标记）。 */
+  function findItemByKey(key) {
+    const review = state.review;
+    if (!review) return null;
+    if (key.startsWith("blind:")) {
+      const id = key.slice(6);
+      const hit = (review.blind_candidates || []).find((c) => c.id === id);
+      return hit ? { ...hit, _blind: true } : null;
+    }
+    const hit = (review.items || []).find((c) => c.id === key);
+    return hit ? { ...hit, _blind: false } : null;
   }
 
   async function resumeFromHash() {
@@ -931,21 +1029,62 @@
     $("results-error").classList.add("hidden");
     $("item-detail").classList.add("hidden");
     await pollReview();
+    // 阶段 2.4：直达链接带 item 段（#/review/{rid}/item/{key}）→ 渲染后回选
+    const route = routeFromHash();
+    if (route.itemId && state.reviewId === route.rid) {
+      const item = findItemByKey(route.itemId);
+      if (item) openAskDetail(item);
+    }
   }
 
   // 浏览器 Back/Forward 与界面同步（小智娘门禁 P2-4：hash 已退界面还在，
-  // 此时刷新会让「刷新丢结果」事故从 Back 路径复发）
+  // 此时刷新会让「刷新丢结果」事故从 Back 路径复发）。
+  // 阶段 2.4：同 rid 内 item 段变化走本地详情页切换，不重新轮询。
   window.addEventListener("hashchange", () => {
-    const rid = reviewIdFromHash();
-    if (rid === state.reviewId) return;
-    if (rid) {
-      resumeFromHash();
+    const route = routeFromHash();
+    if (route.rid !== state.reviewId) {
+      if (route.rid) {
+        resumeFromHash();
+      } else {
+        state.reviewId = null;
+        state.selectedItemId = null;
+        hidePrecheckConfirm();
+        show("upload");
+      }
+      return;
+    }
+    if (route.itemId) {
+      const item = findItemByKey(route.itemId);
+      if (item) {
+        openAskDetail(item);
+      } else {
+        show("results"); // 找不到条目（旧记录/数据不齐）：回结果页不装详情
+      }
     } else {
-      state.reviewId = null;
-      hidePrecheckConfirm();
-      show("upload");
+      show("results");
+      window.scrollTo(0, state.resultsScrollY || 0);
     }
   });
+
+  // 断点穿越（旋转/拉伸窗口）：以当前 hash 重新推导视图，不产生分裂状态
+  const onBreakpointChange = () => {
+    const route = routeFromHash();
+    if (route.rid !== state.reviewId) return;
+    if (route.itemId) {
+      if (mqMobile.matches) {
+        const item = findItemByKey(route.itemId);
+        if (item) openAskDetail(item);
+      } else {
+        // 移动详情 → 桌面：回结果页行内面板（桌面没有独立详情页）
+        const item = findItemByKey(route.itemId);
+        show("results");
+        if (item) selectItem(item);
+      }
+    }
+  };
+  if (typeof mqMobile.addEventListener === "function") {
+    mqMobile.addEventListener("change", onBreakpointChange);
+  }
 
   $("btn-upload").addEventListener("click", () => upload());
   $("btn-precheck-switch").addEventListener("click", () => {
@@ -971,7 +1110,19 @@
     state.reviewId = null;
     show("upload");
   });
-  $("btn-back-results").addEventListener("click", () => show("results"));
+  $("btn-back-results").addEventListener("click", () => {
+    // 阶段 2.4：详情页上返回 = 退 hash（Back 语义一致，滚动自动恢复）；
+    // 无 item 段（桌面入口）维持原行为
+    if (routeFromHash().itemId) {
+      try {
+        window.location.hash = "#/review/" + state.reviewId;
+      } catch (e) {
+        show("results");
+      }
+    } else {
+      show("results");
+    }
+  });
 
   // ===== 阶段 1.3 立场 segmented（阳仔线框①）=====
   // 数据源：/api/categories 的 stances 元数据（YAML 单一来源）；
