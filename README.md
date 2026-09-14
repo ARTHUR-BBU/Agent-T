@@ -1,6 +1,10 @@
+<!-- README maintenance: keep README.md and README_EN.md aligned on capabilities, limitations, setup, data handling, and roadmap status. -->
+
 <div align="center">
 
 # Agent-T
+
+**简体中文** · [English](README_EN.md)
 
 ### 签合同前，把该问的问题问清楚。
 
@@ -125,7 +129,7 @@ AI 功能需要配置模型服务。当前 Word 报告不包含页面中的 AI �
 
 选择立场会记录审查视角，当前规则核查口径不随立场改变。采购卖方与租赁出租方视角暂不支持。
 
-文件支持文本、Word（`.docx`）与文字版 PDF；PDF 需安装解析依赖。旧版 `.doc` 与扫描件取决于解析环境，建议先转换为 `.docx` 或可复制文字的 PDF。单份文件上限 **10 MB**，一次审查一份合同。
+当前界面、规则包与样例主要面向中文合同。文件支持文本、Word（`.docx`）与文字版 PDF；PDF 需安装解析依赖。旧版 `.doc` 与扫描件取决于解析环境，建议先转换为 `.docx` 或可复制文字的 PDF。单份文件上限 **10 MB**，一次审查一份合同。
 
 ## 从审一份合同，到看懂一个项目
 
