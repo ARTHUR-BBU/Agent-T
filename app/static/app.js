@@ -443,7 +443,7 @@
     disclaimer.className = "quality-disclaimer";
     let disc = (q && q.disclaimer) || "AI 观察仅供参考，需人工确认。";
     if (q && q.coverage && q.coverage.limited) {
-      disc += "（长合同超出分段阅读预算，观察为有限覆盖）";
+      disc += "（合同较长，本次只读到部分内容，结论供参考）";
     }
     disclaimer.textContent = disc;
     head.appendChild(disclaimer);
@@ -526,7 +526,7 @@
     $("score-disclaimer").textContent =
       (sc.disclaimer || "模型评分仅供参考，以逐条规则结论为准") +
       ((sc.coverage && sc.coverage.limited)
-        ? "（长合同超出分段阅读预算，模型参考层为有限覆盖；规则扫描仍为全文）"
+        ? "（合同较长，本次只读到部分内容，结论供参考；规则扫描仍为全文）"
         : "");
     const capsEl = $("score-caps");
     const caps = sc.caps_applied || [];

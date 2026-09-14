@@ -260,6 +260,43 @@ def map_items_to_clauses(
                 pass
 
 
+
+
+def locate_quote_clauses(
+    text: str,
+    quote: str,
+    clause_index: dict[str, Any] | None,
+) -> list[str]:
+    """Server-side quote→clause 定位（质量层 F06）。
+
+    不信任模型给的 clause_id：在原文中找摘句，再映射到条款桶。
+    - 0 个命中 → []（未定位）
+    - 1 个条款 → [cid]
+    - 多个条款 → 多 id（调用方标 ambiguous）
+    """
+    clauses = (clause_index or {}).get("clauses") or []
+    if not text or not quote or not clauses:
+        return []
+    bare = (quote or "").strip().strip("「」\"'“”『』")
+    if not bare:
+        return []
+    positions = _find_all(text, bare)
+    if not positions:
+        positions = _find_compressed(text, _normalized_quote(bare))
+    if not positions:
+        return []
+    starts = [int(c.get("start") or 0) for c in clauses]
+    found: list[str] = []
+    seen: set[str] = set()
+    for pos in positions:
+        idx = _bucket_for(pos, starts)
+        if 0 <= idx < len(clauses):
+            cid = str(clauses[idx].get("id") or "")
+            if cid and cid not in seen:
+                seen.add(cid)
+                found.append(cid)
+    return found
+
 def _locate_item(
     item: dict[str, Any], clauses: list[dict[str, Any]], starts: list[int], text: str
 ) -> list[str]:

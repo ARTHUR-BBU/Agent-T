@@ -14,7 +14,7 @@
 1. quote 全文校验（blind_spot.quote_supported）：不在原文里 → 硬丢弃；
 2. 双禁语表清洗（scorecard.scrub_forbidden + llm_ask._scrub_banned_echo），
    清洗后为空 → 丢条；
-3. clause_id 白名单：编造编号归一 None；
+3. clause_id 由服务端按 quote 原文定位派生（不信任模型编号；多命中标 ambiguous）；
 4. 封顶 12 条、每维度 ≤6；needs_confirm 不在模型输出 schema 里，代码强制 True。
 
 失败一律软降级（QualityInfo.available=False + reason 码），绝不阻断规则引擎。
@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 
 from app.prompts import quality as quality_prompts
 from app.services import blind_spot, llm_ask, scorecard
+from app.services.clause_index import locate_quote_clauses
 from app.services.scorecard_prompts import (
     _rule_block,
     build_review_plan,
@@ -67,6 +68,7 @@ class QualityObservation(BaseModel):
     title: str = ""
     quote: str = ""
     clause_id: Optional[str] = None
+    clause_ambiguous: bool = False  # quote 跨多条款时 True，clause_id 置空
     comment: str = ""
     needs_confirm: bool = True  # 代码硬编码；模型输出 schema 里没有此字段
 
@@ -360,15 +362,11 @@ def _clean_observations(
     text: str,
     clause_index: Optional[dict[str, Any]],
 ) -> tuple[list[QualityObservation], int]:
-    """清洗链：白名单→限长→clause_id 归一→quote 全文校验→双禁语→needs_confirm。
+    """清洗链：维度白名单→限长→quote 全文校验→服务端派生 clause_id→双禁语→needs_confirm。
 
     返回 (合法观察, quote 校验丢弃数)。
+    F06：即使模型 clause_id 在白名单内，也以原文定位为准；错号不保留。
     """
-    valid_ids = {
-        str(c.get("id"))
-        for c in ((clause_index or {}).get("clauses") or [])
-        if c.get("id")
-    }
     out: list[QualityObservation] = []
     dropped = 0
     for row in parsed:
@@ -390,14 +388,23 @@ def _clean_observations(
             continue
         if not comment or "【已过滤】" in comment:
             continue
-        cid = str(row.get("clause_id") or "").strip()
-        clause_id = cid if cid in valid_ids else None
+        # F06：服务端按摘句定位条款，不信任模型 clause_id（即便在白名单内）
+        derived = locate_quote_clauses(text, quote, clause_index)
+        clause_ambiguous = False
+        if len(derived) == 1:
+            clause_id: Optional[str] = derived[0]
+        elif len(derived) > 1:
+            clause_id = None
+            clause_ambiguous = True
+        else:
+            clause_id = None
         out.append(
             QualityObservation(
                 dimension=dimension,
                 title=title,
                 quote=quote[: blind_spot.MAX_QUOTE_CHARS],
                 clause_id=clause_id,
+                clause_ambiguous=clause_ambiguous,
                 comment=comment,
                 needs_confirm=True,  # 代码强制；模型无权声明免确认
             )
