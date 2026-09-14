@@ -128,6 +128,40 @@ def test_quality_run_passes_stance_into_chat(monkeypatch):
 def test_ui_stance_hint_does_not_imply_personalized_rules():
     """上传页提示不得暗示「已按立场个性化改规则」。"""
     js = (ROOT / "app" / "static" / "app.js").read_text(encoding="utf-8")
-    assert "规则清单不变" in js or "规则核查照旧" in js
-    assert "已按立场个性化" not in js
-    assert "仅 AI 解释会点明谁受益" in js
+    html = (ROOT / "app" / "static" / "index.html").read_text(encoding="utf-8")
+    css = (ROOT / "app" / "static" / "styles.css").read_text(encoding="utf-8")
+    iron = "立场只影响解释，不改变清单通过/需关注等规则档"
+    assert iron in js and iron in html
+    assert "谁受益、谁担责" in js and "谁受益、谁担责" in html
+    assert "审查立场 · " in js
+    assert "stance-capsule" in html and "stance-capsule" in css
+    assert "规则核查照旧" in js
+    # 用户可见串（去掉 // 注释行后再扫禁语）
+    js_nocomment = "\n".join(
+        ln for ln in js.splitlines() if not ln.lstrip().startswith("//")
+    )
+    for banned in (
+        "已按立场个性化",
+        "已按立场改规则",
+        "按立场已改为",
+        "立场判定本条通过",
+    ):
+        assert banned not in js_nocomment
+        assert banned not in html
+    # 视觉：胶囊用既有 divider/secondary，不新开蓝/琥珀/紫给立场
+    assert "stance-capsule" in css
+    assert "#0071E3" not in css.split(".stance-capsule")[1].split("}")[0]
+    assert "var(--color-divider)" in css.split(".stance-capsule")[1].split("}")[0]
+    assert "var(--color-text-secondary)" in css.split(".stance-capsule")[1].split("}")[0]
+
+
+def test_ui_iron_law_string_always_present():
+    """A4 铁律旁注定稿句必须出现在静态资源（结果页/上传页常驻）。"""
+    iron = "立场只影响解释，不改变清单通过/需关注等规则档"
+    js = (ROOT / "app" / "static" / "app.js").read_text(encoding="utf-8")
+    html = (ROOT / "app" / "static" / "index.html").read_text(encoding="utf-8")
+    assert "STANCE_IRON_LAW" in js
+    assert iron == "立场只影响解释，不改变清单通过/需关注等规则档"
+    assert html.count(iron) >= 2  # 上传 + 结果（追问页由 JS 填也可）
+    assert 'id="stance-iron"' in html
+    assert 'id="stance-iron-upload"' in html
