@@ -174,6 +174,47 @@ def _scrub_answer_dict(answer: dict[str, Any] | None) -> dict[str, Any] | None:
 
 
 
+UNVERIFIED_QUOTE_MSG = "未定位到原文"
+
+
+def _strip_quote_decorations(quote: str) -> str:
+    return (quote or "").strip().strip("「」\"'“”『』")
+
+
+def _verify_ask_answer(
+    answer: dict[str, Any] | None,
+    contract_text: str,
+    clause_context: str = "",
+) -> dict[str, Any] | None:
+    """追问原文必须能在合同/条款上下文中核验；伪造摘录不得当已核实来源。
+
+    复用 blind_spot.quote_supported（与质量层/补盲同一道闸）。
+    """
+    if not answer:
+        return answer
+    from app.services.blind_spot import quote_supported
+
+    out = dict(answer)
+    raw_quote = str(out.get("原文在哪") or "")
+    bare = _strip_quote_decorations(raw_quote)
+    if (clause_context or "").strip():
+        verified = bool(bare) and quote_supported(clause_context, bare)
+    else:
+        verified = bool(bare) and quote_supported(contract_text or "", bare)
+    out["quote_verified"] = verified
+    if not verified:
+        out["原文在哪"] = UNVERIFIED_QUOTE_MSG if not bare else UNVERIFIED_QUOTE_MSG
+        # 未核实原文时，改写稿不得再被呈现为「改写自已核实摘句」
+        if out.get("改写稿"):
+            out["改写稿"] = ""
+            hint = str(out.get("建议怎么改") or "").strip()
+            if hint and "未定位到原文" not in hint:
+                out["建议怎么改"] = hint + "（原文摘句未核验，改写稿已隐藏）"
+            elif not hint:
+                out["建议怎么改"] = "原文摘句未核验，请结合合同全文自行核对后再改。"
+    return out
+
+
 def ask_about_item(
     *,
     question: str,
@@ -234,10 +275,12 @@ def ask_about_item(
         parsed["风险等级"] = parsed.get("风险等级") or "中"
         parsed["问题是啥"] = "该条已标为需关注，不能视为安全通过，请结合原文复核。"
     parsed = _scrub_answer_dict(parsed)
+    parsed = _verify_ask_answer(parsed, contract_text, clause_context=clause_context)
     return {
         "ok": True,
         "answer": parsed,
         "raw_text": _scrub_banned_echo(raw or ""),
+        "quote_verified": bool((parsed or {}).get("quote_verified")),
     }
 
 

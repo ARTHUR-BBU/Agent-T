@@ -31,7 +31,11 @@ from pydantic import BaseModel, Field
 
 from app.prompts import quality as quality_prompts
 from app.services import blind_spot, llm_ask, scorecard
-from app.services.scorecard_prompts import _rule_block, build_review_chunks
+from app.services.scorecard_prompts import (
+    _rule_block,
+    build_review_plan,
+    coverage_from_plan,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -158,12 +162,13 @@ def run_quality(
     coverage: Optional[dict[str, Any]] = None
 
     if segmented:
-        chunks = build_review_chunks(text, clause_index, max_segments=_max_segments())
+        chunks, plan_meta = build_review_plan(text, clause_index, max_segments=_max_segments())
         if not chunks:
             return outcome_unavailable("error")
         system = quality_prompts.build_system_prompt(policies)
         chunks_total = len(chunks)
         chunks_ok = 0
+        stop_reason = None
         for part_no, chunk in enumerate(chunks, start=1):
             if budget is not None:
                 remaining = budget.remaining()
@@ -173,8 +178,10 @@ def run_quality(
                         part_no - 1,
                         chunks_total,
                     )
+                    stop_reason = "budget_exhausted"
                     break
                 if not budget.try_consume():
+                    stop_reason = "budget_exhausted"
                     break
             user = quality_prompts.build_user_prompt(chunk, items, clause_index)
             try:
@@ -190,11 +197,9 @@ def run_quality(
             obs, dropped_n = _clean_observations(parsed, text, clause_index)
             observations.extend(obs)
             dropped += dropped_n
-        coverage = {
-            "chunks_total": chunks_total,
-            "chunks_reviewed": chunks_ok,
-            "limited": chunks_ok < chunks_total,
-        }
+        coverage = coverage_from_plan(
+            plan_meta, chunks_reviewed=chunks_ok, reason=stop_reason
+        )
         if chunks_ok == 0:
             # 长合同 map 全败：软降级（不回退全文单调用——超长正是要防的延迟面）
             logger.warning("Quality map produced nothing (all chunks failed)")

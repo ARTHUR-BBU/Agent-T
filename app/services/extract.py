@@ -114,20 +114,55 @@ def _try_docling(filename: str, raw: bytes) -> str | None:
         return None
 
 
+def _iter_docx_blocks(doc):
+    """按 document body 文档顺序产出段落与表格（交错），避免「先全部段落再全部表格」。"""
+    from docx.oxml.ns import qn  # type: ignore
+    from docx.table import Table  # type: ignore
+    from docx.text.paragraph import Paragraph  # type: ignore
+
+    body = doc.element.body
+    for child in body.iterchildren():
+        if child.tag == qn("w:p"):
+            yield Paragraph(child, doc)
+        elif child.tag == qn("w:tbl"):
+            yield Table(child, doc)
+
+
+def _table_text_parts(table) -> list[str]:
+    parts: list[str] = []
+    for row in table.rows:
+        cells = []
+        for cell in row.cells:
+            t = cell.text.strip()
+            if t:
+                cells.append(t)
+        if cells:
+            # 同行单元格用制表符连接，保留表内列关系
+            parts.append("\t".join(cells))
+    return parts
+
+
 def _try_python_docx(raw: bytes) -> str | None:
-    """docx 文本提取：段落 + 表格（外部审计 P0：正文写在表格里的合同此前会解析为空）。"""
+    """docx 文本提取：按文档顺序交错段落与表格（可信度 P1 F05）。
+
+    旧实现先扫完全部段落再扫全部表格，会把夹在条款中间的付款表甩到文末，
+    导致条款归属错位。
+    """
     try:
         import io
         from docx import Document  # type: ignore
+        from docx.table import Table  # type: ignore
+        from docx.text.paragraph import Paragraph  # type: ignore
 
         doc = Document(io.BytesIO(raw))
-        parts = [p.text for p in doc.paragraphs if p.text.strip()]
-        for table in doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    t = cell.text.strip()
-                    if t:
-                        parts.append(t)
+        parts: list[str] = []
+        for block in _iter_docx_blocks(doc):
+            if isinstance(block, Paragraph):
+                t = block.text.strip()
+                if t:
+                    parts.append(t)
+            elif isinstance(block, Table):
+                parts.extend(_table_text_parts(block))
         return "\n".join(parts) if parts else None
     except Exception as exc:  # noqa: BLE001
         logger.info("python-docx unavailable or failed: %s", exc)

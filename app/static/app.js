@@ -5,7 +5,17 @@
     askItem: null,
     selectedItemId: null,
     resultsScrollY: 0,
+    askReqSeq: 0,
   };
+
+  /** 追问竞态守卫（可信度 P1 F04）：仅当仍是同一审查/条目且为本轮最新请求时应用结果。 */
+  function isAskResponseCurrent(snapshot) {
+    if (!snapshot) return false;
+    if (state.reviewId !== snapshot.reviewId) return false;
+    if (!state.askItem || state.askItem.id !== snapshot.itemId) return false;
+    if (state.askReqSeq !== snapshot.reqId) return false;
+    return true;
+  }
 
   const $ = (id) => document.getElementById(id);
   const screens = {
@@ -431,7 +441,11 @@
     head.appendChild(badge);
     const disclaimer = document.createElement("span");
     disclaimer.className = "quality-disclaimer";
-    disclaimer.textContent = (q && q.disclaimer) || "AI 观察仅供参考，需人工确认。";
+    let disc = (q && q.disclaimer) || "AI 观察仅供参考，需人工确认。";
+    if (q && q.coverage && q.coverage.limited) {
+      disc += "（长合同超出分段阅读预算，观察为有限覆盖）";
+    }
+    disclaimer.textContent = disc;
     head.appendChild(disclaimer);
     panel.appendChild(head);
 
@@ -706,6 +720,10 @@
    * 三类条目分流追问卡（阳仔 3.3）：仅「需关注且非待核实」出追问卡——
    * 待核实渲染成「追问暂未开通」是把「待人工确认」误读成「未开通」。 */
   function openAskDetail(item) {
+    // 切换条目即作废进行中的追问响应（可信度 P1 F04）
+    if (!state.askItem || state.askItem.id !== item.id) {
+      state.askReqSeq += 1;
+    }
     state.askItem = item;
     const selKey = item._blind ? "blind:" + item.id : item.id;
     state.selectedItemId = selKey;
@@ -796,26 +814,42 @@
       err.classList.remove("hidden");
       return;
     }
+    if (!state.reviewId || !state.askItem || !state.askItem.id) {
+      err.textContent = "请先选择需关注条目再追问。";
+      err.classList.remove("hidden");
+      return;
+    }
     const btn = $("btn-ask");
     btn.disabled = true;
+    // 快照当前页身份 + 单调请求号（镜像 pollReview rid 守卫）
+    const snapshot = {
+      reviewId: state.reviewId,
+      itemId: state.askItem.id,
+      reqId: ++state.askReqSeq,
+    };
     try {
       const res = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          review_id: state.reviewId,
-          item_id: state.askItem.id,
+          review_id: snapshot.reviewId,
+          item_id: snapshot.itemId,
           question,
         }),
       });
       const data = await res.json();
+      if (!isAskResponseCurrent(snapshot)) return;
       if (!res.ok) throw new Error(data.detail || "请求失败");
       if (!data.ok) {
         err.textContent = data.error || "追问暂未开通";
         err.classList.remove("hidden");
         return;
       }
-      renderAnswer(data.answer || {}, data.raw_text);
+      const verified = data.quote_verified !== false
+        && !!(data.answer && data.answer.quote_verified !== false
+              && data.answer["原文在哪"]
+              && data.answer["原文在哪"] !== "未定位到原文");
+      renderAnswer(data.answer || {}, data.raw_text, { quoteVerified: verified });
       ans.classList.remove("hidden");
       // 阶段 2.4：移动详情页答案在输入之上，发问成功后滚到答案（即时滚动，
       // 长文里 smooth 反而晕；桌面答案在输入下方，保持原行为不跳）
@@ -823,10 +857,17 @@
         ans.scrollIntoView({ block: "start" });
       }
     } catch (e) {
+      if (!isAskResponseCurrent(snapshot)) return;
       err.textContent = e.message || String(e);
       err.classList.remove("hidden");
     } finally {
-      btn.disabled = false;
+      // 仅最新请求或已离开本条目时解锁，避免慢请求覆盖后把新请求的 loading 打断
+      if (state.askReqSeq === snapshot.reqId
+          || !state.askItem
+          || state.askItem.id !== snapshot.itemId
+          || state.reviewId !== snapshot.reviewId) {
+        btn.disabled = false;
+      }
     }
   }
 
@@ -876,18 +917,29 @@
    * 段③ 建议改法 ←「建议怎么改」+ 改写稿块（原样保留）
    * 段④ 待确认的事 ← 当前键无内容源，缺段静默隐藏
    * raw_text <pre> 兜底保留（结构化失败不装正常）。 */
-  function renderAnswer(answer, raw) {
+  function renderAnswer(answer, raw, opts) {
     const box = $("ask-answer");
     const where = (answer && answer["原文在哪"]) || "";
     const impact = (answer && answer["问题是啥"]) || "";
     const rewrite = (answer && answer["建议怎么改"]) || "";
     const rewriteDraft = (answer && answer["改写稿"]) || "";
+    const quoteVerified = !!(opts && opts.quoteVerified)
+      && where
+      && where !== "未定位到原文";
     let html = "";
 
     // 段① 原文依据（caption 灰字，不造第二个引块）
+    // 未核验摘录不得呈现为已核实来源（可信度 P1 F02）
     if (where) {
       html += `<p class="detail-label">原文依据</p>`;
-      html += `<div class="detail-note muted">${escapeHtml(where)}</div>`;
+      if (quoteVerified) {
+        html += `<div class="detail-note muted">${escapeHtml(where)}</div>`;
+      } else {
+        html += `<div class="detail-note muted">未定位到原文</div>`;
+        if (where !== "未定位到原文") {
+          html += `<div class="detail-note muted">（模型摘句未通过原文核验，已隐藏）</div>`;
+        }
+      }
     }
 
     // 段② 实际影响（主权重；raw 兜底挂这一段）
@@ -907,8 +959,9 @@
     } else if (!rewriteDraft) {
       html += `<div class="detail-note muted">暂无</div>`;
     }
-    if (rewriteDraft) {
+    if (rewriteDraft && quoteVerified) {
       // M3.5 建议改写稿：可粘贴，但必须对照原文核对（阳仔交互 + 九哥文案）
+      // 未核验原文时不展示可复制改写稿（可信度 P1 F02）
       html += `<div class="rewrite-block">`;
       html += `<p class="detail-label">建议改写稿</p>`;
       html += `<div id="ask-rewrite-text" class="rewrite-text detail-quote">${escapeHtml(rewriteDraft)}</div>`;
