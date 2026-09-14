@@ -149,6 +149,80 @@ class QualityInfo(BaseModel):
     pending_questions: list[str] = Field(default_factory=list)
 
 
+
+
+class ConfirmQuestionInfo(BaseModel):
+    """A6 待人工确认问题（有界主动核验）。"""
+
+    id: str
+    source: str = ""
+    source_ref: str = ""
+    question: str = ""
+    title: str = ""
+    clause_id: Optional[str] = None
+    quote: str = ""
+    evidence: Optional[EvidenceRefInfo] = None
+    verification: str = "unverified"
+    fact_ok: Optional[bool] = None
+    status: str = "pending"  # pending|confirmed|disputed|rechecked
+    human_choice: Optional[str] = None
+    human_note: str = ""
+    revised_quote: str = ""
+    recheck_count: int = 0
+    last_recheck: Optional[dict[str, Any]] = None
+
+
+class VerifyBudgetInfo(BaseModel):
+    rounds_remaining: int = 0
+    clause_fetches_remaining: int = 0
+    questions_total: int = 0
+    questions_pending: int = 0
+    max_questions: int = 8
+    max_recheck_per_question: int = 2
+
+
+class VerifyInfo(BaseModel):
+    """A6 有界主动核验状态：疑点→取证→核对→问人→再核。"""
+
+    available: bool = False
+    reason: Optional[str] = None
+    rounds_used: int = 0
+    max_rounds: int = 3
+    clause_fetches_used: int = 0
+    max_clause_fetches: int = 24
+    max_questions: int = 8
+    max_recheck_per_question: int = 2
+    questions: list[ConfirmQuestionInfo] = Field(default_factory=list)
+    disclaimer: str = ""
+    document_version: str = ""
+    budget: Optional[VerifyBudgetInfo] = None
+
+
+class ConfirmRequest(BaseModel):
+    question_id: str
+    choice: Literal["confirm", "dispute"]
+    human_note: str = ""
+    revised_quote: str = ""
+
+
+class ConfirmResponse(BaseModel):
+    ok: bool
+    verify: Optional[VerifyInfo] = None
+    error: Optional[str] = None
+
+
+class ReverifyRequest(BaseModel):
+    question_id: str
+
+
+class ReverifyResponse(BaseModel):
+    ok: bool
+    verify: Optional[VerifyInfo] = None
+    error: Optional[str] = None
+    # Design B 明示：本响应不含规则档位变更
+    rule_statuses_unchanged: bool = True
+
+
 class ReviewSummary(BaseModel):
     id: str
     filename: str
@@ -181,6 +255,8 @@ class ReviewSummary(BaseModel):
     document_version: str = ""
     # 顶层事实材料镜像（与 quality.facts 同源；质量关闭时仍可有确定性抽取）
     facts: list[FactMaterial] = Field(default_factory=list)
+    # A6 有界主动核验（旧记录 None；前端「需你确认」）
+    verify: Optional[VerifyInfo] = None
     # 导出范围说明（九哥：报告只含本次读到并展示的内容…）
     export_scope_note: str = (
         "报告只含本次读到并展示的内容；未读部分不写入结论"
