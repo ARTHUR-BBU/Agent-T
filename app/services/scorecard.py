@@ -425,6 +425,8 @@ from app.services.scorecard_prompts import (  # noqa: E402,F401
     build_map_user_prompt,
     build_reduce_user_prompt,
     build_review_chunks,
+    build_review_plan,
+    coverage_from_plan,
     build_system_prompt,
     build_user_prompt,
     clip_contract_text,

@@ -179,48 +179,211 @@ def build_review_chunks(
     块数超限时尾部并成一块并走头尾采样截断——覆盖 4 块 ≈2.4 万字，超出部分
     是深度换延迟的既有取舍，显式截断好过静默假装读过。
     """
+    chunks, _meta = build_review_plan(text, clause_index, max_segments)
+    return chunks
+
+
+def build_review_plan(
+    text: str, clause_index: Optional[dict[str, Any]] = None, max_segments: int = 4
+) -> tuple[list[str], dict[str, Any]]:
+    """切块 + 原文覆盖元数据（可信度 P1：不得用截断后块数假装读完全文）。
+
+    meta 字段：
+      original_chars / chars_covered / unread_ranges / truncation_reason
+      chunks_planned / fully_covered
+    truncation_reason: None | "max_segments_clip"
+    """
     text = text or ""
+    empty_meta: dict[str, Any] = {
+        "original_chars": 0,
+        "chars_covered": 0,
+        "unread_ranges": [],
+        "truncation_reason": None,
+        "chunks_planned": 0,
+        "fully_covered": True,
+    }
     if not text:
-        return []
+        return [], empty_meta
+
     ranges = _reading_ranges(text, clause_index)
-    chunks: list[str] = []
+    # 与历史切块同构：先产出 (chunk_text, covering_spans)
+    pieces: list[tuple[str, list[tuple[int, int]]]] = []
     cur_start: Optional[int] = None
     cur_end = 0
     for start, end in ranges:
         size = end - start
         if size > MAX_CONTRACT_CHARS:
-            # 单条款超限：冲刷当前块后按字符硬切
             if cur_start is not None:
-                chunks.append(text[cur_start:cur_end])
+                pieces.append((text[cur_start:cur_end], [(cur_start, cur_end)]))
                 cur_start = None
             for i in range(start, end, MAX_CONTRACT_CHARS):
-                chunks.append(text[i : min(end, i + MAX_CONTRACT_CHARS)])
+                j = min(end, i + MAX_CONTRACT_CHARS)
+                pieces.append((text[i:j], [(i, j)]))
             continue
         if cur_start is None:
             cur_start, cur_end = start, end
             continue
         if cur_end - cur_start + size > MAX_CONTRACT_CHARS:
-            chunks.append(text[cur_start:cur_end])
+            pieces.append((text[cur_start:cur_end], [(cur_start, cur_end)]))
             cur_start, cur_end = start, end
         else:
             cur_end = end
     if cur_start is not None:
-        chunks.append(text[cur_start:cur_end])
+        pieces.append((text[cur_start:cur_end], [(cur_start, cur_end)]))
 
-    # 碎块并入前块（硬切/回退可能产生几十字的小块，白耗一次 map 调用与预算，
-    # 门禁 P3 挂账④；合并后前块最多超出上限 31 字，对延迟无实质影响）
-    merged: list[str] = []
-    for chunk in chunks:
+    # 碎块并入前块（字符串拼接，覆盖区间并入）
+    merged: list[tuple[str, list[tuple[int, int]]]] = []
+    for chunk, spans in pieces:
         if merged and len(chunk) < 32:
-            merged[-1] += chunk
+            prev_t, prev_s = merged[-1]
+            merged[-1] = (prev_t + chunk, prev_s + spans)
         else:
-            merged.append(chunk)
-    chunks = merged
+            merged.append((chunk, list(spans)))
 
-    if len(chunks) > max_segments:
-        tail = "".join(chunks[max_segments - 1 :])
-        chunks = chunks[: max_segments - 1] + [_clip_for_scoring(tail)]
-    return chunks
+    truncation_reason: Optional[str] = None
+    unread_ranges: list[list[int]] = []
+    covered_spans: list[tuple[int, int]] = []
+    chunks: list[str] = []
+
+    if len(merged) > max_segments:
+        kept = merged[: max_segments - 1]
+        tail = merged[max_segments - 1 :]
+        for chunk, spans in kept:
+            chunks.append(chunk)
+            covered_spans.extend(spans)
+        tail_text = "".join(c for c, _ in tail)
+        tail_spans = [sp for _, sps in tail for sp in sps]
+        if len(tail_text) > MAX_CONTRACT_CHARS:
+            truncation_reason = "max_segments_clip"
+            head = MAX_CONTRACT_CHARS - _TAIL_CHARS - len(_CLIP_MARKER)
+            chunks.append(_clip_for_scoring(tail_text))
+            # 按拼接串偏移，把头/尾采样映射回各原始 span
+            offset = 0
+            tail_len = len(tail_text)
+            tail_from = tail_len - _TAIL_CHARS
+            for s, e in tail_spans:
+                slen = e - s
+                local_covered: list[tuple[int, int]] = []
+                if offset < head:
+                    lo, hi = offset, min(offset + slen, head)
+                    if lo < hi:
+                        local_covered.append((lo, hi))
+                if offset + slen > tail_from:
+                    lo, hi = max(offset, tail_from), offset + slen
+                    if lo < hi:
+                        local_covered.append((lo, hi))
+                for lo, hi in local_covered:
+                    covered_spans.append((s + (lo - offset), s + (hi - offset)))
+                covered_local = _merge_spans(
+                    [(lo - offset, hi - offset) for lo, hi in local_covered]
+                )
+                for ulo, uhi in _subtract_span((0, slen), covered_local):
+                    unread_ranges.append([s + ulo, s + uhi])
+                offset += slen
+        else:
+            chunks.append(tail_text)
+            covered_spans.extend(tail_spans)
+    else:
+        for chunk, spans in merged:
+            chunks.append(chunk)
+            covered_spans.extend(spans)
+
+    covered_spans = _merge_spans(covered_spans)
+    chars_covered = sum(e - s for s, e in covered_spans)
+    # 全文相对已覆盖的空洞（含条款索引缝隙 + 截断中段）
+    unread_ranges = _merge_range_lists(
+        unread_ranges + [[s, e] for s, e in _subtract_span((0, len(text)), covered_spans)]
+    )
+    fully_covered = chars_covered >= len(text) and truncation_reason is None
+    meta = {
+        "original_chars": len(text),
+        "chars_covered": chars_covered,
+        "unread_ranges": unread_ranges,
+        "truncation_reason": truncation_reason,
+        "chunks_planned": len(chunks),
+        "fully_covered": fully_covered,
+    }
+    return chunks, meta
+
+
+def _merge_spans(spans: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    if not spans:
+        return []
+    ordered = sorted((s, e) for s, e in spans if s < e)
+    out: list[tuple[int, int]] = [ordered[0]]
+    for s, e in ordered[1:]:
+        ps, pe = out[-1]
+        if s <= pe:
+            out[-1] = (ps, max(pe, e))
+        else:
+            out.append((s, e))
+    return out
+
+
+def _merge_range_lists(ranges: list[list[int]]) -> list[list[int]]:
+    merged = _merge_spans([(r[0], r[1]) for r in ranges if len(r) == 2 and r[0] < r[1]])
+    return [[s, e] for s, e in merged]
+
+
+def _subtract_span(
+    universe: tuple[int, int], covered: list[tuple[int, int]]
+) -> list[tuple[int, int]]:
+    """universe 减去 covered，返回剩余区间。"""
+    u0, u1 = universe
+    if u0 >= u1:
+        return []
+    gaps: list[tuple[int, int]] = []
+    cursor = u0
+    for s, e in _merge_spans(covered):
+        if e <= cursor:
+            continue
+        if s > cursor:
+            gaps.append((cursor, min(s, u1)))
+        cursor = max(cursor, e)
+        if cursor >= u1:
+            break
+    if cursor < u1:
+        gaps.append((cursor, u1))
+    return [(s, e) for s, e in gaps if s < e]
+
+
+def coverage_from_plan(
+    plan_meta: dict[str, Any],
+    *,
+    chunks_reviewed: int,
+    reason: Optional[str] = None,
+) -> dict[str, Any]:
+    """把切块计划元数据与实际审阅块数合成对外 coverage。
+
+    limited 永不为 false，除非原文被计划完全覆盖且计划块全部审阅成功、无额外降级原因。
+    """
+    chunks_total = int(plan_meta.get("chunks_planned") or 0)
+    fully = bool(plan_meta.get("fully_covered"))
+    trunc = plan_meta.get("truncation_reason")
+    reviewed = max(0, min(int(chunks_reviewed), chunks_total)) if chunks_total else 0
+    planned_chars = int(plan_meta.get("chars_covered") or 0)
+    if chunks_total > 0 and reviewed < chunks_total:
+        planned_chars = int(planned_chars * reviewed / chunks_total)
+    effective_reason = reason or trunc
+    if reviewed < chunks_total and not effective_reason:
+        effective_reason = "partial_map_fail" if reviewed > 0 else "map_fail"
+    if fully and reviewed >= chunks_total and not trunc and not reason:
+        limited = False
+        effective_reason = None
+        planned_chars = int(plan_meta.get("chars_covered") or 0)
+        unread: list[list[int]] = []
+    else:
+        limited = True
+        unread = list(plan_meta.get("unread_ranges") or [])
+    return {
+        "chunks_total": chunks_total,
+        "chunks_reviewed": reviewed,
+        "limited": limited,
+        "original_chars": int(plan_meta.get("original_chars") or 0),
+        "chars_covered": planned_chars,
+        "unread_ranges": unread,
+        "truncation_reason": effective_reason,
+    }
 
 
 def _reading_ranges(text: str, clause_index: Optional[dict[str, Any]]) -> list[tuple[int, int]]:
