@@ -104,6 +104,7 @@ class QualityObservation(BaseModel):
     title: str = ""
     quote: str = ""
     clause_id: Optional[str] = None
+    clause_ambiguous: bool = False  # 摘句跨多条款，位置不唯一
     comment: str = ""
     needs_confirm: bool = True  # 代码强制 True（模型无权声明免确认）
 

@@ -163,9 +163,17 @@ def run_model_review(
         if scorecard.check_forbidden(_scorecard_text(payload)):
             degraded = True
 
-    final = scorecard.postprocess(payload, items, segments)
+    # F03：坏类型不得抛穿整次审查；受控降级，规则结果保留在 pipeline state
+    try:
+        final = scorecard.postprocess(payload, items, segments)
+    except (TypeError, ValueError, OverflowError, AttributeError):
+        logger.exception("Model-review postprocess failed on malformed payload")
+        result["scorecard"] = scorecard.unavailable("incomplete_model_output")
+        return result
     if degraded or not scorecard.naming_complete(final, items):
         final = scorecard.degrade_to_score_only(final)
+        if final.get("incomplete"):
+            final["reason"] = final.get("reason") or "incomplete_model_output"
     # 覆盖明示（外部审计二轮 + 可信度 P1）：截断/抽样/map 失败/预算耗尽
     # 一律 limited=true；仅原文计划全覆盖且块全部审阅成功才 limited=false
     if coverage is not None:
@@ -189,8 +197,11 @@ def run_model_review(
     if not gaps:
         return result
 
+    raw_cands = (payload or {}).get("candidates") if payload else None
+    if not isinstance(raw_cands, list):
+        raw_cands = []
     candidates, skipped = blind_spot.normalize_candidates(
-        (payload or {}).get("candidates") or [],
+        raw_cands,
         text or "",
         gaps,
         named_source_ids=set(named_ids),
@@ -272,11 +283,16 @@ def _named_gap_ids(payload: Optional[dict[str, Any]]) -> list[str]:
         return []
     named: list[str] = []
     sc = payload.get("scorecard") or {}
+    if not isinstance(sc, dict):
+        return []
     for key in ("gap_item_ids", "named_gaps"):
         v = sc.get(key)
         if isinstance(v, list):
             named.extend(str(x) for x in v)
-    for s in sc.get("segments") or []:
+    segs = sc.get("segments")
+    if not isinstance(segs, list):
+        return named
+    for s in segs:
         if isinstance(s, dict) and isinstance(s.get("gap_item_ids"), list):
             named.extend(str(x) for x in s["gap_item_ids"])
     return named
@@ -287,10 +303,15 @@ def _scorecard_text(payload: Optional[dict[str, Any]]) -> str:
     if not payload:
         return ""
     sc = payload.get("scorecard") or {}
-    parts = [str(sc.get("summary") or "")]
-    for s in sc.get("segments") or []:
+    if not isinstance(sc, dict):
+        return ""
+    parts = [scorecard._as_text(sc.get("summary"))]
+    segs = sc.get("segments")
+    if not isinstance(segs, list):
+        return " ".join(parts)
+    for s in segs:
         if isinstance(s, dict):
-            parts.append(str(s.get("comment") or ""))
+            parts.append(scorecard._as_text(s.get("comment")))
     return " ".join(parts)
 
 

@@ -5,7 +5,7 @@
 ② 真实文本 + 禁语 → 双禁语表清洗后丢条
 ③ 改档位指令 → 结构上不可能（quality 输出只进 quality 键，API 层深度
    相等断言在 test_quality_api.py）
-④ 编造 clause_id → 白名单归一 None
+④ 编造/错号 clause_id → 服务端按 quote 定位派生（无索引则空）
 ⑤ 刷量 → 12 条 / 每维度 6 封顶
 ⑥ needs_confirm 不在模型输出 schema，代码强制 True
 """
@@ -181,11 +181,14 @@ def test_llm_error_soft_degrades(monkeypatch):
     assert out["reason"] == "llm_error"
 
 
-def test_clause_id_whitelist_normalizes(monkeypatch):
+def test_clause_id_derived_from_quote_location(monkeypatch):
+    """F06：clause_id 由摘句原文定位派生，不信任模型白名单内的错号。"""
     _enable(monkeypatch)
-    clause_index = {"clauses": [{"id": "c03", "heading": "第三条", "start": 0, "end": 10}]}
+    from app.services.clause_index import build_clause_index
+
+    clause_index = build_clause_index(CONTRACT)
     obs = [
-        _good_obs(clause_id="c03"),
+        _good_obs(clause_id="c02"),  # 错号：quote 实际在含「七日内」的条款
         _good_obs(title="伪造编号", quote="第四条 本合同一式两份，自双方签字盖章之日起生效。", clause_id="c99"),
     ]
     out = quality_service.run_quality(
@@ -193,8 +196,11 @@ def test_clause_id_whitelist_normalizes(monkeypatch):
         chat_fn=_chat_returning(_obs_payload(obs)),
     )
     by_title = {o["title"]: o for o in out["observations"]}
-    assert by_title["缺交付验收安排"]["clause_id"] == "c03"
-    assert by_title["伪造编号"]["clause_id"] is None, "编造编号必须归一 None"
+    # 错号 c02 不得保留；应落到真实条款
+    assert by_title["缺交付验收安排"]["clause_id"] != "c02"
+    assert by_title["缺交付验收安排"]["clause_id"] is not None
+    assert by_title["伪造编号"]["clause_id"] is not None
+    assert by_title["伪造编号"]["clause_ambiguous"] is False
 
 
 def test_dedupe_same_quote_and_same_pair(monkeypatch):
@@ -422,7 +428,7 @@ def test_injection_cannot_change_quality_structure(monkeypatch):
 
 
 def test_injection_forged_clause_id_neutralized(monkeypatch):
-    """埋点 ④：伪造 clause_id=c99 → 归一 None，条目保留但无条款锚。"""
+    """埋点 ④：伪造 clause_id=c99 → 不信任模型号；无索引时 clause_id 为空。"""
     _enable(monkeypatch)
     injected = _good_obs(clause_id="c99", quote="第三条 押金2000元，合同期满退还。")
     out = quality_service.run_quality(

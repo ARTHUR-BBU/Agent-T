@@ -108,14 +108,24 @@ def node_model_review(state: ReviewState) -> ReviewState:
             "blind_skipped_reason": None,
             "blind_enabled": False,
         }
-    out = run_model_review(
-        text=state.get("text") or "",
-        items=state.get("items") or [],
-        policies=state.get("policies") or [],
-        category=state.get("category") or "procurement",
-        clause_index=state.get("clause_index"),
-        budget=state.get("budget"),
-    )
+    try:
+        out = run_model_review(
+            text=state.get("text") or "",
+            items=state.get("items") or [],
+            policies=state.get("policies") or [],
+            category=state.get("category") or "procurement",
+            clause_index=state.get("clause_index"),
+            budget=state.get("budget"),
+        )
+    except Exception:  # noqa: BLE001 — F03：模型坏输出不得抹掉已完成规则结果
+        logging.getLogger(__name__).exception("Model review failed; keeping rule items")
+        return {
+            "scorecard": {"available": False, "reason": "incomplete_model_output"},
+            "blind_candidates": [],
+            "blind_skipped_messages": [],
+            "blind_skipped_reason": "incomplete_model_output",
+            "blind_enabled": False,
+        }
     candidates = out.get("blind_candidates") or []
     # 补盲候选同样标注条款归属（它们正是「中段条款被点名」的主要载体）
     clause_index = state.get("clause_index") or {}

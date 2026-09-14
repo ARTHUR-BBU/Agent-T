@@ -161,12 +161,28 @@ def _scrub_banned_echo(text: str) -> str:
     return out
 
 
+def _coerce_ask_field(value: Any) -> str:
+    """Ask text fields must be strings; list/object from model must not 500."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, list):
+        return " ".join(_coerce_ask_field(x) for x in value if x is not None).strip()
+    if isinstance(value, dict):
+        return ""
+    return str(value)
+
+
 def _scrub_answer_dict(answer: dict[str, Any] | None) -> dict[str, Any] | None:
     if not answer:
         return answer
     cleaned: dict[str, Any] = {}
     for k, v in answer.items():
-        cleaned[k] = _scrub_banned_echo(v) if isinstance(v, str) else v
+        text = _coerce_ask_field(v)
+        cleaned[k] = _scrub_banned_echo(text)
     q = (cleaned.get("问题是啥") or "").strip()
     if not q or q == "【已过滤】":
         cleaned["问题是啥"] = "该条已标为需关注，不能视为安全通过，请结合原文复核。"
@@ -408,14 +424,14 @@ def _parse_structured(raw: str) -> dict[str, Any]:
     try:
         obj = json.loads(text)
         if isinstance(obj, dict):
-            return {k: obj.get(k, "") for k in OUTPUT_FIELDS}
+            return {k: _coerce_ask_field(obj.get(k, "")) for k in OUTPUT_FIELDS}
     except json.JSONDecodeError:
         pass
     return {
         "风险等级": "中",
         "这条在查啥": "",
         "原文在哪": "",
-        "问题是啥": raw,
+        "问题是啥": _coerce_ask_field(raw),
         "建议怎么改": "",
         "还想问": "",
     }
