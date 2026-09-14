@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
@@ -21,28 +21,83 @@ validate_checklist_configs()
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-app = FastAPI(title="合同审查 Agent", version="0.1.0")
-app.include_router(router)
+# 请求体总上限（业务文件 10MB + multipart 编码余量）。Content-Length 缺失/
+# chunked 时也按流式累计字节拒绝，避免整包进 Starlette multipart 临时盘。
+# 反向代理（nginx client_max_body_size）仍建议同步配置作最外层防线。
+MAX_REQUEST_BODY_BYTES = 12 * 1024 * 1024
 
 
-@app.middleware("http")
-async def request_body_limit(request, call_next):
-    """HTTP body 总限制（外部审计二轮 PR-C：三层防线最外层）。
+class _BodyTooLarge(Exception):
+    """Internal: streaming receive exceeded MAX_REQUEST_BODY_BYTES."""
 
-    _read_limited 管的是「应用不把超大文件读进内存」，这层管的是「超大
-    请求在 multipart 解析前就被拒」——Content-Length 谎报/缺失时仍由
-    _read_limited 兜底。上限给业务 10MB 留 multipart 编码余量。
+
+class BodySizeLimitMiddleware:
+    """ASGI：在 multipart 解析前按流累计请求体，超限立即 413。
+
+    旧 @app.middleware 只看 Content-Length，chunked/无 CL 时 UploadFile 已
+    持有完整 body 才进 _read_limited。本中间件包装 receive，超限不再继续
+    拉取后续 chunk（best-effort；代理层仍建议设 client_max_body_size）。
     """
-    content_length = request.headers.get("content-length")
-    if content_length and content_length.isdigit():
-        if int(content_length) > 12 * 1024 * 1024:
-            from fastapi.responses import JSONResponse
 
-            return JSONResponse(
-                status_code=413, content={"detail": "请求体积超过上限，请压缩后重试"}
-            )
-    return await call_next(request)
+    def __init__(self, app, max_bytes: int = MAX_REQUEST_BODY_BYTES):
+        self.app = app
+        self.max_bytes = max_bytes
 
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = {k.lower(): v for k, v in (scope.get("headers") or [])}
+        cl = headers.get(b"content-length")
+        if cl is not None:
+            try:
+                if int(cl.decode("latin-1")) > self.max_bytes:
+                    await self._send_413(send)
+                    return
+            except ValueError:
+                pass
+
+        received = 0
+        rejected = False
+
+        async def limited_receive():
+            nonlocal received, rejected
+            if rejected:
+                return {"type": "http.disconnect"}
+            message = await receive()
+            if message["type"] == "http.request":
+                chunk = message.get("body", b"") or b""
+                received += len(chunk)
+                if received > self.max_bytes:
+                    rejected = True
+                    raise _BodyTooLarge()
+            return message
+
+        try:
+            await self.app(scope, limited_receive, send)
+        except _BodyTooLarge:
+            await self._send_413(send)
+
+    @staticmethod
+    async def _send_413(send):
+        body = '{"detail":"请求体积超过上限，请压缩后重试"}'.encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 413,
+                "headers": [
+                    [b"content-type", b"application/json; charset=utf-8"],
+                    [b"content-length", str(len(body)).encode("ascii")],
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
+
+app = FastAPI(title="合同审查 Agent", version="0.1.0")
+app.add_middleware(BodySizeLimitMiddleware)
+app.include_router(router)
 
 # 公网部署时配 BASIC_AUTH_USERNAME/PASSWORD 启用整站 Basic Auth（/health 除外）
 app.add_middleware(BasicAuthMiddleware)

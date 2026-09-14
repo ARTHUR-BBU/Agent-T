@@ -116,6 +116,15 @@ def _cover(doc: Any, row: dict[str, Any]) -> None:
         )
         run.bold = True
 
+    # A3 / 九哥：导出范围一句（灰字不抢评分卡）
+    scope = row.get("export_scope_note") or (
+        "报告只含本次读到并展示的内容；未读部分不写入结论"
+        "（含规则核查、参考评分与补盲；不含页面 AI 观察及追问）"
+    )
+    p = doc.add_paragraph()
+    run = p.add_run(scope)
+    run.italic = True
+
 
 def _known_statuses() -> tuple[str, ...]:
     return ("通过", _ATTENTION, _NOT_FOUND, _NA)
@@ -145,6 +154,25 @@ def _conclusion(doc: Any, row: dict[str, Any]) -> None:
         doc.add_paragraph("上述无法识别档位已按「需关注」从严处理，请人工复核。")
 
     sc = row.get("scorecard") or {}
+    # 阅读范围（与页面截断旁注一致）
+    cov = sc.get("coverage") if isinstance(sc.get("coverage"), dict) else None
+    if not cov:
+        q = row.get("quality") or {}
+        cov = q.get("coverage") if isinstance(q.get("coverage"), dict) else None
+    if cov:
+        if cov.get("limited"):
+            line = "阅读范围：合同较长，本次只读到部分内容，结论供参考"
+            try:
+                from app.services.evidence import read_clause_label
+                extra = read_clause_label(row.get("clause_index"), cov)
+                if extra:
+                    line = f"{line}（{extra}）"
+            except Exception:  # noqa: BLE001
+                pass
+            doc.add_paragraph(line)
+        else:
+            doc.add_paragraph("阅读范围：本次已读全文")
+
     if sc.get("available") and isinstance(sc.get("total"), (int, float)):
         tier = sc.get("tier") or {}
         label = tier.get("label") or ""
@@ -256,4 +284,10 @@ def _footer(doc: Any, row: dict[str, Any]) -> None:
     p = doc.add_paragraph()
     run = p.add_run(disclaimer)
     run.italic = True
+    scope = row.get("export_scope_note") or (
+        "报告只含本次读到并展示的内容；未读部分不写入结论"
+    )
+    p2 = doc.add_paragraph()
+    run2 = p2.add_run(scope)
+    run2.italic = True
     doc.add_paragraph(f"报告编号 {row.get('id') or ''} · 由合同审查 Agent 自动生成")

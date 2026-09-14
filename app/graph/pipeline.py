@@ -17,6 +17,8 @@ from app.services import quality as quality_service
 from app.services.blind_spot import annotate_rule_items
 from app.services.checklist import run_checklist
 from app.services.clause_index import build_clause_index, map_items_to_clauses
+from app.services.evidence import attach_evidence_to_item, document_version_for
+from app.services import facts as facts_service
 from app.services.extract import ExtractionError, extract_text
 from app.services.model_review import run_model_review
 
@@ -46,6 +48,13 @@ class ReviewState(TypedDict, total=False):
     # 阶段 0.2 补课：stage 进度回调（Callable[[str], None] | None），由 routes
     # worker 注入（写 store.stage），pipeline 自身不感知持久化
     on_stage: Any
+    # 架构 batch3 / A5：阶段性结果回调（completion, partial_fields）
+    # completion ∈ rules_complete | ai_partial | fully_complete
+    on_partial: Any
+    # 上传预审已解析的全文：复用一次解析产物，避免 silent double-parse
+    parsed_text: str
+    document_version: str
+    completion: str
 
 
 def _emit_stage(state: ReviewState, stage: str) -> None:
@@ -59,19 +68,40 @@ def _emit_stage(state: ReviewState, stage: str) -> None:
         logging.getLogger(__name__).warning("on_stage callback failed for stage=%s", stage, exc_info=True)
 
 
+def _emit_partial(state: ReviewState, completion: str, **fields: Any) -> None:
+    """阶段结果落盘（A5）：规则完成 / AI 部分完成 / 全部完成。异常不影响主流程。"""
+    cb = state.get("on_partial")
+    if not cb:
+        return
+    try:
+        cb(completion, fields)
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).warning(
+            "on_partial callback failed for completion=%s", completion, exc_info=True
+        )
+
+
 def node_parse(state: ReviewState) -> ReviewState:
     # scanning 从解析入口起算：大 PDF 的 Docling 提取可达数十秒，算进「规则扫描」
     # 才不会让等待页卡在上一段（triage 在 routes 的预审阶段已是完成态）
     _emit_stage(state, "scanning")
+    # A5：优先复用上传预审已解析全文，避免二次解析浪费
+    reused = (state.get("parsed_text") or "").strip()
     try:
-        text = extract_text(state["filename"], state["raw_bytes"])
-        return {"text": text, "error": "", "clause_index": build_clause_index(text)}
+        if reused:
+            text = reused
+        else:
+            text = extract_text(state["filename"], state["raw_bytes"])
+        doc_ver = document_version_for(text)
+        return {
+            "text": text,
+            "error": "",
+            "clause_index": build_clause_index(text),
+            "document_version": doc_ver,
+        }
     except ExtractionError as exc:
-        # 设计为用户可见的解析失败（坏文件/扫描版 PDF 等），文案受控
         return {"text": "", "error": str(exc)}
     except Exception:  # noqa: BLE001
-        # 未知异常收口（外部审计批2-④）：str(exc) 可能携带库内部路径/实现
-        # 细节并经 store→API→前端外泄——只进服务端日志，客户端给固定话术
         logging.getLogger(__name__).exception("Unhandled extraction failure")
         return {"text": "", "error": "文档解析失败，请重新上传或转换格式后再试"}
 
@@ -79,18 +109,41 @@ def node_parse(state: ReviewState) -> ReviewState:
 def node_checklist(state: ReviewState) -> ReviewState:
     if state.get("error"):
         return {}
-    result = run_checklist(state.get("text") or "", state.get("category") or "procurement")
+    text = state.get("text") or ""
+    result = run_checklist(text, state.get("category") or "procurement")
     items = annotate_rule_items(result["items"])
-    # 条款归属映射（阶段 1.1）：纯展示增强，失败静默降级为空映射，不影响档位
     clause_index = state.get("clause_index") or {}
     if clause_index:
-        map_items_to_clauses(items, clause_index, state.get("text") or "")
-    return {
+        map_items_to_clauses(items, clause_index, text)
+    doc_ver = state.get("document_version") or document_version_for(text)
+    # A1：规则命中挂统一证据引用（不改 status——Design B）
+    for it in items:
+        attach_evidence_to_item(
+            it, text=text, parse_source="rules",
+            document_version=doc_ver, clause_index=clause_index,
+        )
+    out = {
         "items": items,
         "policies": result.get("policies") or [],
         "category_label": result.get("category_label") or "",
         "category": result.get("category") or state.get("category") or "procurement",
+        "document_version": doc_ver,
+        "completion": "rules_complete",
     }
+    # A5：规则完成即落盘，前端可显示「规则已出、AI 未完成」
+    _emit_partial(
+        state,
+        "rules_complete",
+        items=items,
+        policies=out["policies"],
+        category=out["category"],
+        category_label=out["category_label"],
+        text=text,
+        clause_index=clause_index,
+        document_version=doc_ver,
+        text_preview=text[:500]
+    )
+    return out
 
 
 def node_model_review(state: ReviewState) -> ReviewState:
@@ -108,26 +161,56 @@ def node_model_review(state: ReviewState) -> ReviewState:
             "blind_skipped_reason": None,
             "blind_enabled": False,
         }
-    out = run_model_review(
-        text=state.get("text") or "",
-        items=state.get("items") or [],
-        policies=state.get("policies") or [],
-        category=state.get("category") or "procurement",
-        clause_index=state.get("clause_index"),
-        budget=state.get("budget"),
-    )
+    try:
+        out = run_model_review(
+            text=state.get("text") or "",
+            items=state.get("items") or [],
+            policies=state.get("policies") or [],
+            category=state.get("category") or "procurement",
+            clause_index=state.get("clause_index"),
+            budget=state.get("budget"),
+        )
+    except Exception:  # noqa: BLE001 — F03：模型坏输出不得抹掉已完成规则结果
+        logging.getLogger(__name__).exception("Model review failed; keeping rule items")
+        return {
+            "scorecard": {"available": False, "reason": "incomplete_model_output"},
+            "blind_candidates": [],
+            "blind_skipped_messages": [],
+            "blind_skipped_reason": "incomplete_model_output",
+            "blind_enabled": False,
+        }
     candidates = out.get("blind_candidates") or []
     # 补盲候选同样标注条款归属（它们正是「中段条款被点名」的主要载体）
     clause_index = state.get("clause_index") or {}
     if candidates and clause_index:
         map_items_to_clauses(candidates, clause_index, state.get("text") or "")
-    return {
+    # A1：补盲候选挂证据引用（status 仍为候选需确认，不碰规则档位）
+    text = state.get("text") or ""
+    doc_ver = state.get("document_version") or document_version_for(text)
+    for cand in candidates:
+        attach_evidence_to_item(
+            cand, text=text, parse_source="blind",
+            document_version=doc_ver, clause_index=clause_index,
+        )
+    payload = {
         "scorecard": out.get("scorecard") or {},
         "blind_candidates": candidates,
         "blind_skipped_messages": out.get("blind_skipped_messages") or [],
         "blind_skipped_reason": out.get("blind_skipped_reason"),
         "blind_enabled": bool(out.get("blind_enabled")),
+        "completion": "ai_partial",
     }
+    _emit_partial(
+        state,
+        "ai_partial",
+        items=state.get("items") or [],
+        scorecard=payload["scorecard"],
+        blind_candidates=candidates,
+        blind_skipped_messages=payload["blind_skipped_messages"],
+        blind_skipped_reason=payload["blind_skipped_reason"],
+        blind_enabled=payload["blind_enabled"]
+    )
+    return payload
 
 
 def node_quality(state: ReviewState) -> ReviewState:
@@ -154,7 +237,23 @@ def node_quality(state: ReviewState) -> ReviewState:
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("Quality pass failed")
         out = quality_service.outcome_unavailable("error")
-    return {"quality": out}
+    # 质量关闭/失败时仍落确定性事实材料（A2）；规则 items 绝不动（Design B）
+    if not (out.get("facts") or []):
+        text_body = state.get("text") or ""
+        doc_ver = state.get("document_version") or document_version_for(text_body)
+        seeded = facts_service.extract_deterministic_facts(
+            text_body,
+            document_version=doc_ver,
+            clause_index=state.get("clause_index"),
+        )
+        out = {**out, "facts": seeded}
+    _emit_partial(
+        state,
+        "fully_complete",
+        quality=out,
+        facts=out.get("facts") or []
+    )
+    return {"quality": out, "completion": "fully_complete"}
 
 
 def build_graph():
@@ -193,6 +292,8 @@ def run_review(
     category: str = "procurement",
     budget: Any = None,
     on_stage: Callable[[str], None] | None = None,
+    on_partial: Callable[[str, dict], None] | None = None,
+    parsed_text: str | None = None,
 ) -> dict[str, Any]:
     graph = get_graph()
     final: ReviewState = graph.invoke(
@@ -202,6 +303,8 @@ def run_review(
             "category": category or "procurement",
             "budget": budget,
             "on_stage": on_stage,
+            "on_partial": on_partial,
+            "parsed_text": parsed_text or "",
         }
     )
     return {
@@ -218,4 +321,9 @@ def run_review(
         "blind_skipped_reason": final.get("blind_skipped_reason"),
         "blind_enabled": bool(final.get("blind_enabled")),
         "quality": final.get("quality") or {},
+        "document_version": final.get("document_version") or "",
+        "completion": final.get("completion") or (
+            "fully_complete" if not final.get("error") else ""
+        ),
+        "facts": (final.get("quality") or {}).get("facts") or [],
     }

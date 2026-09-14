@@ -48,10 +48,16 @@ def build_system_prompt(policies: list[str]) -> str:
 {{
   "observations": [
     {{"dimension":"completeness|consistency|impact","title":"≤30字小标题","quote":"合同原文连续摘录","clause_id":"c05 或 null","comment":"≤120字：前半句实际影响，后半句修改建议"}}
-  ]
+  ],
+  "facts": [
+    {{"kind":"party|amount|date|condition|obligation|definition|reference","label":"≤20字","value":"≤40字可核对事实","quote":"支撑该事实的原文连续摘录"}}
+  ],
+  "pending_questions": ["≤40字待核实问题"]
 }}
 
-clause_id 填条款目录里的编号；拿不准就填 null，不要编造编号。"""
+clause_id 填条款目录里的编号；拿不准就填 null，不要编造编号。
+facts 用于跨段对照（即使本段看起来没问题也请抽出主体/金额/日期等核心事实，最多 8 条）；没有就空列表。
+pending_questions 为本段无法独自确认、需对照其他段落的问题，最多 4 条。"""
     return with_untrusted_guard(prompt)
 
 

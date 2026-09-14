@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from pathlib import Path
 from typing import Any, Optional
@@ -197,6 +198,41 @@ def format_observations(observations: list[dict[str, Any]]) -> str:
 
 # ---------- parsing & post-processing ----------
 
+def _as_text(value: Any) -> str:
+    """Coerce model field to plain text; lists/objects must not reach .strip()."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, list):
+        parts = [_as_text(x) for x in value]
+        return " ".join(p for p in parts if p)
+    if isinstance(value, dict):
+        return ""
+    return str(value)
+
+
+def _scorecard_shape_ok(sc: Any) -> bool:
+    """Strict nested shape: segments must be a list of objects when present."""
+    if not isinstance(sc, dict):
+        return False
+    if "segments" in sc and not isinstance(sc.get("segments"), list):
+        return False
+    for s in sc.get("segments") or []:
+        if not isinstance(s, dict):
+            return False
+    if "summary" in sc and sc.get("summary") is not None and not isinstance(
+        sc.get("summary"), (str, int, float)
+    ):
+        # list/object summary is recoverable via _as_text but marks incomplete
+        if not isinstance(sc.get("summary"), (str, int, float, bool)):
+            return False
+    return True
+
+
+
 def _get_scorecard(obj: dict[str, Any]) -> Any:
     """兼容模型输出的键名大小写（ScoreCard / Scorecard 等）."""
     if "scorecard" in obj:
@@ -221,6 +257,7 @@ def parse_model_payload(raw: str) -> Optional[dict[str, Any]]:
             sc = _get_scorecard(o)
             if isinstance(sc, dict):
                 o["scorecard"] = sc  # 归一化为小写键，下游 postprocess 统一读取
+                o["_shape_ok"] = _scorecard_shape_ok(sc)
                 return o
         return None
 
@@ -256,9 +293,15 @@ def postprocess(
         return unavailable("no_scorecard_config")
 
     sc = payload.get("scorecard") or {}
+    if not isinstance(sc, dict):
+        sc = {}
+    raw_segments = sc.get("segments")
+    if not isinstance(raw_segments, list):
+        raw_segments = []
     model_segments = {
-        str(s.get("key")): s for s in (sc.get("segments") or []) if isinstance(s, dict)
+        str(s.get("key")): s for s in raw_segments if isinstance(s, dict)
     }
+    shape_ok = bool(payload.get("_shape_ok", _scorecard_shape_ok(sc)))
 
     # items by segment (from checklist YAML `segment` field)
     seg_of_item = {str(it.get("id")): str(it.get("segment") or "") for it in items}
@@ -295,10 +338,16 @@ def postprocess(
             score = 0
         else:
             try:
-                score = int(round(float(model_seg["score"])))
-            except (TypeError, ValueError):
-                # 非数值与缺失同责：按 0 计（沉默≠满分，乱答也不给满分）
+                raw_score = float(model_seg["score"])
+                if not math.isfinite(raw_score):
+                    score = 0
+                    shape_ok = False
+                else:
+                    score = int(round(raw_score))
+            except (TypeError, ValueError, OverflowError):
+                # 非数值/Infinity 与缺失同责：按 0 计（沉默≠满分，乱答也不给满分）
                 score = 0
+                shape_ok = False
             score = max(0, min(weight, score))
 
         # 扣分下限（不依赖模型自觉）
@@ -321,7 +370,7 @@ def postprocess(
         floor = max(0, int(round(weight - deduction)))
         score = min(score, floor)
 
-        comment = str(model_segments.get(key, {}).get("comment") or "")
+        comment = _as_text(model_segments.get(key, {}).get("comment"))
         if seg_hard_names and not comment:
             comment = "存在需关注/未找到项：" + "、".join(seg_hard_names)
         comment = scrub_forbidden(comment)
@@ -359,11 +408,11 @@ def postprocess(
             f"因存在{name_block}需关注/未找到项，总分已按上限 {cap} 封顶（失分不能互相抵扣）"
         )
 
-    summary = scrub_forbidden(str(sc.get("summary") or "")).strip()
+    summary = scrub_forbidden(_as_text(sc.get("summary"))).strip()
     if not summary:
         summary = f"规则结果汇总评分 {total} 分。"
 
-    return {
+    out = {
         "available": True,
         "reason": None,
         "total": total,
@@ -374,6 +423,12 @@ def postprocess(
         "disclaimer": DISCLAIMER,
         "advisory_only": True,
     }
+    if not shape_ok:
+        # 模型字段类型/形状异常：受控降级为仅分数，标 incomplete，不抛、不抹规则结果
+        out = degrade_to_score_only(out)
+        out["incomplete"] = True
+        out["reason"] = "incomplete_model_output"
+    return out
 
 
 def naming_complete(final: dict[str, Any], items: list[dict[str, Any]]) -> bool:
@@ -425,6 +480,8 @@ from app.services.scorecard_prompts import (  # noqa: E402,F401
     build_map_user_prompt,
     build_reduce_user_prompt,
     build_review_chunks,
+    build_review_plan,
+    coverage_from_plan,
     build_system_prompt,
     build_user_prompt,
     clip_contract_text,
