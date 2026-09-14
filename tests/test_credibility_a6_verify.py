@@ -291,13 +291,19 @@ def test_design_b_pipeline_verify_never_overwrites_rule_status():
 
 
 def test_ui_copy_locked_strings_present():
-    """前端锁定文案：需你确认 / 待核实 / 流程 / 按钮 / 旁注 / 空态。"""
+    """前端锁定文案：需你确认 / 待核实 / 流程 / 按钮 / 旁注 / 空态。
+
+    九哥词表：补盲区不得复用「待核实」（见 test_credibility_a6_triage）。
+    """
     root = Path(__file__).resolve().parents[1]
     js = (root / "app/static/app.js").read_text(encoding="utf-8")
     css = (root / "app/static/styles.css").read_text(encoding="utf-8")
     html = (root / "app/static/index.html").read_text(encoding="utf-8")
     assert "需你确认" in js
     assert 'textContent = "待核实"' in js
+    assert 'blindBadge.textContent = "补盲"' in js
+    assert "候选，需人工确认" in js
+    assert 'blindBadge.textContent = "待核实"' not in js
     assert "疑点" in js and "取证" in js and "核对" in js and "问你" in js
     assert "补充说明" in js and "确认无误" in js and "再审本条" in js
     assert "主动核查只提疑点，不改变清单规则档" in js

@@ -875,7 +875,7 @@ def test_mobile_item_tap_opens_detail_route(mobile_home):
 
 
 def test_mobile_blind_item_hides_ask_card(mobile_home):
-    """待核实条目：追问卡整卡隐藏（不能误渲染成「追问暂未开通」）。"""
+    """补盲条目：追问卡整卡隐藏（不能误渲染成「追问暂未开通」）。"""
     stub = _quality_review_stub(None)
     stub["blind_enabled"] = True
     stub["blind_candidates"] = [{

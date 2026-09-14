@@ -170,6 +170,9 @@ class ConfirmQuestionInfo(BaseModel):
     revised_quote: str = ""
     recheck_count: int = 0
     last_recheck: Optional[dict[str, Any]] = None
+    triage: str = "must_human"  # must_human|machine_ok|machine_silent
+    triage_reason: str = ""
+    triage_rule: str = ""
 
 
 class VerifyBudgetInfo(BaseModel):
@@ -195,6 +198,7 @@ class VerifyInfo(BaseModel):
     questions: list[ConfirmQuestionInfo] = Field(default_factory=list)
     disclaimer: str = ""
     document_version: str = ""
+    triage_log: list[dict[str, Any]] = Field(default_factory=list)
     budget: Optional[VerifyBudgetInfo] = None
 
 
