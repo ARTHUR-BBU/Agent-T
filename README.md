@@ -1,123 +1,121 @@
-# Agent-T · 合同审查 Agent（MVP）
+<div align="center">
 
-**是做什么的**  
-上传一份合同 → 按 12 条清单挑问题 → 对「需关注」点「问清楚一点」用人话解释（不盖「没问题」章）。
+# Agent-T
 
-**范围**：一次只审一份；不用企微/钉钉。底层用现成脚手架（FastAPI、LangGraph **库**），不自研调度平台。
+### 签合同前，把该问的问题问清楚。
 
-## 最短跑起来
+**你的 AI 合同审查助手：找出值得关注的条款，读懂实际影响，带着修改建议去沟通。**
 
-1. 装 Python 3.11+，进入本仓库目录  
-2. 创建并激活虚拟环境，装依赖：
+采购合同 · 租赁合同 · 保密协议（NDA）
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
+[开始体验](#开始体验) · [能帮你做什么](#从一份合同到一组可以讨论的问题) · [安装与配置](docs/getting-started.md) · [开发路线](docs/roadmap-llm-ui.md)
 
-3. 复制环境变量模板（**没有 Key 也能先看清单**；追问会显示「追问暂未开通」）：
+</div>
 
-```bash
-cp .env.example .env
-# 若要演示「问清楚一点」，编辑 .env 填入 ZHIPU_API_KEY
-# Coding 套餐保持 ZHIPU_API_BASE=https://open.bigmodel.cn/api/coding/paas/v4
-```
+---
 
-4. 启动（**必须带 `--env-file`**，否则 `.env` 不会生效、Key 不被读取）：
+## 合同读完了，心里还是没底？
 
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --env-file .env
-```
+钱什么时候付，押金什么时候退，出了问题谁负责——真正影响你的，往往藏在这些具体约定里。
 
-5. 浏览器打开 <http://localhost:8000>
+Agent-T 帮你做签约前的第一轮梳理：上传合同，查看需要留意的地方，对照原文，再继续问“这会怎样影响我？”“可以怎么改？”
 
-## 三分钟演示（页面）
+**让第一次沟通，就能问到关键处。** 无论你是准备签约的业务负责人、核对付款条件的财务，还是希望先整理问题的法务与审计人员，都可以从这里开始。
 
-1. 上传 `fixtures/procurement_sample.txt`，类型选「采购合同」  
-2. 应看到约 **7 条「需关注」**（价款与支付、违约责任、格式条款、主体、标的、适用法律、签署与印章）  
-3. 点「价款与支付」看原文黄底命中词  
-4. 再点「问清楚一点」（有 Key 才有智能解释；无 Key 显示「追问暂未开通」）
+## 从一份合同，到一组可以讨论的问题
 
-## 一键演示脚本（命令行）
+| 你想弄清楚的事 | Agent-T 如何帮你 |
+|---|---|
+| **先看哪里？** | 按合同类型核查常见事项，列出“需关注”和“未找到”的约定，方便逐项查看。 |
+| **为什么值得留意？** | 展示核查说明、原文摘句与条款位置，把问题放回合同语境里理解。 |
+| **还有什么值得再看一眼？** | 接入 AI 后，补充完整性、条款一致性和实际影响方面的参考观察，供人工核实。 |
+| **应该怎么问、怎么谈？** | 对系统标记“需关注”的条款继续追问，获取解释、修改建议和建议改写稿。 |
+| **怎么交给同事一起看？** | 导出 Word 报告，汇总逐条核查、参考评分与候选风险；也可以用手机查看结果。 |
 
-服务先按上面启动着，另开终端：
+AI 功能需要配置模型服务。当前 Word 报告不包含页面中的 AI 观察与追问回答，转交前请留意报告范围。
 
-```bash
-source .venv/bin/activate
-bash scripts/demo_procurement.sh
-```
+## 这些时刻，值得让 Agent-T 先看一遍
 
-脚本会：上传采购样例 → 断言 7 条「需关注」→ 若已配置 Key 则追问「价款与支付」，否则打印「追问暂未开通」。
+### 采购前：先把付款和验收谈清楚
 
-可选：`BASE_URL=http://127.0.0.1:8000 bash scripts/demo_procurement.sh`
+供应商发来合同，你想确认付款节奏、验收安排、质保与违约责任。先整理关注项，再带着具体问题和供应商沟通。
 
-## 术语一句
+### 租赁前：看清入住之外的退出成本
 
-- **清单** = 事先定好的必看项  
-- **需关注** = 建议你仔细看  
-- **智能解释** = 把难懂条款说成人话（不盖章）
+签下办公室或经营场地之前，核对押金、提前解约、维修和装修恢复等约定。除了“租多少钱”，也问清“怎么退、谁来修、离开时要承担什么”。
 
-## 环境变量（`.env.example`）
+### 交换资料前：弄清秘密守到什么时候
 
-| 变量 | 说明 |
-|------|------|
-| `DEEPSEEK_API_KEY` | **首选**（OpenAI 兼容，速度快）。GLM Coding Plan 条款限定指定工具内使用，web 服务调用会被降权，故线上优先走 DeepSeek |
-| `DEEPSEEK_MODEL` | 默认 `deepseek-v4-flash`；追问可配 `deepseek-v4-pro` |
-| `DEEPSEEK_API_BASE` | 默认 `https://api.deepseek.com`；兼容其他 OpenAI 协议网关 |
-| `ZHIPU_API_KEY` 或 `GLM_API_KEY` | 智谱 Key（备选回退）；不配也能跑清单 |
-| `GLM_MODEL` | 默认 `glm-5.2` |
-| `ZHIPU_API_BASE` | Coding 套餐默认 `https://open.bigmodel.cn/api/coding/paas/v4`；标准 API 改为 `https://open.bigmodel.cn/api/paas/v4` |
-| `XAI_API_KEY` / `GROK_API_KEY` | 可选回退（**一般不用**） |
-| `BLIND_SPOT_ENABLED` | 补盲开关，默认 `true`；关则纯规则、界面无「补盲」 |
-| `LLM_TIMEOUT_SECONDS` | 单次大模型调用超时，默认 180 |
-| `PRECHECK_ENABLED` | LLM 预审（上传时合同分类+支持性判断）开关，默认 `true`；设 `false` 退回纯规则行为 |
-| `PRECHECK_TIMEOUT_SECONDS` | 预审独立超时秒数，默认 30 |
-| `STORE_DB_PATH` / `STORE_TTL_HOURS` | 审查记录 SQLite 路径 / 保留时长（默认 24h，0=永久） |
+签署 NDA 时，梳理保密范围、存续期限、责任和知识产权归属，明确双方的约定。
 
-> 数据流向说明：配置了模型 Key 时，上传合同的**文本内容**会发送至所配大模型（DeepSeek/智谱）用于评分、补盲与追问；不配置 Key 则纯本地规则审查，数据不出服务器。
+这些是使用场景示意，不代表系统能够发现其中所有风险。
 
-## 测试
+## 四步开始一次审查
 
-```bash
-pip install pytest    # 或 pip install -e ".[dev]"；pytest 不在 requirements.txt 运行时依赖里
-pytest -q
-```
+**上传合同 → 查看关注项 → 对照原文追问 → 带着建议沟通**
 
-前端 E2E（`tests/test_frontend_e2e.py`，Playwright 真实浏览器，无 Key 模式）：
+1. **选文件，也选视角。** 选择合同类型和代表方，上传一份合同；若 AI 对类型有不同判断，会提示你确认。
+2. **逐项看清楚。** 查看核查结果、说明和摘句；接入 AI 后还可查看参考观察。
+3. **把问题问具体。** 例如：“这条对付款有什么影响？”“请给我一个便于双方协商的改法。”
+4. **核对后再使用。** 对照合同检查建议，复制需要讨论的改写稿，或导出报告交给同事。
 
-```bash
-pip install playwright
-playwright install chromium
-```
+## 现在支持什么？
 
-未安装 Playwright 时该模块整体 skip，不影响其余用例；只装了包但没跑 `playwright install chromium` 则会在 fixture 处报错（而非 skip），两条安装命令都要执行。
+| 合同类型 | 当前阅读视角 | 主要核查内容 |
+|---|---|---|
+| 采购合同 | 买方；未声明时按买方视角提示 | 主体、标的、付款、履行期限、违约、质保相关安排等 |
+| 租赁合同 | 承租方；未声明时按承租方视角提示 | 租期、租金、押金、交付、维修、装修、提前解约等 |
+| 保密协议（NDA） | 可声明披露方或接收方 | 保密范围、协议期限、保密存续期、责任、知识产权等 |
 
-采购金标：上述 7 项须为「需关注」；「管辖与争议」可通过。
+选择立场会记录审查视角，当前规则核查口径不随立场改变。采购卖方与租赁出租方视角暂不支持。
 
-## API 速查
+文件支持文本、Word（`.docx`）与文字版 PDF；PDF 需安装解析依赖。旧版 `.doc` 与扫描件取决于解析环境，建议先转换为 `.docx` 或可复制文字的 PDF。单份文件上限 **10 MB**，一次审查一份合同。
 
-- `POST /api/upload` — 文件 + `category`（`procurement` \| `nda` \| `lease`）  
-- `GET /api/review/{id}` — 审查结果  
-- `GET /api/review/{id}/report` — 导出审查报告（docx，M4）  
+## 有依据地讨论，也保留判断的余地
 
-## 部署
+Agent-T 将**规则核查结果**与**AI 参考意见**分开展示。AI 提出的候选问题需要人工确认，参考评分也不会覆盖逐条规则状态。
 
-公网部署（国内云服务器 Docker，含 Basic Auth 访问控制）见 [docs/deploy-server.md](docs/deploy-server.md)；
-`BASIC_AUTH_USERNAME` / `BASIC_AUTH_PASSWORD` 同时配置即启用整站认证（不配置则关闭）。
-- `POST /api/ask` — `{ review_id, item_id, question }`（仅需关注）  
-- `GET /health`
+它适合帮你准备问题、理解约定、形成沟通草稿。当前仍处于 MVP 持续迭代阶段，可能误报、漏报或引用不准确；长合同的 AI 阅读受分段预算限制。请对照原文核实引用与改写，重要合同仍应交由专业人员复核。
 
-## 设计变量
+## 开始体验
 
-界面色板/字号见 [`docs/design-tokens.md`](docs/design-tokens.md)（阳仔视觉标准 v0.1）。
+**先用仓库自带的样例，走通一次完整流程。**
 
-## 项目结构
+- [采购合同样例](fixtures/procurement_sample.txt)：体验付款、验收等关注项。
+- [租赁合同样例](fixtures/lease_sample.txt)：体验押金、解约等约定的核查。
+- [NDA 样例](fixtures/nda_public_template.txt)：体验保密协议的逐项梳理。
 
-```
-app/           # FastAPI + 清单引擎 + 追问 + 三屏静态页
-config/        # 采购 / NDA 清单 YAML
-fixtures/      # 采购样例、换措辞对抗样例、NDA 模板
-scripts/       # demo_procurement.sh
-tests/
-```
+目前提供自行部署的版本：按 [安装与配置指南](docs/getting-started.md) 启动，在浏览器中上传样例即可使用。
+
+**没有模型 API Key，也能先体验规则核查与报告导出。** 配置 DeepSeek、智谱或 xAI 后，可启用 AI 预审、参考分析和条款追问；模型调用由对应服务商计费。
+
+### 合同数据会去哪里？
+
+合同在你部署的服务器上解析和保存。未配置模型 Key 时，不会调用大模型；配置后，相关合同文本和问题会发送到所选模型服务商，若使用自定义网关则发送到该网关。记录默认 24 小时后不可访问，保存期限可配置，清理机制详见安装指南。
+
+首次使用建议上传样例或脱敏合同。部署到公网、接入真实合同前，请配置访问认证与 HTTPS。
+
+## 给开发者与共建者
+
+Agent-T 使用 **FastAPI + LangGraph + SQLite**，搭配轻量 Web 界面。规则配置、AI 参考分析与展示层分开，便于按具体合同场景逐步改进。
+
+| 想了解什么 | 从这里开始 |
+|---|---|
+| 本地启动、模型配置、测试与 API | [安装与配置](docs/getting-started.md) |
+| 部署到服务器 | [部署指南](docs/deploy-server.md) |
+| 调整核查规则、预算与限频 | [管理员配置](docs/admin-config.md) |
+| 了解产品方向与后续计划 | [开发路线](docs/roadmap-llm-ui.md) |
+| 查看每轮迭代做了什么 | [成长记录](docs/plain-changelog.md) |
+| 界面设计规范 | [设计说明](docs/design-tokens.md) |
+
+发现漏报、误报或不好理解的地方？欢迎 [提交反馈](https://github.com/ARTHUR-BBU/Agent-T/issues)。请附上**脱敏片段、合同类型、预期结果与实际表现**，帮助我们把一个具体问题变成下一次改进。
+
+---
+
+<div align="center">
+
+**把合同里的疑问，变成谈判桌上清楚的问题。**
+
+觉得这个方向有价值，欢迎 Star 关注进展，也欢迎用一个真实场景帮助 Agent-T 变得更好。
+
+</div>
