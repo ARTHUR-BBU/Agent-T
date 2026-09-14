@@ -32,6 +32,8 @@ from pydantic import BaseModel, Field
 from app.prompts import quality as quality_prompts
 from app.services import blind_spot, llm_ask, scorecard
 from app.services.clause_index import locate_quote_clauses
+from app.services.evidence import attach_evidence_to_item, build_evidence, document_version_for
+from app.services import facts as facts_service
 from app.services.scorecard_prompts import (
     _rule_block,
     build_review_plan,
@@ -71,6 +73,7 @@ class QualityObservation(BaseModel):
     clause_ambiguous: bool = False  # quote 跨多条款时 True，clause_id 置空
     comment: str = ""
     needs_confirm: bool = True  # 代码硬编码；模型输出 schema 里没有此字段
+    evidence: Optional[dict[str, Any]] = None  # EvidenceRef；界面称「证据引用」
 
 
 class QualityInfo(BaseModel):
@@ -82,6 +85,9 @@ class QualityInfo(BaseModel):
     disclaimer: str = "以上为 AI 观察，不构成审查结论、不影响逐条核查结果；每条均需人工确认。"
     dropped_count: int = 0  # quote 校验丢弃数（观测/日志用，前端不渲染）
     coverage: Optional[dict[str, Any]] = None  # 长合同 {chunks_total, chunks_reviewed, limited}
+    # 架构 batch3 / A2：事实材料（跨条款对照）；界面文案「事实材料」
+    facts: list[dict[str, Any]] = Field(default_factory=list)
+    pending_questions: list[str] = Field(default_factory=list)
 
 
 def is_quality_enabled() -> bool:
@@ -162,6 +168,14 @@ def run_quality(
     observations: list[QualityObservation] = []
     dropped = 0
     coverage: Optional[dict[str, Any]] = None
+    collected_facts: list[dict[str, Any]] = []
+    pending_questions: list[str] = []
+    doc_ver = document_version_for(text)
+
+    # 确定性事实兜底：即使 map 观察全空，一致性轮仍有金额/日期/主体可对照
+    seed_facts = facts_service.extract_deterministic_facts(
+        text, document_version=doc_ver, clause_index=clause_index
+    )
 
     if segmented:
         chunks, plan_meta = build_review_plan(text, clause_index, max_segments=_max_segments())
@@ -196,27 +210,43 @@ def run_quality(
                 logger.warning("Quality map chunk %d/%d unparseable payload", part_no, chunks_total)
                 continue
             chunks_ok += 1
-            obs, dropped_n = _clean_observations(parsed, text, clause_index)
+            obs, dropped_n = _clean_observations(
+                parsed, text, clause_index, document_version=doc_ver
+            )
             observations.extend(obs)
             dropped += dropped_n
+            raw_facts, raw_pending = facts_service.parse_map_extras(raw)
+            collected_facts.extend(
+                facts_service.clean_facts(
+                    raw_facts, text, document_version=doc_ver, clause_index=clause_index
+                )
+            )
+            for q in raw_pending:
+                if q not in pending_questions and len(pending_questions) < facts_service.MAX_PENDING:
+                    pending_questions.append(q)
         coverage = coverage_from_plan(
             plan_meta, chunks_reviewed=chunks_ok, reason=stop_reason
         )
+        merged_facts = facts_service.merge_facts(seed_facts, collected_facts)
         if chunks_ok == 0:
-            # 长合同 map 全败：软降级（不回退全文单调用——超长正是要防的延迟面）
             logger.warning("Quality map produced nothing (all chunks failed)")
             return QualityInfo(
-                available=False, reason="parse_failed", dropped_count=dropped, coverage=coverage
+                available=False, reason="parse_failed", dropped_count=dropped,
+                coverage=coverage, facts=merged_facts,
+                pending_questions=pending_questions,
             ).model_dump()
         if chunks_ok >= MIN_CHUNKS_FOR_CONSISTENCY:
             obs, dropped_n, failed = _run_consistency_round(
-                chat, system, items, observations, text, clause_index, budget
+                chat, system, items, observations, text, clause_index, budget,
+                facts=merged_facts, document_version=doc_ver,
             )
             observations.extend(obs)
             dropped += dropped_n
             if failed:
                 return QualityInfo(
-                    available=False, reason="parse_failed", dropped_count=dropped, coverage=coverage
+                    available=False, reason="parse_failed", dropped_count=dropped,
+                    coverage=coverage, facts=merged_facts,
+                    pending_questions=pending_questions,
                 ).model_dump()
     else:
         system = quality_prompts.build_system_prompt(policies)
@@ -227,12 +257,10 @@ def run_quality(
         try:
             raw = chat(system, user)
         except Exception:  # noqa: BLE001
-            # exc 只进日志（对齐 llm_ask/model_review 信息泄露防线）
             logger.exception("Quality LLM error")
             return outcome_unavailable("llm_error")
         parsed = _parse_observations(raw)
         if parsed is None or _has_forbidden(parsed):
-            # 主调用恰好 1 次重试（解析失败或禁语命中）
             if budget is not None and not budget.try_consume():
                 logger.warning("Quality retry skipped: budget exhausted")
                 return outcome_unavailable("budget_exceeded")
@@ -245,16 +273,25 @@ def run_quality(
             parsed = _parse_observations(raw)
             if parsed is None:
                 return outcome_unavailable("parse_failed")
-        observations, dropped = _clean_observations(parsed, text, clause_index)
+        observations, dropped = _clean_observations(
+            parsed, text, clause_index, document_version=doc_ver
+        )
+        raw_facts, raw_pending = facts_service.parse_map_extras(raw)
+        collected_facts = facts_service.clean_facts(
+            raw_facts, text, document_version=doc_ver, clause_index=clause_index
+        )
+        pending_questions = raw_pending[: facts_service.MAX_PENDING]
+        merged_facts = facts_service.merge_facts(seed_facts, collected_facts)
+
+    merged_facts = facts_service.merge_facts(seed_facts, collected_facts)
 
     if not observations:
-        # 解析成功但合法观察为空：合法结果（真没有值得说的），available=True 空列表
         return QualityInfo(
             available=True, reason=None, observations=[],
             dropped_count=dropped, coverage=coverage,
+            facts=merged_facts, pending_questions=pending_questions,
         ).model_dump()
 
-    # 去重（同 quote 或同 dimension+title 保留先到）→ 封顶 → 维度固定序
     observations = _dedupe(observations)
     observations = _cap(observations)
     observations.sort(key=lambda o: _DIMENSION_ORDER.get(o.dimension, 99))
@@ -262,6 +299,7 @@ def run_quality(
     return QualityInfo(
         available=True, reason=None, observations=observations,
         dropped_count=dropped, coverage=coverage,
+        facts=merged_facts, pending_questions=pending_questions,
     ).model_dump()
 
 
@@ -275,9 +313,10 @@ def _run_consistency_round(
     text: str,
     clause_index: Optional[dict[str, Any]],
     budget: Optional[Any],
+    facts: Optional[list[dict[str, Any]]] = None,
+    document_version: str = "",
 ) -> tuple[list[QualityObservation], int, bool]:
-    """跨块矛盾轮：无全文、素材=已过 quote 校验的观察摘要（进门先 scrub，
-    防禁语经素材回流——对齐 scorecard.format_observations 先例）。
+    """跨块矛盾轮：无全文；素材=观察摘要 + 事实材料（A2）。
 
     返回 (新观察, 丢弃数, 是否失败降级)。失败降级（failed=True）时调用方
     丢弃全部产出走 parse_failed 整卡隐藏——偏保守取舍：一致性轮失败说明
@@ -293,11 +332,13 @@ def _run_consistency_round(
 
     material_lines = []
     for o in map_observations[:MAX_OBSERVATIONS]:
-        # 防线纵深：观察虽已在清洗链洗过，素材块进门再洗一遍——禁语不得
-        # 经素材回流放大重试（对齐 scorecard.format_observations 先例）
         title = llm_ask._scrub_banned_echo(scorecard.scrub_forbidden(o.title))
         comment = llm_ask._scrub_banned_echo(scorecard.scrub_forbidden(o.comment))
         material_lines.append(f"- [{o.dimension}] {title}｜原文：{o.quote}｜{comment}")
+    fact_block = facts_service.facts_material_lines(facts or [])
+    if fact_block:
+        material_lines.append("【事实材料】")
+        material_lines.append(fact_block)
     system = quality_prompts.build_system_prompt([])
     user = quality_prompts.build_consistency_user_prompt(
         _rule_block(items), "\n".join(material_lines)
@@ -319,7 +360,9 @@ def _run_consistency_round(
         parsed = _parse_observations(raw)
         if parsed is None:
             return [], 0, True
-    obs, dropped = _clean_observations(parsed, text, clause_index)
+    obs, dropped = _clean_observations(
+        parsed, text, clause_index, document_version=document_version
+    )
     return obs, dropped, False
 
 
@@ -361,6 +404,7 @@ def _clean_observations(
     parsed: list[dict[str, Any]],
     text: str,
     clause_index: Optional[dict[str, Any]],
+    document_version: str = "",
 ) -> tuple[list[QualityObservation], int]:
     """清洗链：维度白名单→限长→quote 全文校验→服务端派生 clause_id→双禁语→needs_confirm。
 
@@ -398,15 +442,28 @@ def _clean_observations(
             clause_ambiguous = True
         else:
             clause_id = None
+        qtext = quote[: blind_spot.MAX_QUOTE_CHARS]
+        evidence = build_evidence(
+            text=text,
+            quote=qtext,
+            parse_source="quality",
+            document_version=document_version or document_version_for(text),
+            clause_id=clause_id,
+            clause_index=clause_index,
+        )
+        if clause_ambiguous:
+            evidence["verification"] = "ambiguous"
+            evidence["clause_id"] = None
         out.append(
             QualityObservation(
                 dimension=dimension,
                 title=title,
-                quote=quote[: blind_spot.MAX_QUOTE_CHARS],
+                quote=qtext,
                 clause_id=clause_id,
                 clause_ambiguous=clause_ambiguous,
                 comment=comment,
                 needs_confirm=True,  # 代码强制；模型无权声明免确认
+                evidence=evidence,
             )
         )
     return out, dropped

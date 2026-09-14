@@ -292,11 +292,39 @@ def ask_about_item(
         parsed["问题是啥"] = "该条已标为需关注，不能视为安全通过，请结合原文复核。"
     parsed = _scrub_answer_dict(parsed)
     parsed = _verify_ask_answer(parsed, contract_text, clause_context=clause_context)
+    quote_ok = bool((parsed or {}).get("quote_verified"))
+    evidence = None
+    try:
+        from app.services.evidence import build_evidence, document_version_for
+
+        qtext = ""
+        if parsed and quote_ok:
+            qtext = str(parsed.get("原文在哪") or "")
+        evidence = build_evidence(
+            text=contract_text or "",
+            quote=qtext,
+            parse_source="ask",
+            document_version=document_version_for(contract_text or ""),
+            force_verification="verified" if quote_ok and qtext else "unverified",
+        )
+        if quote_ok and qtext:
+            # 有摘句时再定位坐标（force 会跳过 locate）
+            located = build_evidence(
+                text=contract_text or "",
+                quote=qtext,
+                parse_source="ask",
+                document_version=evidence["document_version"],
+            )
+            evidence = located
+    except Exception:  # noqa: BLE001
+        logger.exception("ask evidence build failed")
+        evidence = None
     return {
         "ok": True,
         "answer": parsed,
         "raw_text": _scrub_banned_echo(raw or ""),
-        "quote_verified": bool((parsed or {}).get("quote_verified")),
+        "quote_verified": quote_ok,
+        "evidence": evidence,
     }
 
 

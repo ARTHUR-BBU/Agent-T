@@ -87,6 +87,7 @@ def _start_review(
     stance: str,
     budget: object | None,
     precheck_record: dict | None,
+    parsed_text: str | None = None,
 ) -> str:
     """建档 + 启动后台审查线程（外部审计二轮 PR-C 从 upload 抽取）。
 
@@ -116,21 +117,40 @@ def _start_review(
         policies=[],
         error=None,
         precheck=precheck_record,
+        completion=None,
+        document_version="",
+        facts=[],
+        export_scope_note=(
+            "报告只含本次读到并展示的内容；未读部分不写入结论"
+            "（含规则核查、参考评分与补盲；不含页面 AI 观察及追问）"
+        ),
     )
 
     # 审查放后台线程：上传立即返回 review_id（外部审计 P1：同步等待模型
     # 会拖死请求，前端的 processing 轮询此前形同虚设）
     def _run_review_worker(
-        review_id: str, fname: str, content: bytes, cat: str, budget: object | None
+        review_id: str, fname: str, content: bytes, cat: str, budget: object | None,
+        reused_text: str | None,
     ) -> None:
         # stage 回调：pipeline 节点入口上报 → 逐步落库；update 自身有兜底，
         # 回调失败不影响审查（pipeline 侧还包了一层 try/except）
         def on_stage(stage: str) -> None:
             store.update(review_id, stage=stage)
 
+        def on_partial(completion: str, fields: dict) -> None:
+            # A5：阶段结果落盘；规则 items 一经写出即保留（F03 精神）
+            # status 仍 processing，直到 fully_complete 才 done——避免半成品可导出误导
+            payload = {k: v for k, v in (fields or {}).items() if v is not None}
+            payload["completion"] = completion
+            store.update(review_id, **payload)
+
         try:
             try:
-                result = run_review(fname, content, category=cat, budget=budget, on_stage=on_stage)
+                result = run_review(
+                    fname, content, category=cat, budget=budget,
+                    on_stage=on_stage, on_partial=on_partial,
+                    parsed_text=reused_text,
+                )
                 if result.get("error"):
                     store.update(
                         review_id,
@@ -139,6 +159,13 @@ def _start_review(
                         error=result["error"],
                         text=result.get("text") or "",
                         quality=result.get("quality") or {},
+                        completion=result.get("completion") or None,
+                        # 若规则已出，保留 items（不因后续失败抹掉）
+                        **(
+                            {"items": result["items"]}
+                            if result.get("items")
+                            else {}
+                        ),
                     )
                 else:
                     preview = (result.get("text") or "")[:500]
@@ -159,6 +186,9 @@ def _start_review(
                         category_label=result.get("category_label") or cat,
                         clause_index=result.get("clause_index"),
                         text_preview=preview,
+                        document_version=result.get("document_version") or "",
+                        completion=result.get("completion") or "fully_complete",
+                        facts=result.get("facts") or [],
                         error=None,
                     )
             except Exception:  # noqa: BLE001
@@ -171,7 +201,9 @@ def _start_review(
             _review_slots.release()
 
     threading.Thread(
-        target=_run_review_worker, args=(rid, filename, raw, category, budget), daemon=True
+        target=_run_review_worker,
+        args=(rid, filename, raw, category, budget, parsed_text),
+        daemon=True,
     ).start()
     return rid
 
@@ -295,6 +327,7 @@ async def upload(
         rid = _start_review(
             filename=filename, raw=raw, category=category,
             stance=stance, budget=budget, precheck_record=precheck_record,
+            parsed_text=contract_text,
         )
     except Exception:
         _review_slots.release()
@@ -318,6 +351,9 @@ def get_review(review_id: str):
     clause_index = row.get("clause_index")
     stance = row.get("stance") or "neutral"
     quality = row.get("quality")
+    facts = row.get("facts")
+    if not facts and isinstance(quality, dict):
+        facts = quality.get("facts") or []
     return ReviewSummary(
         precheck=PrecheckInfo(**pc) if pc else None,
         id=row["id"],
@@ -339,6 +375,14 @@ def get_review(review_id: str):
         error=row.get("error"),
         text_preview=row.get("text_preview") or "",
         ask_available=bool(llm_ask.get_api_key()),
+        completion=row.get("completion"),
+        document_version=row.get("document_version") or "",
+        facts=facts or [],
+        export_scope_note=row.get("export_scope_note")
+        or (
+            "报告只含本次读到并展示的内容；未读部分不写入结论"
+            "（含规则核查、参考评分与补盲；不含页面 AI 观察及追问）"
+        ),
     )
 
 
@@ -413,4 +457,6 @@ def ask(body: AskRequest):
         answer=result.get("answer"),
         raw_text=result.get("raw_text"),
         error=result.get("error"),
+        quote_verified=result.get("quote_verified"),
+        evidence=result.get("evidence"),
     )
