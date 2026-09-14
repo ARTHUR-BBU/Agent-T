@@ -963,3 +963,74 @@ mark.kw,
   .score-details summary { display: flex; align-items: center; min-height: 44px; }
   .rewrite-copy, .report-link { height: var(--btn-height); }
 }
+
+
+/* ---- 可信度架构 batch3：阅读范围 / 事实材料 / 证据引用（阳仔：不大改版） ---- */
+.reading-scope {
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  color: #6B7280;
+}
+.export-scope-note {
+  margin: 0.25rem 0 0;
+  font-size: 0.78rem;
+  color: #6B7280;
+  max-width: 22rem;
+  line-height: 1.35;
+}
+.facts-card {
+  background: #F5F5F7;
+  border: 1px solid #E5E5EA;
+  border-radius: 10px;
+  padding: 0.85rem 1rem;
+  margin: 0.75rem 0 1rem;
+}
+.facts-card h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #374151;
+}
+.facts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.facts-list li {
+  display: flex;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid #EBEBEF;
+}
+.facts-list li:last-child { border-bottom: none; }
+.facts-label {
+  flex: 0 0 3.5rem;
+  color: #6B7280;
+}
+.facts-value { color: #111827; }
+.facts-empty {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #9CA3AF;
+}
+.evidence-jump {
+  margin-left: 0.4rem;
+  font-size: 0.8rem;
+  vertical-align: baseline;
+}
+.detail-quote.is-flash,
+.quality-quote.is-flash,
+#ask-quote.is-flash {
+  outline: 2px solid #F5A524;
+  box-shadow: 0 0 0 3px rgba(255, 224, 138, 0.7);
+}
+.partial-banner {
+  font-size: 0.88rem;
+  color: #9A6700;
+  background: #FFF8E8;
+  border: 1px solid #F5D78E;
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  margin: 0 0 0.75rem;
+}

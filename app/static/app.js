@@ -291,12 +291,26 @@
       state.review = data;
       if (data.status === "processing" || data.status === "pending") {
         updateStages(data.stage);
+        // A5：规则已出即可展示清单（AI 未完成横幅），不抹掉规则结果
+        if ((data.items || []).length && data.completion) {
+          loading.classList.add("hidden");
+          renderResults(data, { partial: data.completion !== "fully_complete" });
+          body.classList.remove("hidden");
+        }
         await new Promise((r) => setTimeout(r, 2000));
         continue;
       }
       loading.classList.add("hidden");
       if (data.status === "error") {
         markStageError();
+        // 规则已出而后续失败：仍展示已有 items
+        if ((data.items || []).length) {
+          renderResults(data, { partial: true, failed: true });
+          body.classList.remove("hidden");
+          errBox.textContent = data.error || "AI 部分未完成，规则结果仍可查看";
+          errBox.classList.remove("hidden");
+          return;
+        }
         errBox.textContent = data.error || "审查失败，请返回重新上传";
         errBox.classList.remove("hidden");
         return;
@@ -310,7 +324,122 @@
     errBox.classList.remove("hidden");
   }
 
-  function renderResults(data) {
+
+  function coverageOf(data) {
+    const sc = (data && data.scorecard) || {};
+    if (sc.coverage) return sc.coverage;
+    const q = (data && data.quality) || {};
+    return q.coverage || null;
+  }
+
+  function renderReadingScope(data) {
+    const el = $("reading-scope");
+    if (!el) return;
+    const cov = coverageOf(data);
+    if (!cov) {
+      // 无 AI 覆盖信息时：规则扫描为全文
+      el.textContent = "阅读范围：本次已读全文（规则扫描）";
+      el.classList.remove("hidden");
+      return;
+    }
+    if (cov.limited) {
+      let line = "合同较长，本次只读到部分内容，结论供参考";
+      const range = readClauseRangeLabel(data, cov);
+      if (range) line += " · " + range;
+      el.textContent = "阅读范围：" + line;
+    } else {
+      el.textContent = "阅读范围：本次已读全文";
+    }
+    el.classList.remove("hidden");
+  }
+
+  function readClauseRangeLabel(data, cov) {
+    const clauses = data.clause_index && data.clause_index.clauses;
+    if (!clauses || !clauses.length) return "";
+    const unread = cov.unread_ranges || [];
+    if (!unread.length && cov.chars_covered && cov.original_chars) {
+      const n = Math.max(
+        1,
+        Math.min(
+          clauses.length,
+          Math.round((clauses.length * cov.chars_covered) / cov.original_chars)
+        )
+      );
+      return n > 1 ? "已读第 1–" + n + " 段" : "已读第 1 段";
+    }
+    const unreadIdx = new Set();
+    unread.forEach((rng) => {
+      if (!rng || rng.length < 2) return;
+      const lo = rng[0], hi = rng[1];
+      clauses.forEach((c, i) => {
+        if (c.start < hi && c.end > lo) unreadIdx.add(i);
+      });
+    });
+    const read = [];
+    for (let i = 0; i < clauses.length; i++) {
+      if (!unreadIdx.has(i)) read.push(i + 1);
+    }
+    if (!read.length) return "";
+    const a = read[0], b = read[read.length - 1];
+    return a === b ? "已读第 " + a + " 段" : "已读第 " + a + "–" + b + " 段";
+  }
+
+  function renderFacts(data) {
+    const panel = $("facts-panel");
+    if (!panel) return;
+    let facts = data.facts || [];
+    if ((!facts || !facts.length) && data.quality && data.quality.facts) {
+      facts = data.quality.facts;
+    }
+    panel.innerHTML = "";
+    const h = document.createElement("h3");
+    h.textContent = "事实材料";
+    panel.appendChild(h);
+    if (!facts || !facts.length) {
+      const empty = document.createElement("p");
+      empty.className = "facts-empty";
+      empty.textContent = "未抽出可核对事实";
+      panel.appendChild(empty);
+      panel.classList.remove("hidden");
+      return;
+    }
+    const ul = document.createElement("ul");
+    ul.className = "facts-list";
+    facts.forEach((f) => {
+      const li = document.createElement("li");
+      const lab = document.createElement("span");
+      lab.className = "facts-label";
+      lab.textContent = f.label || f.kind || "事实";
+      const val = document.createElement("span");
+      val.className = "facts-value";
+      val.textContent = f.value || "";
+      li.appendChild(lab);
+      li.appendChild(val);
+      ul.appendChild(li);
+    });
+    panel.appendChild(ul);
+    panel.classList.remove("hidden");
+  }
+
+  function jumpToEvidence(targetEl, evidence) {
+    if (!targetEl) return;
+    targetEl.scrollIntoView({ behavior: "smooth", block: "center" });
+    targetEl.classList.add("is-flash");
+    setTimeout(() => targetEl.classList.remove("is-flash"), 1600);
+    // 证据引用：有条款时在旁注提示（不写 EvidenceRef）
+    if (evidence && evidence.clause_id) {
+      const heading = clauseHeadingById(evidence.clause_id);
+      if (heading) {
+        const clauseEl = $("detail-clause");
+        if (clauseEl) {
+          clauseEl.textContent = "证据引用 · 所在条款：" + heading;
+          clauseEl.classList.remove("hidden");
+        }
+      }
+    }
+  }
+
+  function renderResults(data, opts) {
     const items = data.items || [];
     const blinds = (data.blind_enabled && (data.blind_candidates || []).length)
       ? (data.blind_candidates || [])
@@ -368,10 +497,43 @@
       $("results-meta-main").appendChild(decl);
     }
 
+    // 部分完成横幅
+    let banner = document.getElementById("partial-banner");
+    if (!banner) {
+      banner = document.createElement("p");
+      banner.id = "partial-banner";
+      banner.className = "partial-banner hidden";
+      const meta = $("results-meta");
+      if (meta && meta.parentNode) meta.parentNode.insertBefore(banner, meta.nextSibling);
+    }
+    const partial = !!(opts && opts.partial);
+    if (partial) {
+      const doneRules = data.completion === "rules_complete";
+      banner.textContent = doneRules
+        ? "规则已出，AI 评分尚未完成——清单结果可先看，导出需等全部完成"
+        : (opts && opts.failed)
+          ? "AI 部分未完成；规则核查结果仍保留"
+          : "规则已出，AI 尚未全部完成";
+      banner.classList.remove("hidden");
+    } else {
+      banner.textContent = "";
+      banner.classList.add("hidden");
+    }
+
+    renderReadingScope(data);
+    renderFacts(data);
+
     // M4：审查完成后开放报告导出（GET /api/review/{id}/report）
-    if (data.id) {
+    if (data.id && data.status === "done") {
       $("btn-export-report").href = `/api/review/${data.id}/report`;
       $("meta-actions").classList.remove("hidden");
+      const note = $("export-scope-note");
+      if (note) {
+        note.textContent = data.export_scope_note
+          || "报告只含本次读到并展示的内容；未读部分不写入结论";
+      }
+    } else if ($("meta-actions")) {
+      $("meta-actions").classList.add("hidden");
     }
     renderScorecard(data);
     const list = $("item-list");
@@ -472,6 +634,12 @@
         quote.className = "quality-quote";
         quote.textContent = "原文：" + o.quote;
         li.appendChild(quote);
+        const jump = document.createElement("button");
+        jump.type = "button";
+        jump.className = "link evidence-jump";
+        jump.textContent = "看原文";
+        jump.onclick = () => jumpToEvidence(quote, o.evidence || null);
+        li.appendChild(jump);
       }
 
       if (o.comment) {
@@ -681,12 +849,21 @@
     }
 
     noteEl.textContent = item.note || "（无说明）";
+    const jumpBtn = $("detail-evidence-jump");
     if (item.quote) {
       quoteEl.classList.remove("empty");
       quoteEl.innerHTML = highlightQuoteHtml(item.quote, item.hits || []);
+      if (jumpBtn) {
+        jumpBtn.classList.remove("hidden");
+        jumpBtn.onclick = () => jumpToEvidence(quoteEl, item.evidence || null);
+      }
     } else {
       quoteEl.classList.add("empty");
       quoteEl.textContent = "暂无原文摘句";
+      if (jumpBtn) {
+        jumpBtn.classList.add("hidden");
+        jumpBtn.onclick = null;
+      }
     }
 
     // Blind candidates need human confirm; do not offer rule-style ask as if stamped

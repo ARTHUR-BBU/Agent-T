@@ -8,6 +8,19 @@ from pydantic import BaseModel, Field
 
 Status = Literal["通过", "需关注", "未找到", "本类不适用"]
 TagSource = Literal["rule", "blind"]
+CompletionStage = Literal["rules_complete", "ai_partial", "fully_complete"]
+
+
+class EvidenceRefInfo(BaseModel):
+    """证据引用（代码名 EvidenceRef）；界面勿渲染英文学名。"""
+
+    document_version: str = ""
+    quote: str = ""
+    start: Optional[int] = None
+    end: Optional[int] = None
+    clause_id: Optional[str] = None
+    verification: str = "unverified"  # verified|unverified|ambiguous|missing
+    parse_source: str = "rules"  # rules|blind|quality|ask|fact
 
 
 class ChecklistItemResult(BaseModel):
@@ -25,6 +38,7 @@ class ChecklistItemResult(BaseModel):
     # 外部审计二轮 P1-1：MatchEvidence（规则命中证据坐标）所在条款——
     # 真正触发风险的条款，Ask 上下文第一顺位；旧记录为空
     primary_clause_id: Optional[str] = None
+    evidence: Optional[EvidenceRefInfo] = None
 
 
 class BlindCandidate(BaseModel):
@@ -39,6 +53,7 @@ class BlindCandidate(BaseModel):
     named_by_scorecard: bool = False
     clause_ids: list[str] = Field(default_factory=list)
     primary_clause_id: Optional[str] = None
+    evidence: Optional[EvidenceRefInfo] = None
 
 
 class ClauseInfo(BaseModel):
@@ -107,6 +122,16 @@ class QualityObservation(BaseModel):
     clause_ambiguous: bool = False  # 摘句跨多条款，位置不唯一
     comment: str = ""
     needs_confirm: bool = True  # 代码强制 True（模型无权声明免确认）
+    evidence: Optional[EvidenceRefInfo] = None
+
+
+class FactMaterial(BaseModel):
+    """事实材料：可核对事实（主体/金额/日期等）+ 证据引用。"""
+
+    kind: str = ""
+    label: str = ""
+    value: str = ""
+    evidence: Optional[EvidenceRefInfo] = None
 
 
 class QualityInfo(BaseModel):
@@ -120,6 +145,8 @@ class QualityInfo(BaseModel):
     disclaimer: str = ""
     dropped_count: int = 0
     coverage: Optional[dict[str, Any]] = None
+    facts: list[FactMaterial] = Field(default_factory=list)
+    pending_questions: list[str] = Field(default_factory=list)
 
 
 class ReviewSummary(BaseModel):
@@ -149,6 +176,16 @@ class ReviewSummary(BaseModel):
     stance_declaration: str = ""
     # 阶段 2.1 质量层（旧记录为 None；不可用时 available=False 前端静默隐藏）
     quality: Optional[QualityInfo] = None
+    # 架构 batch3 / A5：规则完成 / AI 部分完成 / 全部完成（旧记录 None）
+    completion: Optional[CompletionStage] = None
+    document_version: str = ""
+    # 顶层事实材料镜像（与 quality.facts 同源；质量关闭时仍可有确定性抽取）
+    facts: list[FactMaterial] = Field(default_factory=list)
+    # 导出范围说明（九哥：报告只含本次读到并展示的内容…）
+    export_scope_note: str = (
+        "报告只含本次读到并展示的内容；未读部分不写入结论"
+        "（含规则核查、参考评分与补盲；不含页面 AI 观察及追问）"
+    )
 
 
 class UploadResponse(BaseModel):
@@ -176,3 +213,5 @@ class AskResponse(BaseModel):
     answer: Optional[dict[str, Any]] = None
     raw_text: Optional[str] = None
     error: Optional[str] = None
+    quote_verified: Optional[bool] = None
+    evidence: Optional[EvidenceRefInfo] = None
