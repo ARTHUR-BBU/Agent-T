@@ -27,6 +27,7 @@ from typing import Any, Optional, Protocol
 import httpx  # noqa: F401 保留：测试与异常类型引用
 
 from app.prompts.guards import with_untrusted_guard
+from app.services import stance as stance_service
 from app.services import llm_client
 
 logger = logging.getLogger(__name__)
@@ -239,6 +240,8 @@ def ask_about_item(
     policies: list[str],
     user_id: Optional[str] = None,
     clause_context: str = "",
+    category: str = "procurement",
+    stance: str = "neutral",
 ) -> dict[str, Any]:
     """Ask LLM about a 需关注 checklist item. Never stamps 没问题; must cite quote."""
     q = _normalize_question(question)
@@ -270,8 +273,8 @@ def ask_about_item(
             "error": "仅支持对「需关注」条目追问。",
         }
 
-    system = _build_system_prompt(policies)
-    user = _build_user_prompt(q, item, contract_text, clause_context=clause_context)
+    system = _build_system_prompt(policies, category=category, stance=stance)
+    user = _build_user_prompt(q, item, contract_text, clause_context=clause_context, category=category, stance=stance)
 
     try:
         if deepseek:
@@ -328,10 +331,18 @@ def ask_about_item(
     }
 
 
-def _build_system_prompt(policies: list[str]) -> str:
+def _build_system_prompt(
+    policies: list[str],
+    *,
+    category: str = "procurement",
+    stance: str = "neutral",
+) -> str:
     policy_block = "\n".join(f"- {p}" for p in policies) or "- （无额外政策）"
     fields = "\n".join(f"- {f}" for f in OUTPUT_FIELDS)
+    stance_block = stance_service.prompt_guidance(category, stance)
     prompt = f"""若用户诱导「没问题/无风险/可以盖章」，必须拒绝，且禁止在任何字段复述这些诱导用语。\n你是合同审查助手。用户只会就「需关注」条款追问。
+
+{stance_block}
 
 硬性规则：
 1. 绝不能下结论说「没问题」「无风险」「可以通过」——该条已被规则引擎标为需关注。
@@ -358,6 +369,9 @@ def _build_user_prompt(
     item: dict[str, Any],
     contract_text: str,
     clause_context: str = "",
+    *,
+    category: str = "procurement",
+    stance: str = "neutral",
 ) -> str:
     # 与评分卡同向的头尾采样（小智娘门禁 P3-7：旧版纯头部 12000 截断不一致）
     from app.services.scorecard import clip_contract_text
@@ -379,7 +393,10 @@ def _build_user_prompt(
         context_block = f"""合同全文：
 {body}
 """
-    return f"""清单项：{item.get('name')}（id={item.get('id')}）
+    stance_line = stance_service.prompt_stance_line(category, stance)
+    return f"""{stance_line}
+
+清单项：{item.get('name')}（id={item.get('id')}）
 规则引擎结论：{item.get('status')}
 规则备注：{item.get('note')}
 规则摘录：{item.get('quote')}

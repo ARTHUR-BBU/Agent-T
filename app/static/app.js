@@ -1391,11 +1391,12 @@
   function updateStanceHint() {
     const meta = stanceMeta($("category").value);
     const v = selectedStance();
+    const label = (meta.labels && meta.labels[v]) || v;
     $("stance-hint").textContent =
       v === "neutral"
-        ? "将按中性视角阅读合同，不预设立场，报告会声明此视角。"
-        : // 措辞红线（老钱 Q4）：不得暗示立场会改变核查口径/风险判断
-        `将按${(meta.labels && meta.labels[v]) || v}立场阅读合同并在报告声明该视角；核查口径不变，仅结论读向不同。`;
+        ? "中性视角：规则核查照旧；AI 解释不偏向任何一方。"
+        : // 措辞红线（老钱 Q4 + A4）：立场只导 AI 解释，绝不暗示已按立场改规则
+        `按「${label}」读：规则清单不变；仅 AI 解释会点明谁受益、谁担义务。`;
   }
 
   function renderStanceOptions() {

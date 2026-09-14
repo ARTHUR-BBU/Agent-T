@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from app.prompts.guards import with_untrusted_guard
+from app.services import stance as stance_service
 from app.services.scorecard_prompts import _rule_block
 
 # 系统提示词里的身份标识（测试桩按它路由质量层调用）
@@ -21,7 +22,7 @@ DIMENSIONS = ("completeness", "consistency", "impact")
 
 DIMENSION_LINES = """- completeness（完整性）：应有而缺失、或表述空悬无法执行的安排（与规则「未找到」互补；你只做观察，不判档位）。
 - consistency（一致性）：条款之间互相矛盾（如付款安排与验收条件冲突、期限与违约责任对不上、定义与实际使用不一致）。
-- impact（影响）：条款本身写得通，但按用户立场通读会吃亏的实际后果。"""
+- impact（影响）：条款本身写得通，但按用户声明立场通读时，对谁不利/谁担义务——只解释利害，不改规则档位。"""
 
 # 主调用/一致性轮共用的铁律段
 _IRON_RULES = """【铁律——违反任何一条即无效输出】
@@ -32,12 +33,20 @@ _IRON_RULES = """【铁律——违反任何一条即无效输出】
 5. 每条 comment 两句话结构：前半句说实际影响，后半句说修改建议。"""
 
 
-def build_system_prompt(policies: list[str]) -> str:
+def build_system_prompt(
+    policies: list[str],
+    *,
+    category: str = "procurement",
+    stance: str = "neutral",
+) -> str:
     policy_block = "\n".join(f"- {p}" for p in policies) or "- （无额外政策）"
+    stance_block = stance_service.prompt_guidance(category, stance)
     prompt = f"""你是合同审查「{SYSTEM_MARKER}」助手。规则引擎已对合同逐项打标（通过/需关注/未找到/本类不适用）；你的任务是在规则清单之外，从三个维度补充规则词表覆盖不到的参考观察。
 
 三个维度（dimension 取值严格三选一）：
 {DIMENSION_LINES}
+
+{stance_block}
 
 政策参考（为什么这样看）：
 {policy_block}
@@ -65,11 +74,17 @@ def build_user_prompt(
     text: str,
     items: list[dict[str, Any]],
     clause_index: Optional[dict[str, Any]] = None,
+    *,
+    category: str = "procurement",
+    stance: str = "neutral",
 ) -> str:
-    """主调用 user prompt：规则打标块 + 条款目录 + 合同全文。"""
+    """主调用 user prompt：立场短行 + 规则打标块 + 条款目录 + 合同全文。"""
     catalog = _clause_catalog(clause_index)
     catalog_block = f"条款目录（clause_id 供引用）：\n{catalog}\n\n" if catalog else ""
-    return f"""规则引擎打标结果：
+    stance_line = stance_service.prompt_stance_line(category, stance)
+    return f"""{stance_line}
+
+规则引擎打标结果：
 {_rule_block(items)}
 
 {catalog_block}合同全文：
