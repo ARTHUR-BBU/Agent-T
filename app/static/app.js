@@ -452,7 +452,7 @@
     const nBlind = blinds.length;
     let metaExtra = `需关注 ${nAtt} 项 · 已通过 ${nPass} 项`;
     if (nBlind > 0) {
-      metaExtra += ` · 待核实 ${nBlind} 项`;
+      metaExtra += ` · 补盲 ${nBlind} 项`;
     }
     // 品类存疑非阻断提示（老钱金标：知情权不能省，打断权必须不给）
     const suspectBox = $("precheck-suspect");
@@ -1007,7 +1007,8 @@
     if (isBlind) {
       const blindBadge = document.createElement("span");
       blindBadge.className = "source-badge blind";
-      blindBadge.textContent = "待核实";
+      // 九哥词表：补盲区淡紫「补盲」；「待核实」只留给需你确认区
+      blindBadge.textContent = "补盲";
       badges.appendChild(blindBadge);
     }
 
@@ -1141,8 +1142,8 @@
 
   /** 阶段 2.4 详情/追问屏（#screen-ask 升级兼任，桌面桌面入口与移动 hash
    * 直达共用）。阅读顺序=说明→原文→(答案)→追问输入（roadmap 裁决 1/2）。
-   * 三类条目分流追问卡（阳仔 3.3）：仅「需关注且非待核实」出追问卡——
-   * 待核实渲染成「追问暂未开通」是把「待人工确认」误读成「未开通」。 */
+   * 三类条目分流追问卡（阳仔 3.3）：仅「需关注且非补盲」出追问卡——
+   * 补盲渲染成「追问暂未开通」是把「待人工确认」误读成「未开通」。 */
   function openAskDetail(item) {
     // 切换条目即作废进行中的追问响应（可信度 P1 F04）
     if (!state.askItem || state.askItem.id !== item.id) {
@@ -1170,7 +1171,8 @@
     if (item.status === "需关注") {
       const badge = document.createElement("span");
       badge.className = item._blind ? "source-badge blind" : "source-badge rule";
-      badge.textContent = item._blind ? "待核实" : "系统核查";
+      // 九哥词表：补盲≠待核实；规则侧展示「系统核查」
+      badge.textContent = item._blind ? "补盲" : "系统核查";
       statusLine.appendChild(badge);
     }
 

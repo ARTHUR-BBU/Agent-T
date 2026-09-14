@@ -2,6 +2,14 @@
 
 软件负责证据边界、预算/次数封顶与版本锚定；模型（若有）只可提议下一步核对或解释，
 不得改写规则清单档位（Design B）。本期闭环以确定性路径为主，不烧 LLM。
+
+法务五条分流（人审边界，绝不改规则四档）：
+1. 异议期偏短 → must_human
+2. 验收标准是否另附 → must_human
+3. 价款再核对 → machine_ok 仅当 verification=verified，否则升人审
+4. 摘句未定位（有摘句但对不上）→ must_human
+5. 金额跨条款 → 完全一致且可追原文 → machine_silent，否则 must_human
+总原则：证据链闭合且无价值判断 → 机器；商业取舍/另约可能/证据断裂 → 人。
 """
 from __future__ import annotations
 
@@ -19,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 QuestionStatus = Literal["pending", "confirmed", "disputed", "rechecked"]
 ConfirmChoice = Literal["confirm", "dispute"]
+TriageDisposition = Literal["must_human", "machine_ok", "machine_silent"]
 
 # 硬预算（可被 env 覆盖；垃圾值回退默认）
 DEFAULT_MAX_ROUNDS = 3
@@ -46,6 +55,10 @@ class ConfirmQuestion(BaseModel):
     revised_quote: str = ""
     recheck_count: int = 0
     last_recheck: Optional[dict[str, Any]] = None
+    # 法务五条分流：仅 must_human 进入「需你确认」待办；machine_* 不打扰人
+    triage: TriageDisposition = "must_human"
+    triage_reason: str = ""
+    triage_rule: str = ""  # objection_short|acceptance_annex|payment_recheck|quote_unlocated|amount_cross|default
 
 
 class VerifyInfo(BaseModel):
@@ -60,6 +73,8 @@ class VerifyInfo(BaseModel):
     questions: list[ConfirmQuestion] = Field(default_factory=list)
     disclaimer: str = _DISCLAIMER
     document_version: str = ""
+    # 分流审计：含 machine_ok / machine_silent（不进 questions 待办）
+    triage_log: list[dict[str, Any]] = Field(default_factory=list)
 
     def budget_snapshot(self) -> dict[str, Any]:
         pending = sum(1 for q in self.questions if q.status == "pending")
@@ -156,6 +171,152 @@ def verify_quote_against_text(
         clause_index=clause_index,
     )
     return evidence
+
+
+# ---------- 法务五条分流 ----------
+
+_PAYMENT_IDS = {"payment", "price", "价款", "价款与支付", "价款支付"}
+_PAYMENT_NAME_KEYS = ("价款", "支付", "付款", "预付", "尾款")
+_OBJECTION_KEYS = ("异议期", "异议")
+_ACCEPTANCE_KEYS = ("验收标准", "另附")
+_AMOUNT_NORM_RE = __import__("re").compile(
+    r"(?:人民币|￥|¥|RMB)?\s*"
+    r"([0-9]+(?:\.[0-9]+)?|[一二三四五六七八九十百千万亿两壹贰叁肆伍陆柒捌玖拾佰仟]+)"
+    r"\s*(万元|亿元|元|万)?"
+)
+
+
+def _blob(*parts: Any) -> str:
+    return " ".join(str(p or "") for p in parts)
+
+
+def _is_payment_suspect(sus: dict[str, Any]) -> bool:
+    ref = str(sus.get("source_ref") or "")
+    title = str(sus.get("title") or "")
+    question = str(sus.get("question") or "")
+    blob = _blob(ref, title, question)
+    if any(k in ref for k in _PAYMENT_IDS) or any(k in title for k in _PAYMENT_IDS):
+        return True
+    if sus.get("source") == "rule_attention" and any(k in blob for k in _PAYMENT_NAME_KEYS):
+        return True
+    if "价款" in blob:
+        return True
+    if "再核对" in blob and any(k in blob for k in _PAYMENT_NAME_KEYS):
+        return True
+    return False
+
+
+def _amount_values_in_text(text: str) -> list[str]:
+    """抽出金额字面量（保序去重），用于跨条款一致性粗判。"""
+    found: list[str] = []
+    seen: set[str] = set()
+    for m in _AMOUNT_NORM_RE.finditer(text or ""):
+        raw = m.group(0).strip()
+        # 归一：去空白
+        key = "".join(raw.split())
+        if key and key not in seen:
+            seen.add(key)
+            found.append(key)
+    return found
+
+
+def _amount_facts_consistent(
+    facts: list[dict[str, Any]], text: str
+) -> tuple[bool, str]:
+    """金额跨条款：完全一致且可追原文 → True；否则 False + 原因。"""
+    amount_facts = [
+        f for f in (facts or [])
+        if isinstance(f, dict) and str(f.get("kind") or "") == "amount"
+    ]
+    values: list[str] = []
+    for f in amount_facts:
+        val = "".join(str(f.get("value") or "").split())
+        if not val:
+            continue
+        ev = f.get("evidence") if isinstance(f.get("evidence"), dict) else {}
+        ver = (ev or {}).get("verification") or "unverified"
+        if ver != "verified" and not quote_supported(text or "", str(f.get("value") or "")):
+            return False, "金额事实无法追原文"
+        values.append(val)
+    # 无金额事实时，用正文金额字面量兜底
+    if not values:
+        values = _amount_values_in_text(text or "")
+        if len(values) <= 1:
+            return True, "金额唯一或未检出"
+        # 多个不同字面量 → 不一致
+        if len(set(values)) == 1:
+            return True, "正文金额字面量一致"
+        return False, "正文金额字面量不一致"
+    if len(set(values)) == 1:
+        return True, "金额事实完全一致且可追原文"
+    return False, "金额事实不一致"
+
+
+def classify_triage(
+    sus: dict[str, Any],
+    *,
+    verification: str,
+    fact_ok: Optional[bool],
+    text: str,
+    facts: Optional[list[dict[str, Any]]] = None,
+) -> tuple[TriageDisposition, str, str]:
+    """法务五条 + 总原则 → (disposition, rule_id, reason)。
+
+    优先级：异议期(1) → 验收另附(2) → 价款再核对(3) → 摘句未定位(4) → 金额跨条款(5)
+    → 默认（证据闭合无价值判断可静默，否则人审）。
+    说明：①②③是样例业务标签；④只在「有摘句但对不上原文」时触发。
+    """
+    ver = verification or "unverified"
+    title = str(sus.get("title") or "")
+    question = str(sus.get("question") or "")
+    blob = _blob(title, question, sus.get("source"), sus.get("source_ref"))
+    source = str(sus.get("source") or "")
+    quote = str(sus.get("quote") or "").strip()
+
+    # 1) 异议期偏短 → 必须人审（商业取舍）
+    if "异议期" in blob or (
+        any(k in blob for k in _OBJECTION_KEYS) and "偏短" in blob
+    ):
+        return "must_human", "objection_short", "异议期涉及商业取舍，必须人审"
+
+    # 2) 验收标准是否另附 → 必须人审（另约可能）
+    if any(k in blob for k in _ACCEPTANCE_KEYS):
+        return "must_human", "acceptance_annex", "验收标准是否另附涉及另约可能，必须人审"
+
+    # 3) 价款再核对 → verified 可机器放行，否则升人审
+    if _is_payment_suspect(sus):
+        if ver == "verified":
+            return "machine_ok", "payment_recheck", "价款摘句已核对 verified，机器放行"
+        return "must_human", "payment_recheck", f"价款再核对 verification={ver}，升人审"
+
+    # 4) 摘句未定位 → 必须人审（有摘句但对不上原文 = 证据断裂）
+    if quote and ver == "missing":
+        return "must_human", "quote_unlocated", "摘句未定位，证据断裂须人审"
+
+    # 5) 金额跨条款
+    if source == "fact" and (
+        str(sus.get("title") or "") in {"金额", "价款"}
+        or "金额" in blob
+        or "kind:amount" in blob
+    ):
+        ok, why = _amount_facts_consistent(facts or [], text or "")
+        if ok and ver == "verified" and fact_ok is not False:
+            return "machine_silent", "amount_cross", f"金额跨条款一致可静默（{why}）"
+        return "must_human", "amount_cross", f"金额跨条款须人审（{why}）"
+    if "金额" in blob and ("跨" in blob or "一致" in blob or source == "fact"):
+        ok, why = _amount_facts_consistent(facts or [], text or "")
+        if ok and ver in {"verified"} and fact_ok is not False:
+            return "machine_silent", "amount_cross", f"金额跨条款一致可静默（{why}）"
+        return "must_human", "amount_cross", f"金额跨条款须人审（{why}）"
+
+    # 默认总原则：证据链闭合且无价值判断 → 机器静默；否则人审
+    if ver == "verified" and source in {"fact"} and fact_ok is True:
+        return "machine_silent", "default", "证据链闭合且事实一致，机器静默"
+    if ver == "verified" and source in {"rule_attention"} and not any(
+        k in blob for k in ("偏短", "另附", "是否", "建议")
+    ):
+        return "machine_ok", "default", "规则摘句已核对且无价值判断，机器放行"
+    return "must_human", "default", "默认进人审（含价值判断或证据未闭合）"
 
 
 def _collect_suspects(
@@ -337,6 +498,7 @@ def run_bounded_verify(
             max_recheck_per_question=lim["max_recheck_per_question"],
             questions=[ConfirmQuestion(**q) for q in kept if isinstance(q, dict)],
             document_version=doc_ver,
+            triage_log=list(prior.get("triage_log") or []),
         )
         return info.model_dump()
 
@@ -363,12 +525,12 @@ def run_bounded_verify(
     questions: list[ConfirmQuestion] = list(retained)
     room = lim["max_questions"] - len(questions)
     seq = len(questions)
+    triage_log: list[dict[str, Any]] = list(prior.get("triage_log") or [])
 
     for sus in suspects:
-        if room <= 0:
-            break
         if sus["source_ref"] in retained_refs:
             continue
+        # room=0 时仍跑分流记账（machine_*），只是不再追加 must_human 待办
         if fetches_used >= lim["max_clause_fetches"] and sus.get("clause_id"):
             # 预算紧时仍可产出无取证的问题，但不再按条款取正文
             clause = None
@@ -436,29 +598,58 @@ def run_bounded_verify(
             val = (sus.get("value_for_fact") or quote or "").strip()
             fact_ok = bool(val) and quote_supported(text, val)
 
+        ver = (evidence or {}).get("verification") or "unverified"
+        # 金额 fact：把 kind 塞进 blob 便于五条⑤命中
+        if sus["source"] == "fact" and "金额" in str(sus.get("title") or ""):
+            sus = {**sus, "source_ref": f"{sus.get('source_ref')}|kind:amount"}
+
+        disposition, rule_id, reason = classify_triage(
+            sus,
+            verification=ver,
+            fact_ok=fact_ok,
+            text=text,
+            facts=facts_list,
+        )
         seq += 1
         qid = f"vq{seq:02d}"
-        questions.append(
-            ConfirmQuestion(
-                id=qid,
-                source=sus["source"],
-                source_ref=sus["source_ref"],
-                question=sus["question"],
-                title=sus.get("title") or "",
-                clause_id=(evidence or {}).get("clause_id") or sus.get("clause_id"),
-                quote=(evidence or {}).get("quote") or quote[:MAX_QUOTE_CHARS],
-                evidence=evidence,
-                verification=(evidence or {}).get("verification") or "unverified",
-                fact_ok=fact_ok,
-                status="pending",
-            )
+        q_payload = dict(
+            id=qid,
+            source=sus["source"],
+            source_ref=sus["source_ref"],
+            question=sus["question"],
+            title=sus.get("title") or "",
+            clause_id=(evidence or {}).get("clause_id") or sus.get("clause_id"),
+            quote=(evidence or {}).get("quote") or quote[:MAX_QUOTE_CHARS],
+            evidence=evidence,
+            verification=ver,
+            fact_ok=fact_ok,
+            status="pending",
+            triage=disposition,
+            triage_reason=reason,
+            triage_rule=rule_id,
         )
-        room -= 1
+        triage_log.append(
+            {
+                "id": qid,
+                "source": sus["source"],
+                "source_ref": sus["source_ref"],
+                "title": q_payload["title"],
+                "triage": disposition,
+                "triage_rule": rule_id,
+                "triage_reason": reason,
+                "verification": ver,
+            }
+        )
+        # 仅 must_human 进入「需你确认」待办；机器放行/静默不打扰人（Design B 仍不改规则档）
+        if disposition == "must_human" and room > 0:
+            questions.append(ConfirmQuestion(**q_payload))
+            room -= 1
+        # machine_ok / machine_silent：只记 triage_log，不占 pending 名额
 
     rounds_used += 1
     info = VerifyInfo(
         available=True,
-        reason=None if questions else "empty",
+        reason=None if questions else ("empty" if not triage_log else "triaged_clear"),
         rounds_used=rounds_used,
         max_rounds=lim["max_rounds"],
         clause_fetches_used=fetches_used,
@@ -467,6 +658,7 @@ def run_bounded_verify(
         max_recheck_per_question=lim["max_recheck_per_question"],
         questions=questions[: lim["max_questions"]],
         document_version=doc_ver,
+        triage_log=triage_log,
     )
     return info.model_dump()
 
