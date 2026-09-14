@@ -574,6 +574,7 @@
     }
 
     renderQuality(data);
+    renderVerify(data);
   }
 
   /** 阶段 2.1 质量层：清单之后的「AI 观察」虚线容器。
@@ -587,6 +588,247 @@
     consistency: "有没有自相矛盾",
     impact: "对您的影响",
   };
+
+
+  /** A6 有界主动核验：需你确认（九哥文案 / 阳仔视觉）。
+   * 铁律：主动核查不改写清单四档；每条可追原文。 */
+  const VERIFY_ASIDE = "主动核查只提疑点，不改变清单规则档";
+  const VERIFY_FLOW = ["疑点", "取证", "核对", "问你"];
+
+  function renderVerify(data) {
+    const panel = $("verify-panel");
+    if (!panel) return;
+    const v = data.verify;
+    panel.innerHTML = "";
+    if (!v || !v.available) {
+      panel.classList.add("hidden");
+      return;
+    }
+    const qs = Array.isArray(v.questions) ? v.questions : [];
+
+    const h = document.createElement("h3");
+    h.textContent = "需你确认";
+    panel.appendChild(h);
+
+    const flow = document.createElement("p");
+    flow.className = "verify-flow";
+    flow.setAttribute("aria-label", "核查流程");
+    // 有未确认 → 问你；全确认/再核过 → 核对；否则疑点
+    const pending = qs.filter((q) => q.status === "pending").length;
+    const anyRechecked = qs.some((q) => q.status === "rechecked");
+    let current = 0;
+    if (qs.length) current = 1; // 取证
+    if (qs.some((q) => q.verification && q.verification !== "unverified")) current = 2; // 核对
+    if (pending > 0 || qs.some((q) => q.status === "confirmed" || q.status === "disputed")) current = 3; // 问你
+    if (anyRechecked && pending === 0) current = 2;
+    VERIFY_FLOW.forEach((label, i) => {
+      if (i > 0) {
+        const sep = document.createElement("span");
+        sep.className = "flow-sep";
+        sep.textContent = "→";
+        flow.appendChild(sep);
+      }
+      const step = document.createElement("span");
+      step.className = "flow-step" + (i === current ? " is-current" : "");
+      step.textContent = label;
+      flow.appendChild(step);
+    });
+    panel.appendChild(flow);
+
+    const aside = document.createElement("p");
+    aside.className = "verify-aside";
+    aside.textContent = (v.disclaimer && !/盖章|改判/.test(v.disclaimer))
+      ? v.disclaimer
+      : VERIFY_ASIDE;
+    panel.appendChild(aside);
+
+    const budget = v.budget || {};
+    const roundsLeft = typeof budget.rounds_remaining === "number"
+      ? budget.rounds_remaining
+      : Math.max(0, (v.max_rounds || 0) - (v.rounds_used || 0));
+    const bud = document.createElement("p");
+    bud.className = "verify-budget";
+    bud.textContent = "还可再核 " + roundsLeft + " 次"
+      + (typeof budget.questions_pending === "number"
+        ? " · 待核实 " + budget.questions_pending + " 条"
+        : "");
+    panel.appendChild(bud);
+
+    if (!qs.length) {
+      const empty = document.createElement("p");
+      empty.className = "verify-empty";
+      empty.textContent = "暂无需要确认的事项";
+      panel.appendChild(empty);
+      panel.classList.remove("hidden");
+      return;
+    }
+
+    const ul = document.createElement("ul");
+    ul.className = "verify-list";
+    qs.forEach((q) => {
+      const li = document.createElement("li");
+      li.className = "verify-item";
+      li.dataset.qid = q.id || "";
+
+      const head = document.createElement("div");
+      head.className = "verify-item-head";
+      const badge = document.createElement("span");
+      badge.className = "verify-badge";
+      badge.textContent = "待核实"; // 九哥：别写成需关注
+      head.appendChild(badge);
+      if (q.status && q.status !== "pending") {
+        const st = document.createElement("span");
+        st.className = "verify-status";
+        st.textContent = q.status === "confirmed"
+          ? "已确认无误"
+          : q.status === "disputed"
+            ? "已补充说明"
+            : q.status === "rechecked"
+              ? "已再审"
+              : q.status;
+        head.appendChild(st);
+      }
+      li.appendChild(head);
+
+      const qEl = document.createElement("p");
+      qEl.className = "verify-q";
+      qEl.textContent = q.question || q.title || "";
+      li.appendChild(qEl);
+
+      if (q.quote) {
+        const quote = document.createElement("div");
+        quote.className = "quality-quote";
+        quote.textContent = "原文：" + q.quote;
+        li.appendChild(quote);
+        const jump = document.createElement("button");
+        jump.type = "button";
+        jump.className = "link evidence-jump";
+        jump.textContent = "看原文";
+        jump.onclick = () => jumpToEvidence(quote, q.evidence || null);
+        li.appendChild(jump);
+      }
+
+      const meta = document.createElement("p");
+      meta.className = "verify-meta";
+      const heading = clauseHeadingById(q.clause_id);
+      if (heading) {
+        const c = document.createElement("span");
+        c.textContent = "条款 " + heading;
+        meta.appendChild(c);
+      }
+      if (q.verification) {
+        const verLabel = {
+          verified: "摘句对得上",
+          ambiguous: "摘句位置不唯一",
+          missing: "原文未找到摘句",
+          unverified: "尚未核对",
+        };
+        const ver = document.createElement("span");
+        ver.textContent = verLabel[q.verification] || q.verification;
+        meta.appendChild(ver);
+      }
+      if (meta.childNodes.length) li.appendChild(meta);
+
+      const note = document.createElement("input");
+      note.type = "text";
+      note.className = "verify-note-input";
+      note.placeholder = "补充说明（可选）";
+      note.maxLength = 300;
+      if (q.human_note) {
+        note.value = q.human_note;
+        note.classList.add("is-open");
+      }
+      li.appendChild(note);
+
+      const actions = document.createElement("div");
+      actions.className = "verify-actions";
+
+      const btnNote = document.createElement("button");
+      btnNote.type = "button";
+      btnNote.className = "verify-btn-primary";
+      btnNote.textContent = "补充说明";
+      btnNote.onclick = () => {
+        if (!note.classList.contains("is-open")) {
+          note.classList.add("is-open");
+          note.focus();
+          return;
+        }
+        // 已展开：提交补充说明（不暗示改档）
+        submitVerifyConfirm(data.id, q.id, "dispute", note.value || "", note.value || "");
+      };
+
+      const btnOk = document.createElement("button");
+      btnOk.type = "button";
+      btnOk.className = "verify-btn-secondary";
+      btnOk.textContent = "确认无误";
+      btnOk.onclick = () => submitVerifyConfirm(data.id, q.id, "confirm", note.value || "", "");
+
+      const btnRe = document.createElement("button");
+      btnRe.type = "button";
+      btnRe.className = "verify-btn-secondary";
+      btnRe.textContent = "再审本条";
+      btnRe.disabled = !(q.status === "confirmed" || q.status === "disputed" || q.status === "rechecked");
+      btnRe.onclick = () => submitVerifyRecheck(data.id, q.id);
+
+      actions.appendChild(btnNote);
+      actions.appendChild(btnOk);
+      actions.appendChild(btnRe);
+      li.appendChild(actions);
+      ul.appendChild(li);
+    });
+    panel.appendChild(ul);
+    panel.classList.remove("hidden");
+  }
+
+  async function submitVerifyConfirm(reviewId, questionId, choice, humanNote, revisedQuote) {
+    if (!reviewId || !questionId) return;
+    try {
+      const res = await fetch("/api/review/" + reviewId + "/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question_id: questionId,
+          choice: choice,
+          human_note: humanNote || "",
+          revised_quote: revisedQuote || "",
+        }),
+      });
+      const body = await res.json();
+      if (!res.ok || !body.ok) {
+        console.warn("confirm failed", body && body.error);
+        return;
+      }
+      if (body.verify && state.review && state.review.id === reviewId) {
+        state.review.verify = body.verify;
+        renderVerify(state.review);
+      }
+    } catch (err) {
+      console.warn("confirm error", err);
+    }
+  }
+
+  async function submitVerifyRecheck(reviewId, questionId) {
+    if (!reviewId || !questionId) return;
+    try {
+      const res = await fetch("/api/review/" + reviewId + "/reverify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question_id: questionId }),
+      });
+      const body = await res.json();
+      if (!res.ok || !body.ok) {
+        console.warn("reverify failed", body && body.error);
+        return;
+      }
+      if (body.verify && state.review && state.review.id === reviewId) {
+        state.review.verify = body.verify;
+        renderVerify(state.review);
+      }
+    } catch (err) {
+      console.warn("reverify error", err);
+    }
+  }
+
 
   function renderQuality(data) {
     const panel = $("quality-panel");

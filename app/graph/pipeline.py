@@ -19,6 +19,7 @@ from app.services.checklist import run_checklist
 from app.services.clause_index import build_clause_index, map_items_to_clauses
 from app.services.evidence import attach_evidence_to_item, document_version_for
 from app.services import facts as facts_service
+from app.services import verify as verify_service
 from app.services.extract import ExtractionError, extract_text
 from app.services.model_review import run_model_review
 
@@ -57,6 +58,8 @@ class ReviewState(TypedDict, total=False):
     parsed_text: str
     document_version: str
     completion: str
+    # A6 有界主动核验状态
+    verify: dict[str, Any]
 
 
 def _emit_stage(state: ReviewState, stage: str) -> None:
@@ -250,13 +253,37 @@ def node_quality(state: ReviewState) -> ReviewState:
             clause_index=state.get("clause_index"),
         )
         out = {**out, "facts": seeded}
+    facts_out = out.get("facts") or []
+    # A6：规则/观察落定后跑一轮有界核验（确定性；不改档位）
+    try:
+        verify_out = verify_service.run_bounded_verify(
+            text=state.get("text") or "",
+            items=state.get("items") or [],
+            quality=out,
+            blind_candidates=state.get("blind_candidates") or [],
+            facts=facts_out,
+            clause_index=state.get("clause_index"),
+            document_version=state.get("document_version") or "",
+            prior=None,
+        )
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("Bounded verify failed")
+        verify_out = verify_service.empty_verify(
+            reason="error",
+            document_version=state.get("document_version") or "",
+        )
     _emit_partial(
         state,
         "fully_complete",
         quality=out,
-        facts=out.get("facts") or []
+        facts=facts_out,
+        verify=verify_out,
     )
-    return {"quality": out, "completion": "fully_complete"}
+    return {
+        "quality": out,
+        "completion": "fully_complete",
+        "verify": verify_out,
+    }
 
 
 def build_graph():
@@ -331,4 +358,5 @@ def run_review(
             "fully_complete" if not final.get("error") else ""
         ),
         "facts": (final.get("quality") or {}).get("facts") or [],
+        "verify": final.get("verify") or {},
     }
