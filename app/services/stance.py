@@ -1,9 +1,10 @@
-"""立场输入（阶段 1.3）：声明 + 防错配，绝不触碰规则引擎。
+"""立场输入（阶段 1.3 + A4）：声明 + 防错配；AI 解释读向；绝不触碰规则引擎。
 
 法理内核（法务老钱裁决书 2026-09-09）：合同审查的「立场」决定的是*风险读向*
 （谁的损失、谁被绑住），不是*风险存在性*——存在性归尺子，读向归声明。
 因此：
-- 立场不进 prompt、不进 checklist 判定、不产生新档位；
+- 立场**不进** checklist 判定、不产生新档位（Design B：规则引擎立场无关）；
+- A4：立场进入质量层 / 追问（ask）prompt，仅指导 AI 解释「谁受益 / 谁担义务」；
 - 可审立场随品类元数据（checklist YAML stances 块）下发，不可审立场
   UI 不渲染 + 前馈小字（API 层 422 兜底），**不新增任何阻断弹窗**——
   立场错配不换尺子只换读法，不构成拦截事由；
@@ -127,3 +128,46 @@ def has_counterparty_view_marker(category: str, detected_type: str) -> bool:
     if not marker:
         return False
     return bool(detected_type) and marker[0] in detected_type
+
+
+def prompt_guidance(category: str, stance: str = NEUTRAL) -> str:
+    """A4：注入 quality / ask 的立场指导块（单一来源）。
+
+    Design B：块内明确「规则档位与核查口径不因立场而改变」；
+    立场只约束 AI 解释的利害读向（谁受益 / 谁承担义务）。
+    """
+    st = stance or NEUTRAL
+    label = stance_label(category, st)
+    lines = [
+        f"【用户声明立场】{label}",
+        "立场只指导 AI 解释的利害读向，绝不改变规则引擎档位或核查口径（规则清单与立场无关）。",
+        "解释时须点明：按该立场，谁受益、谁承担义务。",
+    ]
+    if category == "nda":
+        if st == "disclosing":
+            lines.append(
+                "NDA 披露方视角：重点说明保密义务是否足以保护披露方、"
+                "用途限制/回授/存续期限对披露方是否有利，以及接收方义务宽窄对披露方的影响。"
+            )
+        elif st == "receiving":
+            lines.append(
+                "NDA 接收方视角：重点说明保密义务范围是否过宽、期限是否过长、"
+                "例外是否不足，以及披露方是否单方面加重接收方义务。"
+            )
+        else:
+            lines.append(
+                "NDA 中性：对方向性条款（保密义务、知识产权归属等）须同时注明"
+                "对披露方与接收方各自的利害。"
+            )
+    elif st != NEUTRAL:
+        lines.append(f"按「{label}」通读时，影响类说明须写清对该方不利或有利之处。")
+    else:
+        lines.append("中性未声明：不预设立场，方向性条款仍须注明偏向哪一方。")
+    return "\n".join(lines)
+
+
+def prompt_stance_line(category: str, stance: str = NEUTRAL) -> str:
+    """短行：user prompt 头部「用户声明立场：…」（与预审同构）。"""
+    st = stance or NEUTRAL
+    return f"用户声明立场：{stance_label(category, st)}"
+

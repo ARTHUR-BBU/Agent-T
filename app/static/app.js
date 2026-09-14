@@ -18,6 +18,9 @@
   }
 
   const $ = (id) => document.getElementById(id);
+  // A4 九哥定稿（上传/结果/追问共用；铁律旁注常驻可见）
+  const STANCE_IRON_LAW = "立场只影响解释，不改变清单通过/需关注等规则档";
+  const STANCE_EXPLAIN_GUIDE = "按当前立场说明谁受益、谁担责";
   const screens = {
     upload: $("screen-upload"),
     results: $("screen-results"),
@@ -496,6 +499,8 @@
       decl.textContent = stanceDecl;
       $("results-meta-main").appendChild(decl);
     }
+    // A4：胶囊 + 铁律旁注 + 「谁受益、谁担责」引导（常驻，不折叠）
+    renderStanceChrome(data);
 
     // 部分完成横幅
     let banner = document.getElementById("partial-banner");
@@ -910,6 +915,10 @@
 
     // 页头：条目名 + 档位/来源双通道（tag 文字+底色；徽章描边）
     $("ask-title").textContent = item.name || "问清楚一点";
+    const askGuide = $("ask-stance-guide");
+    const askIron = $("ask-stance-iron");
+    if (askGuide) askGuide.textContent = STANCE_EXPLAIN_GUIDE;
+    if (askIron) askIron.textContent = STANCE_IRON_LAW;
     const statusLine = $("ask-status-line");
     statusLine.innerHTML = "";
     const tag = document.createElement("span");
@@ -1391,11 +1400,34 @@
   function updateStanceHint() {
     const meta = stanceMeta($("category").value);
     const v = selectedStance();
+    const label = (meta.labels && meta.labels[v]) || v;
+    // 措辞红线（九哥 A4）：谁受益、谁担责；绝不暗示规则档被立场改写
     $("stance-hint").textContent =
       v === "neutral"
-        ? "将按中性视角阅读合同，不预设立场，报告会声明此视角。"
-        : // 措辞红线（老钱 Q4）：不得暗示立场会改变核查口径/风险判断
-        `将按${(meta.labels && meta.labels[v]) || v}立场阅读合同并在报告声明该视角；核查口径不变，仅结论读向不同。`;
+        ? "中性视角：规则核查照旧；AI 解释不偏向任何一方。"
+        : `按「${label}」读：AI 解释会点明谁受益、谁担责。`;
+    const ironUp = $("stance-iron-upload");
+    if (ironUp) ironUp.textContent = STANCE_IRON_LAW;
+  }
+
+  function resolveStanceLabel(category, stance) {
+    const meta = stanceMeta(category || "");
+    const st = stance || "neutral";
+    return (meta.labels && meta.labels[st]) || st;
+  }
+
+  function renderStanceChrome(data) {
+    // 结果页顶栏右侧胶囊 + 铁律旁注 + 解释区引导（阳仔视觉 / 九哥用词）
+    const capsule = $("stance-capsule");
+    const iron = $("stance-iron");
+    const guide = $("stance-explain-guide");
+    if (iron) iron.textContent = STANCE_IRON_LAW;
+    if (guide) guide.textContent = STANCE_EXPLAIN_GUIDE;
+    if (!capsule) return;
+    const label = resolveStanceLabel(data && data.category, data && data.stance);
+    capsule.textContent = "审查立场 · " + label;
+    capsule.classList.remove("hidden");
+    capsule.title = label;
   }
 
   function renderStanceOptions() {

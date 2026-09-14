@@ -145,6 +145,7 @@ def run_quality(
     items: list[dict[str, Any]],
     policies: Optional[list[str]] = None,
     category: str = "procurement",
+    stance: str = "neutral",
     clause_index: Optional[dict[str, Any]] = None,
     chat_fn: Optional[ChatFn] = None,
     budget: Optional[Any] = None,
@@ -181,7 +182,7 @@ def run_quality(
         chunks, plan_meta = build_review_plan(text, clause_index, max_segments=_max_segments())
         if not chunks:
             return outcome_unavailable("error")
-        system = quality_prompts.build_system_prompt(policies)
+        system = quality_prompts.build_system_prompt(policies, category=category, stance=stance)
         chunks_total = len(chunks)
         chunks_ok = 0
         stop_reason = None
@@ -199,7 +200,7 @@ def run_quality(
                 if not budget.try_consume():
                     stop_reason = "budget_exhausted"
                     break
-            user = quality_prompts.build_user_prompt(chunk, items, clause_index)
+            user = quality_prompts.build_user_prompt(chunk, items, clause_index, category=category, stance=stance)
             try:
                 raw = chat(system, user)
             except Exception:  # noqa: BLE001
@@ -249,8 +250,8 @@ def run_quality(
                     pending_questions=pending_questions,
                 ).model_dump()
     else:
-        system = quality_prompts.build_system_prompt(policies)
-        user = quality_prompts.build_user_prompt(text, items, clause_index)
+        system = quality_prompts.build_system_prompt(policies, category=category, stance=stance)
+        user = quality_prompts.build_user_prompt(text, items, clause_index, category=category, stance=stance)
         if budget is not None and not budget.try_consume():
             logger.warning("Quality skipped: LLM budget exhausted")
             return outcome_unavailable("budget_exceeded")
@@ -339,7 +340,8 @@ def _run_consistency_round(
     if fact_block:
         material_lines.append("【事实材料】")
         material_lines.append(fact_block)
-    system = quality_prompts.build_system_prompt([])
+    # A4：复用 map 轮 system（已含立场指导）；不再空政策重建以免丢掉立场块
+    system = main_system
     user = quality_prompts.build_consistency_user_prompt(
         _rule_block(items), "\n".join(material_lines)
     )

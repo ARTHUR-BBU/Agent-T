@@ -27,6 +27,8 @@ class ReviewState(TypedDict, total=False):
     filename: str
     raw_bytes: bytes
     category: str
+    # A4：用户声明立场（仅透传 quality/ask 解释；不进 checklist）
+    stance: str
     text: str
     items: list[dict[str, Any]]
     policies: list[str]
@@ -231,6 +233,7 @@ def node_quality(state: ReviewState) -> ReviewState:
             items=state.get("items") or [],
             policies=state.get("policies") or [],
             category=state.get("category") or "procurement",
+            stance=state.get("stance") or "neutral",
             clause_index=state.get("clause_index"),
             budget=state.get("budget"),
         )
@@ -294,6 +297,7 @@ def run_review(
     on_stage: Callable[[str], None] | None = None,
     on_partial: Callable[[str, dict], None] | None = None,
     parsed_text: str | None = None,
+    stance: str = "neutral",
 ) -> dict[str, Any]:
     graph = get_graph()
     final: ReviewState = graph.invoke(
@@ -301,6 +305,7 @@ def run_review(
             "filename": filename,
             "raw_bytes": raw_bytes,
             "category": category or "procurement",
+            "stance": stance or "neutral",
             "budget": budget,
             "on_stage": on_stage,
             "on_partial": on_partial,

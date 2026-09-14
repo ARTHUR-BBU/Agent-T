@@ -149,11 +149,12 @@ def test_ask_user_prompt_uses_clause_context_when_available():
 
 
 def test_ask_user_prompt_falls_back_without_context():
-    """无条款上下文（旧记录/未定位）→ prompt 形状与历史版本一致（全等锁死，
-    子串断言锁不住文案漂移——小智娘门禁 P2 的溜过原因）。"""
+    """无条款上下文（旧记录/未定位）→ 头尾采样回退；A4 起头部固定立场短行。"""
     item = {"name": "付款", "id": "payment", "status": "需关注", "note": "n", "quote": "q"}
     prompt = llm_ask._build_user_prompt("怎么改？", item, "全文内容。")
     expected = (
+        "用户声明立场：中性（未声明）\n"
+        "\n"
         "清单项：付款（id=payment）\n"
         "规则引擎结论：需关注\n"
         "规则备注：n\n"
@@ -164,4 +165,4 @@ def test_ask_user_prompt_falls_back_without_context():
         "合同全文：\n"
         "全文内容。\n"
     )
-    assert prompt == expected, "回退路径必须与历史版本逐字节一致"
+    assert prompt == expected, "回退路径须含默认中性立场短行且其余形状稳定"

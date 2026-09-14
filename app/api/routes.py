@@ -130,7 +130,7 @@ def _start_review(
     # 会拖死请求，前端的 processing 轮询此前形同虚设）
     def _run_review_worker(
         review_id: str, fname: str, content: bytes, cat: str, budget: object | None,
-        reused_text: str | None,
+        reused_text: str | None, stance: str = "neutral",
     ) -> None:
         # stage 回调：pipeline 节点入口上报 → 逐步落库；update 自身有兜底，
         # 回调失败不影响审查（pipeline 侧还包了一层 try/except）
@@ -150,6 +150,7 @@ def _start_review(
                     fname, content, category=cat, budget=budget,
                     on_stage=on_stage, on_partial=on_partial,
                     parsed_text=reused_text,
+                    stance=stance,
                 )
                 if result.get("error"):
                     store.update(
@@ -202,7 +203,7 @@ def _start_review(
 
     threading.Thread(
         target=_run_review_worker,
-        args=(rid, filename, raw, category, budget, parsed_text),
+        args=(rid, filename, raw, category, budget, parsed_text, stance),
         daemon=True,
     ).start()
     return rid
@@ -449,6 +450,9 @@ def ask(body: AskRequest):
             item.get("clause_ids") or [],
             primary_clause_id=item.get("primary_clause_id") or "",
         ),
+        # A4：立场进追问解释（规则档位不变）
+        category=row.get("category") or "procurement",
+        stance=row.get("stance") or "neutral",
     )
     return AskResponse(
         ok=bool(result.get("ok")),
