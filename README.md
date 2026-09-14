@@ -202,6 +202,7 @@ Agent-T 使用 **FastAPI + LangGraph + SQLite**，搭配轻量 Web 界面。规�
 | 了解产品方向与后续计划 | [开发路线](docs/roadmap-llm-ui.md) |
 | 查看每轮迭代做了什么 | [成长记录](docs/plain-changelog.md) |
 | 界面设计规范 | [设计说明](docs/design-tokens.md) |
+| GitHub 直改开发规范（无 Cloud Agents） | [施工手册](docs/dev-playbook-github-direct.md) |
 
 发现漏报、误报或不好理解的地方？欢迎 [提交反馈](https://github.com/ARTHUR-BBU/Agent-T/issues)。请附上**脱敏片段、合同类型、预期结果与实际表现**，帮助我们把一个具体问题变成下一次改进。
 
