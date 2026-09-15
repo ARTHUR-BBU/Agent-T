@@ -522,6 +522,10 @@ def trigger_verify(review_id: str):
     """再跑一轮有界核验（受 rounds/取证次数封顶）。不改规则档位。"""
     row = _require_done_row(review_id)
     with verify_service.lock_for(review_id):
+        # 门禁 P2-3：锁内重取 row——锁外快照可能与并发的 confirm 写入交错，
+        # 用 stale prior 重建会把人工确认冲回 pending（confirm/reverify 均在
+        # 锁内重取，唯独此处漏了）
+        row = store.get(review_id) or row
         prior = row.get("verify") or {}
         try:
             out = verify_service.run_bounded_verify(

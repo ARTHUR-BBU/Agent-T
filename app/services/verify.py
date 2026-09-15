@@ -191,10 +191,16 @@ def _blob(*parts: Any) -> str:
 
 
 def _is_payment_suspect(sus: dict[str, Any]) -> bool:
+    # 门禁 P2-1：价值判断类永不按「价款再核对」机器放行（总原则：价值判断
+    # → 人）——旧实现只看「价款」字样，违约金/赔偿类摘句挂在价款项下会被
+    # verified 静默。
+    _VALUE_JUDGMENT_KEYS = ("违约金", "赔偿", "损害", "责任", "风险", "过高", "偏高", "不利")
     ref = str(sus.get("source_ref") or "")
     title = str(sus.get("title") or "")
     question = str(sus.get("question") or "")
     blob = _blob(ref, title, question)
+    if any(k in blob for k in _VALUE_JUDGMENT_KEYS):
+        return False
     if any(k in ref for k in _PAYMENT_IDS) or any(k in title for k in _PAYMENT_IDS):
         return True
     if sus.get("source") == "rule_attention" and any(k in blob for k in _PAYMENT_NAME_KEYS):
@@ -294,18 +300,20 @@ def classify_triage(
         return "must_human", "quote_unlocated", "摘句未定位，证据断裂须人审"
 
     # 5) 金额跨条款
+    # 一致→静默接受 ambiguous：同额摘句在多条款出现是多位置命中，正是跨条款
+    # 对照的常态；一致性判断交由 _amount_facts_consistent 负责（门禁整改）
     if source == "fact" and (
         str(sus.get("title") or "") in {"金额", "价款"}
         or "金额" in blob
         or "kind:amount" in blob
     ):
         ok, why = _amount_facts_consistent(facts or [], text or "")
-        if ok and ver == "verified" and fact_ok is not False:
+        if ok and ver in {"verified", "ambiguous"} and fact_ok is not False:
             return "machine_silent", "amount_cross", f"金额跨条款一致可静默（{why}）"
         return "must_human", "amount_cross", f"金额跨条款须人审（{why}）"
     if "金额" in blob and ("跨" in blob or "一致" in blob or source == "fact"):
         ok, why = _amount_facts_consistent(facts or [], text or "")
-        if ok and ver in {"verified"} and fact_ok is not False:
+        if ok and ver in {"verified", "ambiguous"} and fact_ok is not False:
             return "machine_silent", "amount_cross", f"金额跨条款一致可静默（{why}）"
         return "must_human", "amount_cross", f"金额跨条款须人审（{why}）"
 
@@ -425,10 +433,15 @@ def _collect_suspects(
             continue
         ev = fact.get("evidence") if isinstance(fact.get("evidence"), dict) else {}
         ver = (ev or {}).get("verification") or "unverified"
-        if ver in {"verified"} and ev.get("clause_id"):
-            continue  # 已核过的确定性事实不刷屏
         label = str(fact.get("label") or fact.get("kind") or "事实").strip()
         value = str(fact.get("value") or "").strip()
+        if ver in {"verified"} and ev.get("clause_id"):
+            # 已核过的确定性事实不刷屏——但**金额**除外（门禁 P1-1）：
+            # 五条⑤「金额跨条款一致才静默」恰恰要求对已核实事实做跨条款
+            # 复核，矛盾发生在两个各自真实的事实之间（总价十万 vs 结算八万）。
+            is_amount = str(fact.get("kind") or "") == "amount" or "金额" in label
+            if not is_amount:
+                continue
         quote = str((ev or {}).get("quote") or value)
         _add(
             source="fact",
@@ -548,11 +561,15 @@ def run_bounded_verify(
         ps = sus.get("parse_source") or "quality"
         if quote and check_text:
             if quote_supported(check_text, quote) or quote_supported(text, quote):
+                # 门禁 P2-2：摘句不在声称条款内而由全文兜底命中时，不把声称的
+                # clause_id 递给证据——让票据按真实坐标派生归属（F06 同向：
+                # 「引用在全文里」≠「引用在声称的条款里」）
+                in_claimed = clause is not None and quote_supported(check_text, quote)
                 evidence = verify_quote_against_text(
                     text,
                     quote,
                     document_version=doc_ver,
-                    clause_id=resolved_cid,
+                    clause_id=resolved_cid if in_claimed else None,
                     clause_index=clause_index,
                     parse_source=ps,
                 )
