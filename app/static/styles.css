@@ -900,6 +900,17 @@ mark.kw,
 .quality-clause { color: var(--color-text-secondary); }
 .quality-confirm { color: var(--color-text-tertiary); }
 
+/* —— 阶段 3 异议层：采纳按钮（铁律 3：只生成提案不改档位） —— */
+.objection-adopt {
+  margin-top: var(--space-1);
+  font: var(--type-caption);
+  color: var(--color-text-secondary);
+}
+.objection-adopt:disabled {
+  color: var(--color-text-tertiary);
+  cursor: default;
+}
+
 /* —— 阶段 2.3 IA 重排：评分卡沉底+默认折叠（原生 details 零 JS 零动画；
    分数/档位永远灰字不套档位色；免责常驻收起态不能被折没） —— */
 .score-fold > summary {

@@ -45,3 +45,11 @@ def test_ask_system_prompt_mounts_guard():
     assert UNTRUSTED_DOCUMENT_INSTRUCTION in system
     # 原有反诱导背书条款不丢
     assert "没问题/无风险/可以盖章" in system
+
+
+def test_objection_system_prompt_mounts_guard():
+    """阶段 3 异议层：guards 第 6 处挂载。"""
+    from app.prompts.objection import build_system_prompt as objection_system
+
+    system = objection_system("neutral")
+    assert UNTRUSTED_DOCUMENT_INSTRUCTION in system
