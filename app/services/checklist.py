@@ -171,8 +171,9 @@ _VALID_RULE_CLASSES = {"hardline", "existence", "heuristic"}
 
 
 def _rule_class(rule: dict[str, Any], item: dict[str, Any]) -> str:
-    """三分法类别（路线图宪章，异议层受理分流依据）：
-    簇级 class 优先 → item 级 class 次之 → 默认 heuristic。
+    """三分法类别（路线图宪章，异议层受理分流依据）。
+    优先级与裁定书（docs/stage3-class-opinion.md 第三节）对齐：
+    命中规则自带 class（规则级）> 簇级 class（经 item 透传）> 默认 heuristic。
     非法值一律回落 heuristic（fail-safe：多问人、不放水）。"""
     raw = str(rule.get("class") or item.get("class") or "").strip().lower()
     return raw if raw in _VALID_RULE_CLASSES else "heuristic"

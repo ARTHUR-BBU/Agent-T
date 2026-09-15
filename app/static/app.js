@@ -983,7 +983,7 @@
         jump.type = "button";
         jump.className = "link evidence-jump";
         jump.textContent = "看原文";
-        jump.onclick = () => jumpToEvidence(quote, ob.evidence || null);
+        jump.onclick = () => jumpToEvidence(quote, { clause_id: ob.clause_id || null });
         li.appendChild(jump);
       }
 
@@ -992,6 +992,14 @@
         reasoning.className = "quality-comment";
         reasoning.textContent = ob.legal_reasoning;
         li.appendChild(reasoning);
+      }
+
+      // 提案文本：采纳后人工评审的唯一输入（3.2 交付物出口，textContent 零拼接）
+      if (ob.proposal) {
+        const proposal = document.createElement("p");
+        proposal.className = "quality-comment objection-proposal";
+        proposal.textContent = "改进提案：" + ob.proposal;
+        li.appendChild(proposal);
       }
 
       const line4 = document.createElement("p");

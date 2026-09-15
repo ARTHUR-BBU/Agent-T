@@ -5,11 +5,15 @@ objections 键，结构上不回流 items/scorecard（test_objection.py 用深�
 硬断言钉死，同 quality 先例）。采纳异议的人工动作产物=规则变更提案文本
 （复制给人评审），不是当次改判。
 
-受理分流（代码级，送审前拦截，省预算且缩攻击面）：
+受理分流（代码级，送审前拦截，省预算且缩攻击面；矩阵见
+docs/stage3-class-opinion.md 第五节）：
 - rule_class=hardline → 不送 LLM（hardline 只解释，永不接受异议）；
-- heuristic + 需关注 → 只收 false_positive（误报）；
-- existence + 未找到 → 只收 omission（漏报，等价写法被词表漏掉）；
+- heuristic + 需关注（有命中规则）→ 只收 false_positive（误报）；
+- existence + 未找到 / missing_as 缺项档位（需关注且无命中规则）→
+  只收 omission（漏报，等价写法被词表漏掉）；
 - 其余组合（通过/NA 等）不产生候选。
+运行时三道防线：候选分流拦截 → 送审候选集合比对（候选外申报静默丢弃）
+→ 方向×类别匹配拒收。
 
 五要件缺一不受理（服务端硬校验，缺任一记 unaccepted+reason）：
 ① quote 全文校验+条款定位（F06 教训：不信任模型给的编号）
@@ -44,6 +48,7 @@ MAX_OBJECTIONS = 6
 MAX_REASONING_CHARS = 300
 MIN_REASONING_CHARS = 30
 MAX_QUOTE_CHARS = 200
+MIN_QUOTE_CHARS = 6  # 与 blind_spot 压缩容差档一致：单字/碎片摘句不受理
 _DECLARATION = "未发现反证原文"
 
 _DIRECTIONS = ("false_positive", "omission")
@@ -69,8 +74,7 @@ class Objection(BaseModel):
 
 class ObjectionInfo(BaseModel):
     available: bool = False
-    # disabled / no_llm_key / llm_error / parse_failed / budget_exceeded /
-    # error / not_attempted
+    # disabled / no_llm_key / llm_error / parse_failed / budget_exceeded / error
     reason: Optional[str] = None
     objections: list[Objection] = Field(default_factory=list)
     rejected_count: int = 0  # 五要件拒收数（观测用，前端不渲染）
@@ -107,18 +111,22 @@ def _default_chat_fn() -> Optional[ChatFn]:
 def _collect_candidates(
     items: list[dict[str, Any]], max_candidates: int
 ) -> list[dict[str, Any]]:
-    """按三分法分流候选（送审前拦截）：
-    heuristic+需关注 → 误报候选；existence+未找到 → 漏报候选；hardline 不送。"""
+    """按三分法分流候选（送审前拦截，裁定书 stage3-class-opinion.md 第五节矩阵）：
+    heuristic+需关注（有命中）→ 误报候选；
+    existence+未找到 / existence+missing_as 缺项档位（需关注且无命中规则）→ 漏报候选；
+    hardline 与其余组合（含 existence+通过：词表已认出无「缺」可漏）不送审。
+    missing 落点以 rule_id is None 识别（checklist 引擎保证该路径不产生 rule_id）。"""
     out: list[dict[str, Any]] = []
     for it in items or []:
         if not isinstance(it, dict) or it.get("category_na"):
             continue
         rc = str(it.get("rule_class") or "heuristic")
         st = it.get("status")
+        has_hit = bool(it.get("rule_id"))  # 命中具体规则才算「标了」；None=missing 落点
         direction: Optional[str] = None
-        if rc == "heuristic" and st == "需关注":
+        if rc == "heuristic" and st == "需关注" and has_hit:
             direction = "false_positive"
-        elif rc == "existence" and st in {"未找到", "通过"}:
+        elif rc == "existence" and (st == "未找到" or (st == "需关注" and not has_hit)):
             direction = "omission"
         if not direction:
             continue  # hardline 与其余组合：不送审
@@ -192,14 +200,25 @@ def _has_forbidden(parsed: list[dict[str, Any]]) -> bool:
     return bool(scorecard.check_forbidden(blob) or llm_ask._scrub_banned_echo(blob) != blob)
 
 
-def _validate(r: dict[str, Any], stance: str, text: str, clause_index: Optional[dict]) -> tuple[bool, Optional[str], Optional[str], Optional[bool]]:
-    """五要件硬校验。返回 (accepted, reject_reason, clause_id, clause_ambiguous)。"""
+def _validate(
+    r: dict[str, Any],
+    stance: str,
+    text: str,
+    clause_index: Optional[dict],
+    reasoning_clean: str = "",
+) -> tuple[bool, Optional[str], Optional[str], Optional[bool]]:
+    """五要件硬校验。返回 (accepted, reject_reason, clause_id, clause_ambiguous)。
+
+    reasoning_clean：禁语清洗后的法律逻辑链文本（要件③按它复验长度，
+    防「先凑禁语到 30 字、洗完剩空壳」的绕过面）。
+    """
     item_id = str(r.get("item_id") or "").strip()
     if not item_id:
         return False, "缺 item_id", None, None
-    # ① 完整条款引用：全文校验 + 服务端定位（不信任模型编号，F06 教训）
+    # ① 完整条款引用：全文校验 + 服务端定位（不信任模型编号，F06 教训）；
+    # 最小长度门槛与 blind_spot 压缩容差档一致（<6 字单字/碎片摘句不受理）
     quote = str(r.get("quote") or "").strip().strip("「」\"'“”").strip()
-    if not quote or not blind_spot.quote_supported(text, quote):
+    if len(quote) < MIN_QUOTE_CHARS or not blind_spot.quote_supported(text, quote):
         return False, "要件①条款引用未能在原文核验", None, None
     ids = locate_quote_clauses(text, quote, clause_index or {})
     if not ids:
@@ -212,8 +231,8 @@ def _validate(r: dict[str, Any], stance: str, text: str, clause_index: Optional[
         return False, "要件②反证缺失", clause_id, clause_ambiguous
     if counter != _DECLARATION and not blind_spot.quote_supported(text, counter):
         return False, "要件②反证原文未能在原文核验", clause_id, clause_ambiguous
-    # ③ 法律逻辑链
-    reasoning = str(r.get("legal_reasoning") or "").strip()
+    # ③ 法律逻辑链（按清洗后文本复验）
+    reasoning = (reasoning_clean or str(r.get("legal_reasoning") or "").strip())
     if len(reasoning) < MIN_REASONING_CHARS:
         return False, "要件③法律逻辑链过短", clause_id, clause_ambiguous
     # ④ 立场自检
@@ -278,41 +297,50 @@ def run_objections(
             logger.exception("Objections retry LLM error")
             return outcome_unavailable("llm_error")
         parsed = _parse_objections(raw)
-        if parsed is None:
+        if _is_bad(parsed):
+            # 重试后仍解析失败或带禁语：整单软降级（防线对称，不给「二轮洗白」口）
             return outcome_unavailable("parse_failed")
 
     objections: list[Objection] = []
     rejected = 0
     valid_by_id = {str(it.get("id")): it for it in items or [] if isinstance(it, dict)}
+    # 送审候选集合（第二道防线）：候选外的 (item_id, direction) 一律静默丢弃
+    # （模型幻觉/注入的未送审组合，如 existence+需关注+omission 的洗白方向——
+    # 连 rejected 都不计：结构性错误不是可展示的候选）
+    sent = {(str(c["item_id"]), str(c["direction"])) for c in candidates}
     seen_refs: set[str] = set()
     for r in parsed:
         if not isinstance(r, dict) or len(objections) >= MAX_OBJECTIONS:
             break
         item_id = str(r.get("item_id") or "")
+        direction = str(r.get("direction") or "")
+        if (item_id, direction) not in sent:
+            continue  # 候选外申报：静默丢弃，不留痕
         it = valid_by_id.get(item_id) or {}
         rc = str(it.get("rule_class") or "heuristic")
-        direction = str(r.get("direction") or "")
-        # 方向×类别匹配：heuristic 只收误报、existence 只收漏报（送审已过滤，
-        # 此处防模型越类申报）；hardline 双保险拒收
+        # 方向×类别匹配（与候选分流同矩阵，三重保险的第三道）
         expected = "false_positive" if rc == "heuristic" else "omission" if rc == "existence" else None
         if expected is None or direction != expected:
             rejected += 1
             continue
-        accepted, why, clause_id, ambiguous = _validate(r, stance, text, clause_index)
+        # 禁语清洗先行：要件③对清洗后的文本复验长度（先凑禁语到 30 字再洗空的绕过面）
+        reasoning = llm_ask._scrub_banned_echo(scorecard.scrub_forbidden(
+            str(r.get("legal_reasoning") or ""))).strip()[:MAX_REASONING_CHARS]
+        accepted, why, clause_id, ambiguous = _validate(
+            r, stance, text, clause_index, reasoning_clean=reasoning)
         if not accepted:
             rejected += 1
         ref = f"{item_id}|{direction}|{(r.get('quote') or '')[:40]}"
         if ref in seen_refs:
             continue
         seen_refs.add(ref)
-        reasoning = llm_ask._scrub_banned_echo(scorecard.scrub_forbidden(
-            str(r.get("legal_reasoning") or "")))[:MAX_REASONING_CHARS]
         proposal = llm_ask._scrub_banned_echo(scorecard.scrub_forbidden(
             str(r.get("proposal") or ""))).strip()
+        rid = r.get("rule_id") or it.get("rule_id")
         objections.append(
             Objection(
                 item_id=item_id,
-                rule_id=str(r.get("rule_id") or it.get("rule_id")) or None,
+                rule_id=str(rid) if rid else None,
                 rule_class=rc,
                 direction=direction,
                 quote=str(r.get("quote") or "")[:MAX_QUOTE_CHARS],

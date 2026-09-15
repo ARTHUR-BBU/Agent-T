@@ -140,9 +140,10 @@ def test_counter_evidence_unverifiable_rejected(monkeypatch):
 
 def test_short_reasoning_rejected(monkeypatch):
     _enable(monkeypatch)
+    # 注意理由文本须不含禁语（禁语走重试/降级路径，另测）——此处只测长度要件
     out = objection_service.run_objections(
         text=_CONTRACT, items=_ITEMS,
-        chat_fn=lambda s, u: _payload([_ok_payload(legal_reasoning="我觉得没问题。")]),
+        chat_fn=lambda s, u: _payload([_ok_payload(legal_reasoning="该条需要结合语境综合判断。")]),
     )
     assert out["rejected_count"] == 1
     assert out["objections"][0]["accepted"] is False
@@ -158,15 +159,118 @@ def test_stance_mismatch_rejected(monkeypatch):
     assert out["objections"][0]["accepted"] is False
 
 
-def test_direction_class_mismatch_rejected(monkeypatch):
-    """heuristic 簇只收误报；模型越类申报 omission → 直接丢弃不留痕
-    （越类申报是模型结构性错误，非可展示的候选）。"""
+def test_out_of_candidacy_direction_silently_dropped(monkeypatch):
+    """候选外申报静默丢弃（第二道防线：送审候选集合比对）——
+    (sublet, omission) 不在候选集，连 rejected 都不计（结构性错误非候选）。"""
     _enable(monkeypatch)
     out = objection_service.run_objections(
         text=_CONTRACT, items=_ITEMS,
         chat_fn=lambda s, u: _payload([_ok_payload(direction="omission")]),
     )
-    assert out["rejected_count"] == 1 and out["objections"] == []
+    assert out["rejected_count"] == 0 and out["objections"] == []
+
+
+def test_hardline_objection_never_accepted(monkeypatch):
+    """hardline 双保险：即使模型对 hardline 簇申报异议，候选外静默丢弃。"""
+    _enable(monkeypatch)
+    out = objection_service.run_objections(
+        text=_CONTRACT, items=_ITEMS,
+        chat_fn=lambda s, u: _payload([
+            _ok_payload(item_id="deposit", rule_id="deposit#r0",
+                        direction="false_positive"),
+        ]),
+    )
+    assert out["rejected_count"] == 0 and out["objections"] == []
+
+
+def test_existence_missing_as_attention_gets_omission_candidate(monkeypatch):
+    """P1 整改钉死：existence + missing_as 缺项档位（需关注且无命中规则）
+    是漏报主通道——等价写法被词表漏掉时受理 omission 候选。"""
+    _enable(monkeypatch)
+    items = _ITEMS + [{
+        "id": "nda_governing_law", "name": "适用法律", "status": "需关注",
+        "note": "缺适用法律", "quote": "", "hits": [],
+        "rule_id": None, "rule_class": "existence",
+        "clause_ids": [], "primary_clause_id": None,
+    }]
+    captured = {}
+
+    def chat(system, user):
+        captured["user"] = user
+        return _payload([])
+
+    objection_service.run_objections(text=_CONTRACT, items=items, chat_fn=chat)
+    assert "nda_governing_law" in captured["user"], "missing_as 缺项档位必须送审收漏报"
+
+
+def test_existence_pass_not_candidate(monkeypatch):
+    """existence + 通过：词表已认出无「缺」可漏，不送审（门禁 P1 整改）。"""
+    _enable(monkeypatch)
+    items = [{  # 唯一条目：existence + 通过
+        "id": "sig_ok", "name": "签署", "status": "通过",
+        "note": "已签署", "quote": "双方签字盖章", "hits": ["签字盖章"],
+        "rule_id": "sig#r0", "rule_class": "existence",
+    }]
+    calls = []
+    out = objection_service.run_objections(
+        text=_CONTRACT, items=items,
+        chat_fn=lambda s, u: (calls.append(1) or _payload([])),
+    )
+    assert out["available"] is True and out["objections"] == [] and not calls
+
+
+def test_heuristic_missing_hit_not_candidate(monkeypatch):
+    """防御：heuristic + 需关注但无命中规则（missing 落点）不给误报通道。"""
+    _enable(monkeypatch)
+    items = [{
+        "id": "ghost", "name": "幽灵需关注", "status": "需关注",
+        "note": "", "quote": "", "hits": [],
+        "rule_id": None, "rule_class": "heuristic",
+    }]
+    calls = []
+    out = objection_service.run_objections(
+        text=_CONTRACT, items=items,
+        chat_fn=lambda s, u: (calls.append(1) or _payload([])),
+    )
+    assert out["available"] is True and out["objections"] == [] and not calls
+
+
+def test_short_quote_rejected(monkeypatch):
+    """碎片摘句（<6 字）不受理：要件①最小长度门槛。"""
+    _enable(monkeypatch)
+    out = objection_service.run_objections(
+        text=_CONTRACT, items=_ITEMS,
+        chat_fn=lambda s, u: _payload([_ok_payload(quote="转租")]),
+    )
+    assert out["rejected_count"] == 1
+    assert out["objections"][0]["accepted"] is False
+
+
+def test_retry_still_dirty_fails_closed(monkeypatch):
+    """重试后仍带禁语：整单软降级 parse_failed（防线对称，不给二轮洗白口）。"""
+    _enable(monkeypatch)
+    bad = _ok_payload(legal_reasoning="该条并无风险，建议直接通过。" + "理由" * 20)
+    rounds = {"n": 0}
+
+    def chat(system, user):
+        rounds["n"] += 1
+        return _payload([bad])
+
+    out = objection_service.run_objections(text=_CONTRACT, items=_ITEMS, chat_fn=chat)
+    assert rounds["n"] == 2
+    assert out["available"] is False and out["reason"] == "parse_failed"
+
+
+def test_budget_exhausted_before_retry(monkeypatch):
+    """预算=1 且首轮坏输出：重试前预算耗尽 → budget_exceeded（不硬失败）。"""
+    _enable(monkeypatch)
+    budget = ReviewBudget(1)
+    bad = _ok_payload(legal_reasoning="该条并无风险，建议直接通过。" + "理由" * 20)
+    out = objection_service.run_objections(
+        text=_CONTRACT, items=_ITEMS,
+        chat_fn=lambda s, u: _payload([bad]), budget=budget,
+    )
+    assert out["reason"] == "budget_exceeded"
 
 
 def test_omission_for_existence_accepted(monkeypatch):
@@ -185,6 +289,19 @@ def test_omission_for_existence_accepted(monkeypatch):
     )
     assert out["available"] is True
     assert out["objections"] and out["objections"][0]["direction"] == "omission"
+    assert out["objections"][0]["rule_id"] is None, "missing 落点不得入库字符串 \"None\""
+
+
+def test_max_objections_cap(monkeypatch):
+    """MAX_OBJECTIONS=6 截断：超出部分 break 不入库（钉上限行为）。"""
+    _enable(monkeypatch)
+    payload = _payload([_ok_payload(quote=f"第三条 转租：乙方不得转租，违反的出租方可解除合同。变体{i}。")
+                        for i in range(9)])
+    out = objection_service.run_objections(
+        text=_CONTRACT, items=_ITEMS, chat_fn=lambda s, u: payload,
+        clause_index=build_clause_index(_CONTRACT),
+    )
+    assert len(out["objections"]) == 6
 
 
 def test_forbidden_phrase_triggers_retry_then_clean_or_fail(monkeypatch):
@@ -198,7 +315,6 @@ def test_forbidden_phrase_triggers_retry_then_clean_or_fail(monkeypatch):
         return _payload([bad]) if rounds["n"] == 1 else _payload([good])
 
     out = objection_service.run_objections(text=_CONTRACT, items=_ITEMS, chat_fn=chat)
-    print("DEBUG out:", json.dumps(out, ensure_ascii=False)[:400])
     assert rounds["n"] == 2, "禁语命中恰好重试一次"
     assert out["available"] is True
 

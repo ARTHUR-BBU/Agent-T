@@ -2,7 +2,7 @@
 
 异议层受理分流（hardline 拒收 / existence 只收漏报 / heuristic 收误报）
 的依据是每条结果的 rule_class——本文件钉透传语义：
-- 簇级 class 优先 → item 级 class 次之 → 默认 heuristic
+- 命中规则自带 class（规则级）> 簇级 class（经 item 透传）> 默认 heuristic
 - 非法值回落 heuristic（fail-safe：多问人、不放水）
 - need_attention/pass/missing 三种档位路径都带出
 """

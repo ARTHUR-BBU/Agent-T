@@ -155,8 +155,29 @@ def test_adopt_rejects_bad_index_and_missing_data():
     rid = _make_done_with_objections()
     # 序号越界
     assert client.post(f"/api/review/{rid}/objections/adopt", json={"index": 9}).status_code == 404
-    # 非整数
+    # 非整数 / 浮点 / 布尔（lax 转换不开口）
     assert client.post(f"/api/review/{rid}/objections/adopt", json={"index": "x"}).status_code == 422
+    assert client.post(f"/api/review/{rid}/objections/adopt", json={"index": 0.9}).status_code == 422
+    assert client.post(f"/api/review/{rid}/objections/adopt", json={"index": True}).status_code == 422
+    # 缺 index
+    assert client.post(f"/api/review/{rid}/objections/adopt", json={}).status_code == 422
+
+
+def test_adopt_rejects_unaccepted_objection():
+    """五要件拒收条目（accepted=False 留痕）不可采纳：API 层 422。"""
+    rid = store_module.create(
+        filename="r.txt", category="procurement", status="done", stage="done",
+        created_at="2026-09-15 10:00", items=[], scorecard={},
+        blind_candidates=[], blind_skipped_messages=[], blind_skipped_reason=None,
+        blind_enabled=False, text="", policies=[], error=None,
+        objections={**SAMPLE_OBJECTIONS, "objections": [
+            {**SAMPLE_OBJECTION, "accepted": False, "reject_reason": "要件①条款引用未能在原文核验"},
+        ]},
+    )
+    r = client.post(f"/api/review/{rid}/objections/adopt", json={"index": 0})
+    assert r.status_code == 422
+    # 拒收留痕未被污染
+    assert client.get(f"/api/review/{rid}").json()["objections"]["objections"][0]["adopted"] is False
     # 无异议数据的 done 记录
     rid2 = store_module.create(
         filename="d.txt", category="procurement", status="done", stage="done",

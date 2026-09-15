@@ -654,8 +654,13 @@ def adopt_objection(review_id: str, body: dict):
     不动（Design B：快照比对，不一致 500）。提案文本由前端复制给人评审，
     真正的规则变更走版本化修订通道（铁律 3）。"""
     row = _require_done_row(review_id)
+    raw_index = body.get("index")
+    # 严格整数：bool/浮点/非整数字符串一律 422（0.9→0、true→1 之类 lax 转换不开口；
+    # int("0.9") 本就抛 ValueError，无需额外判断）
+    if isinstance(raw_index, bool) or not isinstance(raw_index, (int, str)):
+        raise HTTPException(status_code=422, detail="index 必须是整数")
     try:
-        index = int(body.get("index"))
+        index = int(str(raw_index).strip())
     except (TypeError, ValueError):
         raise HTTPException(status_code=422, detail="index 必须是整数")
     with verify_service.lock_for(review_id):
@@ -666,6 +671,9 @@ def adopt_objection(review_id: str, body: dict):
         obs = obj_row.get("objections") or []
         if not (0 <= index < len(obs)):
             raise HTTPException(status_code=404, detail="异议序号不存在")
+        # 只受理已过五要件的条目：拒收留痕条目（accepted=False）不可采纳
+        if not obs[index].get("accepted"):
+            raise HTTPException(status_code=422, detail="该异议未通过受理校验，不可采纳")
         # 快照规则档位，写入后对照（Design B）
         status_snap = {
             str(i.get("id")): i.get("status")
