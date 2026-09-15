@@ -148,6 +148,9 @@
         <section id="quality-panel" class="quality-card hidden" aria-label="AI 观察"></section>
         <!-- A6 有界主动核验：需你确认（九哥/阳仔规格；确认后再核；不改规则档） -->
         <section id="verify-panel" class="verify-card hidden" aria-label="需你确认"></section>
+        <!-- 阶段 3 异议层：规则异议候选（铁律 3——永不改档位；采纳只生成
+             规则改进提案，走人工评审；无可用异议整卡静默隐藏）。renderResults 填充 -->
+        <section id="objections-panel" class="quality-card hidden" aria-label="规则异议"></section>
         <!-- 阶段 2.3 IA 重排：评分卡沉底+默认折叠（原生 details 零 JS 零动画）。
              铁律：分数与档位永远灰字不套档位色；免责声明常驻收起态不能被折没 -->
         <details class="card score-card score-fold hidden" id="score-card">

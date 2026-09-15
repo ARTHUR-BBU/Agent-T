@@ -232,6 +232,34 @@ class ReverifyResponse(BaseModel):
     rule_statuses_unchanged: bool = True
 
 
+class Objection(BaseModel):
+    """异议候选（阶段 3）：铁律 3——永不改当次档位；采纳产物=规则变更提案。"""
+
+    item_id: str
+    rule_id: Optional[str] = None
+    rule_class: str = "heuristic"
+    direction: str  # false_positive / omission
+    quote: str = ""
+    counter_evidence: str = ""
+    legal_reasoning: str = ""
+    stance_check: str = ""
+    proposal: str = ""
+    accepted: bool = False
+    reject_reason: Optional[str] = None
+    clause_id: Optional[str] = None
+    clause_ambiguous: bool = False
+    adopted: bool = False
+    needs_confirm: bool = True
+
+
+class ObjectionInfo(BaseModel):
+    available: bool = False
+    reason: Optional[str] = None
+    objections: list[Objection] = Field(default_factory=list)
+    rejected_count: int = 0
+    disclaimer: str = "异议只是候选线索，不改变逐条核查结论；是否成立由人工与规则修订决定。"
+
+
 class ReviewSummary(BaseModel):
     id: str
     filename: str
@@ -259,6 +287,8 @@ class ReviewSummary(BaseModel):
     stance_declaration: str = ""
     # 阶段 2.1 质量层（旧记录为 None；不可用时 available=False 前端静默隐藏）
     quality: Optional[QualityInfo] = None
+    # 阶段 3 异议层（旧记录为 None；不可用整卡静默隐藏）
+    objections: Optional[ObjectionInfo] = None
     # 架构 batch3 / A5：规则完成 / AI 部分完成 / 全部完成（旧记录 None）
     completion: Optional[CompletionStage] = None
     document_version: str = ""

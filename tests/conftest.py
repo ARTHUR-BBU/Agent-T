@@ -28,6 +28,12 @@ def _quality_off(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _objections_off(monkeypatch):
+    """异议层默认关闭（生产默认开）：同上四件套之一。"""
+    monkeypatch.setenv("OBJECTIONS_ENABLED", "false")
+
+
+@pytest.fixture(autouse=True)
 def _rate_limit_off(monkeypatch):
     # 时序提醒（小智娘门禁 P3-5）：本 fixture 是 function 级，module/session 级
     # fixture 的 setup 发生在它之前，若未来有人在模块级 fixture 里打 API 且
