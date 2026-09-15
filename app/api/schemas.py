@@ -38,6 +38,11 @@ class ChecklistItemResult(BaseModel):
     # 外部审计二轮 P1-1：MatchEvidence（规则命中证据坐标）所在条款——
     # 真正触发风险的条款，Ask 上下文第一顺位；旧记录为空
     primary_clause_id: Optional[str] = None
+    # 阶段 3 异议层地基（阶段 0 P3 承诺兑现）：命中簇 id + 三分法类别
+    # （hardline=永不受理异议 / existence=只收漏报 / heuristic=可收误报；
+    # 未标默认 heuristic）。旧记录为 None。
+    rule_id: Optional[str] = None
+    rule_class: Optional[Literal["hardline", "existence", "heuristic"]] = None
     evidence: Optional[EvidenceRefInfo] = None
 
 
