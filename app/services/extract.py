@@ -38,9 +38,13 @@ def extract_text(filename: str, raw: bytes) -> str:
         if text is not None and not _looks_like_garbage(text):
             return text
 
-        # 旧版 .doc：容器级二进制格式，python-docx/pypdf 都读不了，
-        # 无 docling 时与其吐乱码不如明确指路
+        # 旧版 .doc：容器级二进制格式，python-docx/pypdf 都读不了。
+        # 优先 catdoc（用户需求 2026-09-15：支持 .doc 结尾；服务器镜像已装，
+        # 本地/CI 未装时 shutil.which 守卫快速跳过），不可用再友好指路
         if suffix == ".doc" and raw[:8] == _OLE_MAGIC:
+            text = _try_catdoc(raw)
+            if text is not None and not _looks_like_garbage(text):
+                return text
             raise ExtractionError(
                 "检测到旧版 .doc 格式，当前环境无法解析。请将文件另存为 .docx 或 "
                 ".txt 后重新上传。"
@@ -166,6 +170,44 @@ def _try_python_docx(raw: bytes) -> str | None:
         return "\n".join(parts) if parts else None
     except Exception as exc:  # noqa: BLE001
         logger.info("python-docx unavailable or failed: %s", exc)
+        return None
+
+
+def _try_catdoc(raw: bytes) -> str | None:
+    """旧版 .doc（OLE2）文本提取：catdoc -d utf-8（外部命令，服务器镜像安装）。
+
+    catdoc 对中文 .doc 的支持优于 antiword；不可用（未安装/解析失败/超时）
+    返回 None，调用方回退友好指路。fail-closed：任何异常都不产出半吊子文本。
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    import os
+
+    if shutil.which("catdoc") is None:
+        logger.info("catdoc not installed; .doc fallback unavailable")
+        return None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".doc", delete=False) as tmp:
+            tmp.write(raw)
+            tmp_path = tmp.name
+        try:
+            proc = subprocess.run(
+                ["catdoc", "-d", "utf-8", tmp_path],
+                capture_output=True,
+                timeout=30,
+            )
+            if proc.returncode != 0:
+                logger.info("catdoc failed (rc=%s): %s", proc.returncode, proc.stderr[:200])
+                return None
+            return proc.stdout.decode("utf-8", errors="replace") or None
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+    except Exception as exc:  # noqa: BLE001
+        logger.info("catdoc unavailable or failed: %s", exc)
         return None
 
 

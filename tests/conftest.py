@@ -35,6 +35,12 @@ def _rate_limit_off(monkeypatch):
     # 里显式关闭（参照 test_frontend_e2e.py 的做法）
     monkeypatch.setenv("RATE_LIMIT_UPLOAD_PER_MINUTE", "0")
     monkeypatch.setenv("RATE_LIMIT_ASK_PER_MINUTE", "0")
+    # 双保险（CI flake：run 34910117239 首跑 test_stance 撞 429，弱机时序、
+    # 本地无法复现，重跑即绿）：setup 时清一次桶——无论此前谁污染了共享
+    # 限频器单例，每个测试开始时桶都是空的；env=0 + 空桶双通道防 429。
+    from app.services import rate_limit
+
+    rate_limit.reset_for_tests()
 
 
 @pytest.fixture(autouse=True)
