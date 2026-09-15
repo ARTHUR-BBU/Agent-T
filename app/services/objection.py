@@ -139,6 +139,7 @@ def _collect_candidates(
                 "name": str(it.get("name") or ""),
                 "note": str(it.get("note") or ""),
                 "quote": str(it.get("quote") or ""),
+                "status": str(it.get("status") or ""),  # 透传真实档位给 LLM 上下文
             }
         )
         if len(out) >= max_candidates:
@@ -161,7 +162,7 @@ def _candidates_block(candidates: list[dict[str, Any]], text: str, clause_index:
                 parts.append(f"【{cid} {str(cl.get('heading') or '')[:30]}】")
             related = "；".join(parts)
         lines.append(
-            f"- 条目 {c['item_id']}（{c['name']}）｜规则结论：{'需关注' if c['direction']=='false_positive' else '未找到'}"
+            f"- 条目 {c['item_id']}（{c['name']}）｜规则结论：{c.get('status') or ('需关注' if c['direction']=='false_positive' else '未找到')}"
             f"｜规则备注：{c['note'] or '无'}｜规则摘句：{c['quote'] or '无'}"
             f"｜相关条款：{related or '未定位到，请跳过该条'}"
         )
