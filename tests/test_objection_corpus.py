@@ -1,7 +1,7 @@
 """批 C（3.3）：异议层金标对抗回放门禁——真实语料 × 分层拦截不变式。
 
 与预审对抗集（precheck_corpus_common）同语料源，但测的是异议层：
-用真实规则引擎（run_checklist + annotate）在 24 份金标语料上产出 items，
+用真实规则引擎（run_checklist + annotate）在金标语料 non-blocked 组（17 份）上产出 items，
 钉死三条不变式（回放零错杀门禁）：
 ① 分流无泄漏：送审候选绝不包含 hardline / na / 未识别类别；
 ② 方向×类别矩阵：heuristic 候选全 false_positive、existence 全 omission；
@@ -26,8 +26,6 @@ from app.services.checklist import run_checklist
 from app.services.clause_index import build_clause_index
 from tests.precheck_corpus_common import CASES
 
-pytestmark = pytest.mark.usefixtures("_objections_off")
-
 ROOT = Path(__file__).resolve().parents[1]
 CORPUS = ROOT / "fixtures" / "precheck"
 
@@ -47,8 +45,8 @@ def _replay(fname: str, category: str):
 
 
 @pytest.mark.parametrize("fname,category", CORPUS_MAP)
-def test_replay_candidate_hygiene(fname, category):
-    """不变式①+②：分流无泄漏 + 方向×类别矩阵（24 语料逐份钉死）。"""
+def test_replay_candidate_hygiene(fname, category, monkeypatch):
+    """不变式①+②：分流无泄漏 + 方向×类别矩阵（金标语料 non-blocked 组逐份钉死）。"""
     _, items, _ = _replay(fname, category)
     candidates = objection_service._collect_candidates(items, max_candidates=12)
     for c in candidates:
@@ -61,32 +59,22 @@ def test_replay_candidate_hygiene(fname, category):
 
 
 @pytest.mark.parametrize("fname,category", CORPUS_MAP)
-def test_replay_iron_rule_3_no_kill(fname, category):
+def test_replay_iron_rule_3_no_kill(fname, category, monkeypatch):
     """不变式③（铁律 3 回放零错杀）：异议层开关两次，items 深度相等。"""
+    monkeypatch.setenv("OBJECTIONS_ENABLED", "true")  # conftest autouse 默认关
     text, items, _ = _replay(fname, category)
     import copy
 
     snapshot = copy.deepcopy(items)
-    monkey_env = {"OBJECTIONS_ENABLED": "true"}
-    import os
-
-    old = os.getenv("OBJECTIONS_ENABLED")
-    os.environ["OBJECTIONS_ENABLED"] = "true"
-    try:
-        out = objection_service.run_objections(
-            text=text, items=items, chat_fn=lambda s, u: json.dumps({"objections": []}),
-        )
-    finally:
-        if old is None:
-            os.environ.pop("OBJECTIONS_ENABLED", None)
-        else:
-            os.environ["OBJECTIONS_ENABLED"] = old
+    out = objection_service.run_objections(
+        text=text, items=items, chat_fn=lambda s, u: json.dumps({"objections": []}),
+    )
     assert out["available"] is True, f"{fname}: 异议层回放不得失败"
     assert items == snapshot, f"{fname}: 规则档位被异议层改动（铁律 3 破线）"
 
 
 @pytest.mark.parametrize("fname,category", CORPUS_MAP)
-def test_replay_malicious_payload_bombardment(fname, category):
+def test_replay_malicious_payload_bombardment(fname, category, monkeypatch):
     """对抗轰炸：模型对所有 items 恶意申报双向异议 + 伪造 quote。
     分层拦截后：accepted 数 ≤ 送审候选数，且每条 accepted 的 quote 必在原文。"""
     text, items, clause_index = _replay(fname, category)
@@ -114,7 +102,6 @@ def test_replay_malicious_payload_bombardment(fname, category):
     accepted = [o for o in out["objections"] if o["accepted"]]
     assert len(accepted) == 0, \
         f"{fname}: 伪造 quote 不得被受理（五要件①失守）：{accepted[:1]}"
-    assert out["rejected_count"] + sum(1 for o in out["objections"] if not o["accepted"]) >= 0
     # 候选外申报（hardline 方向等）不得出现在产出里
     sent = {(str(c["item_id"]), str(c["direction"])) for c in candidates}
     for o in out["objections"]:
@@ -122,18 +109,35 @@ def test_replay_malicious_payload_bombardment(fname, category):
             f"{fname}: 候选外申报泄漏：{o}"
 
 
-def test_replay_missing_as_cluster_reachable():
-    """missing_as 缺项档位簇（existence+需关注+rule_id=None）在真实语料上
-    至少出现一次且可达 omission 通道（门禁 P1 整改的真实语料级验证）。"""
-    reachable = 0
+def _candidates_by_corpus(monkeypatch):
+    """逐语料收集候选（enabled 开启不影响 _collect_candidates 纯函数路径）。"""
+    monkeypatch.setenv("OBJECTIONS_ENABLED", "true")
+    missing_as_hits = 0
+    notfound_hits = 0
     for fname, category in CORPUS_MAP:
         _, items, _ = _replay(fname, category)
         candidates = objection_service._collect_candidates(items, max_candidates=12)
-        if any(
-            c["rule_class"] == "existence" and c["direction"] == "omission"
-            and c["status"] == "需关注"
-            for c in candidates
-        ):
-            reachable += 1
-    assert reachable >= 1, \
-        "24 份金标语料中竟无一命中 missing_as 漏报通道——主通道疑似再度失效"
+        if any(c["rule_class"] == "existence" and c["direction"] == "omission"
+               and c["status"] == "需关注" for c in candidates):
+            missing_as_hits += 1
+        if any(c["rule_class"] == "existence" and c["direction"] == "omission"
+               and c["status"] == "未找到" for c in candidates):
+            notfound_hits += 1
+    return missing_as_hits, notfound_hits
+
+
+def test_replay_missing_as_cluster_reachable(monkeypatch):
+    """missing_as 缺项档位簇（existence+需关注+rule_id=None）在真实语料上
+    至少出现一次且可达 omission 通道（门禁 P1 整改的真实语料级验证，
+    变异验证：回退旧逻辑该测试红）。"""
+    missing_as_hits, _ = _candidates_by_corpus(monkeypatch)
+    assert missing_as_hits >= 1, \
+        "金标语料中竟无一命中 missing_as 漏报通道——主通道疑似再度失效"
+
+
+def test_replay_notfound_cluster_reachable(monkeypatch):
+    """姊妹 canary（小智娘批 C 门禁 P3-3）：「未找到→omission」通道
+    在真实语料上同样可达——矩阵两个漏报入口都有语料级钉住。"""
+    _, notfound_hits = _candidates_by_corpus(monkeypatch)
+    assert notfound_hits >= 1, \
+        "金标语料中竟无一命中「未找到」漏报通道——矩阵入口疑似失效"
