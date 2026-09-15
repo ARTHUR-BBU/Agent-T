@@ -11,6 +11,12 @@ RUN useradd --create-home --uid 1000 appuser
 
 WORKDIR /app
 
+# catdoc：旧版 .doc（OLE2）文本提取（用户需求 2026-09-15；extract.py 的
+# .doc 分支优先走 catdoc，未安装时回退友好指路）——slim 镜像轻量安装
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends catdoc && \
+    rm -rf /var/lib/apt/lists/*
+
 # 依赖用 lock 文件（requirements-lock.txt，自线上验证环境冻结）——
 # 审计 P3：开放版本范围会导致服务器重建不可复现
 COPY requirements.txt requirements-lock.txt ./
