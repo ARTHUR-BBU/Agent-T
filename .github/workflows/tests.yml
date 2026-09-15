@@ -23,5 +23,14 @@ jobs:
       # 315+ 条单元/API/金标回归（外部审计：此前无远程 CI 证据）
       # test_precheck_corpus.py 是 live_llm 专项（无 Key 全 skip 的常态），
       # 显式排除与本地口径对齐（CI flake：run 34910117239 首跑 429 假红灯）
+      # 测试环境显式无 Key（肉饼门禁 P3-5 防御：测试必须确定性，Key 泄进
+      # CI 会让 live 层真烧钱；空串在 llm_ask 的 `or None` 口径下等价未设）
       - name: 运行全量测试
+        env:
+          DEEPSEEK_API_KEY: ""
+          ZHIPU_API_KEY: ""
+          GLM_API_KEY: ""
+          XAI_API_KEY: ""
+          GROK_API_KEY: ""
+          PRECHECK_LIVE: ""
         run: python -m pytest -q --ignore=tests/test_precheck_corpus.py
