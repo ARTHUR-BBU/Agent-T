@@ -167,7 +167,8 @@ def _body_block(text: str, clause_index: Optional[dict]) -> tuple[str, set[str]]
     text = text or ""
     clauses = [
         c for c in ((clause_index or {}).get("clauses") or [])
-        if c.get("id") and isinstance(c.get("start"), int)
+        if c.get("id") and isinstance(c.get("start"), int) and isinstance(c.get("end"), int)
+        and c["start"] < c["end"]  # end 缺失/非法会 KeyError 或吞掉剩余全文（门禁 P3-1）
     ]
     if not clauses:
         # 无条款索引：整篇兜底（相关性范围不可枚举，返回空集=不启用绑定）
@@ -182,14 +183,22 @@ def _body_block(text: str, clause_index: Optional[dict]) -> tuple[str, set[str]]
     parts: list[str] = []
     sent: set[str] = set()
     used = 0
+    skipped_note = "（正文过长，部分超长条款未呈现——你的引用只能出自以上列出的条款）"
     for c in clauses:
         block = f"【{c['id']} {str(c.get('heading') or '')[:40]}】\n{text[c['start']:c['end']] or ''}"
         if used + len(block) > BODY_CHAR_BUDGET:
-            parts.append("（正文过长，仅呈现前部分条款——你的引用只能出自以上条款）")
-            break
+            # 跳过超预算单条款，继续装后面的（门禁 P3-2：break 会让单条款
+            # >16k 的合同饿死整个正文块，防线静默降档）
+            if skipped_note not in parts:
+                parts.append(skipped_note)
+            continue
         parts.append(block)
         sent.add(str(c["id"]))
         used += len(block)
+    if not sent:
+        # 有条款索引但一条都装不下（全部超预算）：不送正文——空正文+「只能出自
+        # 以上条款」是谎话提示，且 allowed 空集会让相关性校验静默失效（门禁 P3-2）
+        return "", set()
     return "合同正文（较长，已按条款节选）：\n" + "\n\n".join(parts), sent
 
 
@@ -400,6 +409,14 @@ def run_objections(
         allowed = cand.get("scope") if cand else None
         if direction == "omission":
             allowed = body_clause_ids or None
+        elif allowed is None:
+            # clause 映射静默降级时 scope 为空（门禁 P3-3 fail-open）：
+            # 按规则摘句定位兜底，不让相关性校验在被审计的洞上悄悄开孔
+            fallback = locate_quote_clauses(
+                text, str(it.get("quote") or ""), clause_index or {})
+            allowed = {str(i) for i in fallback} or None
+            if allowed is None:
+                logger.warning("Objections: false_positive candidate %s has no scope fallback", item_id)
         accepted, why, clause_id, ambiguous = _validate(
             r, stance, text, clause_index, reasoning_clean=reasoning,
             allowed_clause_ids=allowed)
