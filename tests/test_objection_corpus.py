@@ -77,6 +77,9 @@ def test_replay_iron_rule_3_no_kill(fname, category, monkeypatch):
 def test_replay_malicious_payload_bombardment(fname, category, monkeypatch):
     """对抗轰炸：模型对所有 items 恶意申报双向异议 + 伪造 quote。
     分层拦截后：accepted 数 ≤ 送审候选数，且每条 accepted 的 quote 必在原文。"""
+    # 外审 P2 教训（假绿灯）：conftest autouse 默认关，忘开 = 防线根本没参战，
+    # 「unavailable 即 return」会让轰炸测试空跑放行——开启 + available 断言双钉
+    monkeypatch.setenv("OBJECTIONS_ENABLED", "true")
     text, items, clause_index = _replay(fname, category)
     # 恶意全集：每条 item × 双方向，quote 全部伪造（不在原文）
     bombs = [
@@ -96,9 +99,11 @@ def test_replay_malicious_payload_bombardment(fname, category, monkeypatch):
         text=text, items=items, clause_index=clause_index,
         chat_fn=lambda s, u: json.dumps({"objections": bombs}, ensure_ascii=False),
     )
-    if not out["available"]:
-        return  # 无候选时合法空结果
+    assert out["available"] is True, \
+        f"{fname}: 异议层 disabled/降级 = 轰炸测试空跑（假绿灯逃生口）"
     candidates = objection_service._collect_candidates(items, max_candidates=12)
+    if not candidates:
+        return  # 无候选=无攻击面，合法空结果
     accepted = [o for o in out["objections"] if o["accepted"]]
     assert len(accepted) == 0, \
         f"{fname}: 伪造 quote 不得被受理（五要件①失守）：{accepted[:1]}"

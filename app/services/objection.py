@@ -140,11 +140,57 @@ def _collect_candidates(
                 "note": str(it.get("note") or ""),
                 "quote": str(it.get("quote") or ""),
                 "status": str(it.get("status") or ""),  # 透传真实档位给 LLM 上下文
+                # 证据相关性范围（外审 P1-2）：误报候选绑定规则命中的条款；
+                # 漏报候选此处为 None，由 run_objections 按「送出的正文条款集」绑定
+                "scope": (
+                    {str(x) for x in (it.get("clause_ids") or [])}
+                    | ({str(it["primary_clause_id"])} if it.get("primary_clause_id") else set())
+                    or None
+                ) if direction == "false_positive" else None,
             }
         )
         if len(out) >= max_candidates:
             break
     return out
+
+
+# 正文供给（外审 P1-1）：omission 方向必须让模型看得到合同正文——
+# 「规则没找到」的等价写法藏在任何条款里，只给目录等于让学生改漏判的卷子
+# 却不给卷子。短合同全文；长合同按条款顺序送出预算内正文并标注截断。
+BODY_FULL_LIMIT = 6000  # 与分段阅读阈值一致：以内正文直送全文
+BODY_CHAR_BUDGET = 16000  # 长合同正文块字符预算（超出按条款截断）
+
+
+def _body_block(text: str, clause_index: Optional[dict]) -> tuple[str, set[str]]:
+    """构造合同正文块。返回 (正文文本, 送出的条款 id 集合)——后者即漏报候选的
+    证据相关性范围（证据只能引自模型实际看过的条款）。"""
+    text = text or ""
+    clauses = [
+        c for c in ((clause_index or {}).get("clauses") or [])
+        if c.get("id") and isinstance(c.get("start"), int)
+    ]
+    if not clauses:
+        # 无条款索引：整篇兜底（相关性范围不可枚举，返回空集=不启用绑定）
+        flag = "（正文过长，仅呈现前段）" if len(text) > BODY_CHAR_BUDGET else ""
+        return f"合同正文{flag}：\n{text[:BODY_CHAR_BUDGET]}", set()
+    if len(text) <= BODY_FULL_LIMIT:
+        parts = [
+            f"【{c['id']} {str(c.get('heading') or '')[:40]}】\n{text[c['start']:c['end']] or ''}"
+            for c in clauses
+        ]
+        return "合同正文（全文，按条款呈现）：\n" + "\n\n".join(parts), {str(c["id"]) for c in clauses}
+    parts: list[str] = []
+    sent: set[str] = set()
+    used = 0
+    for c in clauses:
+        block = f"【{c['id']} {str(c.get('heading') or '')[:40]}】\n{text[c['start']:c['end']] or ''}"
+        if used + len(block) > BODY_CHAR_BUDGET:
+            parts.append("（正文过长，仅呈现前部分条款——你的引用只能出自以上条款）")
+            break
+        parts.append(block)
+        sent.add(str(c["id"]))
+        used += len(block)
+    return "合同正文（较长，已按条款节选）：\n" + "\n\n".join(parts), sent
 
 
 def _candidates_block(candidates: list[dict[str, Any]], text: str, clause_index: Optional[dict]) -> str:
@@ -207,11 +253,15 @@ def _validate(
     text: str,
     clause_index: Optional[dict],
     reasoning_clean: str = "",
+    allowed_clause_ids: Optional[set[str]] = None,
 ) -> tuple[bool, Optional[str], Optional[str], Optional[bool]]:
     """五要件硬校验。返回 (accepted, reject_reason, clause_id, clause_ambiguous)。
 
     reasoning_clean：禁语清洗后的法律逻辑链文本（要件③按它复验长度，
     防「先凑禁语到 30 字、洗完剩空壳」的绕过面）。
+    allowed_clause_ids：证据相关性范围（外审 P1-2）——证据「存在」还要
+    「属于本异议的条款范围」：误报候选=规则命中条款；漏报候选=送出的正文
+    条款集。None=不启用（无索引等退化场景，存在性校验兜底）。
     """
     item_id = str(r.get("item_id") or "").strip()
     if not item_id:
@@ -224,14 +274,24 @@ def _validate(
     ids = locate_quote_clauses(text, quote, clause_index or {})
     if not ids:
         return False, "要件①条款引用未能定位条款", None, None
+    if allowed_clause_ids is not None:
+        hit = [i for i in ids if str(i) in allowed_clause_ids]
+        if not hit:
+            # 证据真实存在但与该异议的条款范围无关：不能拿合同里别处的真话凑要件
+            return False, "要件①证据与该异议的条款范围不符", None, None
+        ids = hit
     clause_ambiguous = len(ids) > 1
     clause_id = None if clause_ambiguous else str(ids[0])
-    # ② 反证引用或声明无
+    # ② 反证引用或声明无（反证同样受相关性范围约束）
     counter = str(r.get("counter_evidence") or "").strip()
     if not counter:
         return False, "要件②反证缺失", clause_id, clause_ambiguous
     if counter != _DECLARATION and not blind_spot.quote_supported(text, counter):
         return False, "要件②反证原文未能在原文核验", clause_id, clause_ambiguous
+    if counter != _DECLARATION and allowed_clause_ids is not None:
+        cids = locate_quote_clauses(text, counter, clause_index or {})
+        if not any(str(i) in allowed_clause_ids for i in cids):
+            return False, "要件②反证与该异议的条款范围不符", clause_id, clause_ambiguous
     # ③ 法律逻辑链（按清洗后文本复验）
     reasoning = (reasoning_clean or str(r.get("legal_reasoning") or "").strip())
     if len(reasoning) < MIN_REASONING_CHARS:
@@ -274,8 +334,15 @@ def run_objections(
     ]
     catalog = "\n".join(catalog_lines)
 
+    # 外审 P1-1：omission 候选必须有正文可检索（等价写法藏在哪规则不知道，
+    # 只给目录=让学生改漏判的卷子却不给卷子）；误报候选证据已有规则摘句，不送正文
+    has_omission = any(c["direction"] == "omission" for c in candidates)
+    body_block, body_clause_ids = ("", set())
+    if has_omission:
+        body_block, body_clause_ids = _body_block(text, clause_index)
+
     system = objection_prompts.build_system_prompt(stance)
-    user = objection_prompts.build_user_prompt(block, catalog)
+    user = objection_prompts.build_user_prompt(block, catalog, body_block)
     if budget is not None and not budget.try_consume():
         logger.warning("Objections skipped: LLM budget exhausted")
         return outcome_unavailable("budget_exceeded")
@@ -327,8 +394,15 @@ def run_objections(
         # 禁语清洗先行：要件③对清洗后的文本复验长度（先凑禁语到 30 字再洗空的绕过面）
         reasoning = llm_ask._scrub_banned_echo(scorecard.scrub_forbidden(
             str(r.get("legal_reasoning") or ""))).strip()[:MAX_REASONING_CHARS]
+        # 证据相关性范围（外审 P1-2）：误报=规则命中条款；漏报=送出的正文条款集
+        cand = next((c for c in candidates if str(c["item_id"]) == item_id
+                     and str(c["direction"]) == direction), None)
+        allowed = cand.get("scope") if cand else None
+        if direction == "omission":
+            allowed = body_clause_ids or None
         accepted, why, clause_id, ambiguous = _validate(
-            r, stance, text, clause_index, reasoning_clean=reasoning)
+            r, stance, text, clause_index, reasoning_clean=reasoning,
+            allowed_clause_ids=allowed)
         if not accepted:
             rejected += 1
         ref = f"{item_id}|{direction}|{(r.get('quote') or '')[:40]}"

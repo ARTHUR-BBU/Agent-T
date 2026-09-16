@@ -26,6 +26,8 @@ _CONTRACT = (
     "第二条 付款：货款十万元，验收合格后一次性支付。\n"
     "第三条 转租：乙方不得转租，违反的出租方可解除合同。\n"
     "第四条 保密：乙方对合作内容负有保密义务。\n"
+    "第五条 因本合同引起的争议，双方协商解决；协商不成的，适用中华人民共和国法律，"
+    "提交合同签订地有管辖权的人民法院诉讼解决。\n"
     "本合同一式两份，自双方签字盖章之日起生效。\n"
 )
 
@@ -274,22 +276,66 @@ def test_budget_exhausted_before_retry(monkeypatch):
 
 
 def test_omission_for_existence_accepted(monkeypatch):
-    """existence 未找到项的漏报异议走通。"""
+    """existence 未找到项的漏报异议走通：合同实际写了适用法律（等价写法），
+    词表没认出——AI 引真实原文提漏报，受理。（外审 P1-1：模型能看到正文）"""
     _enable(monkeypatch)
-    obj = _ok_payload(
-        item_id="governing_law", rule_id=None, direction="omission",
-        quote="第四条 保密：乙方对合作内容负有保密义务。",
-        legal_reasoning="合同已含保密安排但未写适用法律；本条用于验证漏报异议"
-                        "通道：等价写法被词表漏掉时应受理漏报候选。",
-    )
+    captured = {}
+
+    def chat(system, user):
+        captured["user"] = user
+        obj = _ok_payload(
+            item_id="governing_law", rule_id=None, direction="omission",
+            quote="因本合同引起的争议，双方协商解决；协商不成的，适用中华人民共和国法律",
+            legal_reasoning="合同第五条已明确约定适用中华人民共和国法律，属适用法律条款的"
+                            "等价写法，规则词表未覆盖该表述，构成漏报。",
+        )
+        return _payload([obj])
+
     out = objection_service.run_objections(
-        text=_CONTRACT, items=_ITEMS,
-        chat_fn=lambda s, u: _payload([obj]),
+        text=_CONTRACT, items=_ITEMS, chat_fn=chat,
         clause_index=build_clause_index(_CONTRACT),
     )
+    assert "合同正文" in captured["user"], "omission 场景必须给模型送正文（外审 P1-1）"
+    assert "适用中华人民共和国法律" in captured["user"], "正文必须含可检索的条款原文"
     assert out["available"] is True
     assert out["objections"] and out["objections"][0]["direction"] == "omission"
     assert out["objections"][0]["rule_id"] is None, "missing 落点不得入库字符串 \"None\""
+
+
+def test_false_positive_quote_outside_scope_rejected(monkeypatch):
+    """外审 P1-2 主战场：误报异议的证据必须落在规则命中的条款范围内——
+    拿合同别处的真话（真实存在）凑五要件，拒收。"""
+    _enable(monkeypatch)
+    out = objection_service.run_objections(
+        text=_CONTRACT, items=_ITEMS,
+        chat_fn=lambda s, u: _payload([
+            _ok_payload(quote="第四条 保密：乙方对合作内容负有保密义务。"),
+        ]),
+        clause_index=build_clause_index(_CONTRACT),
+    )
+    assert out["rejected_count"] == 1
+    o = out["objections"][0]
+    assert o["accepted"] is False
+    assert "条款范围不符" in (o["reject_reason"] or ""), "证据相关性校验必须拒收范围外真话"
+
+
+def test_body_block_only_for_omission(monkeypatch):
+    """攻击面按需扩大：只有 omission 候选才送正文；纯误报场景不送。"""
+    _enable(monkeypatch)
+    captured = {}
+
+    def chat(system, user):
+        captured["user"] = user
+        return _payload([])
+
+    # 只有 heuristic+需关注（误报候选）→ 不送正文
+    items_fp = [it for it in _ITEMS if it["id"] == "sublet"]
+    objection_service.run_objections(text=_CONTRACT, items=items_fp, chat_fn=chat)
+    assert "合同正文" not in captured["user"], "纯误报场景不得送正文（攻击面收窄）"
+    # 含 governing_law（漏报候选）→ 送正文
+    items_om = [it for it in _ITEMS if it["id"] in ("sublet", "governing_law")]
+    objection_service.run_objections(text=_CONTRACT, items=items_om, chat_fn=chat)
+    assert "合同正文" in captured["user"], "含漏报候选必须送正文"
 
 
 def test_max_objections_cap(monkeypatch):

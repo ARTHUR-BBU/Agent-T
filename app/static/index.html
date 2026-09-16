@@ -44,6 +44,11 @@
         </label>
         <button id="btn-upload" class="primary" type="button">开始审查</button>
         <p id="upload-error" class="error hidden"></p>
+        <!-- 外审 P1-3：HTTP 红线警示。连接未加密时显眼常驻（HTTPS 下由 JS 移除）——
+             Base64 不是加密，Basic Auth 与合同正文在裸 HTTP 下均明文过网 -->
+        <p id="http-warning" class="http-warning hidden" role="alert">
+          ⚠️ 当前连接未加密（HTTP）：请勿上传真实合同！账号口令与合同内容在传输中可被窃听，仅限测试与演示用途。正式加密（HTTPS）上线后再传真实合同。
+        </p>
         <p class="privacy-note">审查说明：上传后合同文本将发送至所配置的大模型（DeepSeek / 智谱）用于评分、AI 观察与条款解释；不配置模型 Key 时仅在本机做规则审查、数据不出服务器。审查记录定期自动清除。</p>
       </div>
     </section>
