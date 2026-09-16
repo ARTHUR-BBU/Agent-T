@@ -1034,3 +1034,107 @@ def test_mobile_underscore_id_item_route(mobile_home):
     assert "/item/early_termination" in mobile_home.evaluate("window.location.hash")
     assert mobile_home.inner_text("#ask-title").strip() != ""
     assert not mobile_home.is_visible("#screen-upload"), "不得被踢回上传页"
+
+
+# ---------- 阶段 3 异议层（规则异议候选 + 采纳为提案） ----------
+
+def _objections_review_stub(objections):
+    """假 done 记录：在 quality stub 基础上注入 objections 载荷。"""
+    stub = _quality_review_stub(None)
+    stub["id"] = "e2eo00001"
+    stub["objections"] = objections
+    return stub
+
+
+def _stub_objections_flow(page, objections):
+    """拦截 upload + review 轮询 + adopt，注入带异议的假 done 记录并走到结果页。"""
+    import json as _json
+
+    page.route(
+        "**/api/upload",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({"review_id": "e2eo00001", "message": "uploaded", "status": "uploaded"}),
+        ),
+    )
+    page.route(
+        "**/api/review/e2eo00001",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps(_objections_review_stub(objections), ensure_ascii=False),
+        ),
+    )
+    page.set_input_files("#file", str(FIXTURE))
+    page.click("#btn-upload")
+    page.wait_for_selector("#results-body", state="visible", timeout=15000)
+
+
+_OK_OBJECTION = {
+    "item_id": "sublet", "rule_id": "sublet#r0", "rule_class": "heuristic",
+    "direction": "false_positive", "quote": "本房屋系出租方转租取得",
+    "counter_evidence": "未发现反证原文",
+    "legal_reasoning": "规则词表对「转租」的命中未区分产权转租与使用权转租，疑似误报候选。",
+    "stance_check": "与立场无关",
+    "proposal": "为「转租」词表增加产权语境区分。",
+    "accepted": True, "reject_reason": None,
+    "clause_id": "c04", "clause_ambiguous": False,
+    "adopted": False, "needs_confirm": True,
+}
+
+
+def test_objections_panel_renders_and_adopt(home):
+    """异议面板渲染 + 采纳按钮走 adopt 端点后变为已采纳态。"""
+    import json as _json
+
+    adopted_calls = []
+    home.route(
+        "**/api/review/e2eo00001/objections/adopt",
+        lambda route: (
+            adopted_calls.append(_json.loads(route.request.post_data)),
+            route.fulfill(
+                status=200, content_type="application/json",
+                body=_json.dumps(
+                    {
+                        "available": True, "reason": None,
+                        "objections": [{**_OK_OBJECTION, "adopted": True}],
+                        "rejected_count": 0,
+                        "disclaimer": "异议只是候选线索，不改变逐条核查结论；是否成立由人工与规则修订决定。",
+                    },
+                    ensure_ascii=False,
+                ),
+            ),
+        ),
+    )
+    _stub_objections_flow(home, {
+        "available": True, "reason": None,
+        "objections": [dict(_OK_OBJECTION)],
+        "rejected_count": 0,
+        "disclaimer": "异议只是候选线索，不改变逐条核查结论；是否成立由人工与规则修订决定。",
+    })
+    assert home.is_visible("#objections-panel")
+    assert "规则异议" in home.inner_text("#objections-panel .source-badge.quality")
+    assert "疑似误报" in home.inner_text("#objections-panel")
+    assert "待人工确认" in home.inner_text("#objections-panel")
+    # 采纳：按钮点击 → POST index=0 → 变已采纳禁用态
+    home.click("#objections-panel .objection-adopt")
+    home.wait_for_function(
+        "document.querySelector('#objections-panel .objection-adopt').textContent.includes('已采纳')"
+    )
+    assert adopted_calls == [{"index": 0}]
+
+
+def test_objections_panel_hides_rejected_and_unavailable(home):
+    """五要件拒收条目不渲染；available=false 整卡静默隐藏（铁律 3 展示语义）。"""
+    _stub_objections_flow(home, {
+        "available": True, "reason": None,
+        "objections": [{**_OK_OBJECTION, "accepted": False, "reject_reason": "要件①条款引用未能在原文核验"}],
+        "rejected_count": 1,
+        "disclaimer": "x",
+    })
+    assert not home.is_visible("#objections-panel")
+
+
+def test_objections_panel_hidden_without_key(home):
+    """旧记录兼容：review 载荷无 objections 键 → 面板静默隐藏。"""
+    _stub_objections_flow(home, None)
+    assert not home.is_visible("#objections-panel")

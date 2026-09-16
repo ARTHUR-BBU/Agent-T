@@ -65,9 +65,9 @@ def test_concurrent_try_consume_exactly_exhausts():
 
 def test_limit_from_env_unset(monkeypatch):
     monkeypatch.delenv("LLM_BUDGET_PER_REVIEW", raising=False)
-    # 阶段 2.1 质量层账目（llm_budget.py docstring）：全链最坏 14 ≤ 默认 16
-    assert limit_from_env() == DEFAULT_BUDGET == 16
-    assert DEFAULT_BUDGET >= 14, "预算上限必须 ≥ docstring 全链最坏账目"
+    # 阶段 3.1 异议层账目（llm_budget.py docstring）：全链最坏 16 ≤ 默认 18
+    assert limit_from_env() == DEFAULT_BUDGET == 18
+    assert DEFAULT_BUDGET >= 16, "预算上限必须 ≥ docstring 全链最坏账目"
 
 
 def test_limit_from_env_zero_disables(monkeypatch):

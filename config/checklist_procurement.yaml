@@ -39,6 +39,7 @@ scorecard:
       weight: 10
 items:
   - id: subject
+    class: existence
     name: 主体
     segment: A
     description: 合同主体是否完整、清晰（名称、角色、授权等）
@@ -51,6 +52,7 @@ items:
             - "有限公司|股份有限公司|有限责任公司"
             - "甲方|乙方|买方|卖方|采购方|供货方|订购人|承供人"
           note: 仅见公司名称，未见法定代表人、住所或统一社会信用代码等完整主体信息
+          class: existence
           unless:
             any_of:
               - "法定代表人"
@@ -67,6 +69,7 @@ items:
         - pattern: "甲方|乙方|买方|卖方|采购方|供货方|订购人|承供人"
 
   - id: subject_matter
+    class: heuristic
     name: 标的
     segment: B
     description: 采购标的是否明确、规格数量是否可验收
@@ -86,6 +89,7 @@ items:
             - "满足一般商务办公"
             - "不作型号锁定"
           note: 标的仅写笼统办公配置，规格型号不明确，难以验收
+          class: heuristic
       pass:
         - any_of:
             - "型号"
@@ -142,6 +146,7 @@ items:
             - "验收合格.{0,10}支付"
             - "验收后.{0,12}(支付|付款|付清)"
           note: 约定签约/签订后即付或预付全部货款，未见验收后再付安排，违背「先验收后付款」政策
+          class: heuristic
         - any_of:
             - "免质保|不提供质保|无质保期|无需提供质保|无质保服务"
             - "不设质保期|质保责任免除|售后质保不予承诺"
@@ -150,6 +155,7 @@ items:
             - "质保金"
             - "质保期[^。；]{0,12}(月|年)"
           note: 约定免质保或不设质保，未见质保留存安排
+          class: heuristic
         - any_of:
             - "合同全款|支付.{0,8}全款|全额支付货款|履约前结清全部货款"
             - "一次性付清|一次性支付"
@@ -160,6 +166,7 @@ items:
             - "验收后.{0,12}(支付|付款|付清)"
             - "分期支付|分期付款"
           note: 约定一次性/全款支付，且未见质保金或验收后再付安排，违背「小额货90%+10%质保金」政策
+          class: heuristic
       pass:
         - any_of:
             - "质保金"
@@ -170,6 +177,7 @@ items:
         - pattern: "价款|总价|付款|支付|人民币|元|对价|结算"
 
   - id: term
+    class: existence
     name: 期限
     segment: B
     description: 交付/履行期限是否明确
@@ -201,6 +209,7 @@ items:
             - "违约责任由.{0,10}自行承担"
             - "豁免违约责任"
           note: 单方免除乙方违约责任，权利义务严重不对等
+          class: hardline
       pass:
         - any_of:
             - "违约金"
@@ -210,6 +219,7 @@ items:
         - pattern: "违约"
 
   - id: confidentiality
+    class: existence
     name: 保密
     segment: E
     description: 是否约定保密义务（采购合同可较简）
@@ -223,6 +233,7 @@ items:
         - pattern: "保密"
 
   - id: ip
+    class: existence
     name: 知识产权归属
     segment: E
     description: 知识产权归属是否约定
@@ -237,6 +248,7 @@ items:
         - pattern: "知识产权|著作权|专利"
 
   - id: jurisdiction
+    class: existence
     name: 管辖与争议
     segment: F
     description: 争议解决与管辖法院是否明确
@@ -253,6 +265,7 @@ items:
         - pattern: "争议|纠纷|管辖|仲裁|诉讼"
 
   - id: termination
+    class: existence
     name: 解除/终止
     segment: D
     description: 解除与终止条件是否约定
@@ -292,6 +305,7 @@ items:
             - "不得以发票瑕疵"
           # 方向注记（阶段 1.3 老钱裁决配套：方向性 hardline 簇注明客观偏向）
           note: 该条明显偏向卖方。存在签收即验收、免质保、发票不得拒付等明显单方不公平条款
+          class: hardline
         # 定金没收独立成核（审计批3，肉饼 PR#22 P2-1）：单独设 unless——
         # 民法典587 定金规则是双向的（收受方违约双倍返还），同时约定双倍
         # 返还属法定对称罚则而非单方偏向，不得仅凭「不予退还」字样直捕。
@@ -306,6 +320,7 @@ items:
               - "双倍返还[^。；\\n]{0,12}定金"
               - "定金[^。；\\n]{0,12}双倍返还"
           note: 定金没收/不予退还与主给付义务脱钩且无对等罚则（民法典586-587），该条明显偏向卖方
+          class: heuristic
       pass:
         - any_of:
             - "验收标准"
@@ -313,6 +328,7 @@ items:
             - "有权拒付"
 
   - id: governing_law
+    class: existence
     name: 适用法律
     segment: F
     description: 是否明确适用法律
@@ -330,6 +346,7 @@ items:
         - pattern: "适用法律"
 
   - id: signature
+    class: existence
     name: 签署与印章
     segment: G
     description: 签署方式是否完整（签字+盖章）
@@ -345,6 +362,7 @@ items:
             - "加盖单位公章即可"
             - "单位公章[:：]"
           note: 仅见盖章栏，未见签字栏或授权代表签署，签署要件不完整
+          class: existence
           unless:
             any_of:
               - "（签字|\\(签字"

@@ -14,6 +14,7 @@ from typing import Any, Callable, TypedDict
 from langgraph.graph import END, StateGraph
 
 from app.services import quality as quality_service
+from app.services import objection as objection_service
 from app.services.blind_spot import annotate_rule_items
 from app.services.checklist import run_checklist
 from app.services.clause_index import build_clause_index, map_items_to_clauses
@@ -42,6 +43,8 @@ class ReviewState(TypedDict, total=False):
     blind_enabled: bool
     # 阶段 2.1 质量层：quality_service.run_quality 产物（QualityInfo 形状 dict）
     quality: dict[str, Any]
+    # 阶段 3.1 异议层：objection_service.run_objections 产物（ObjectionInfo 形状 dict）
+    objections: dict[str, Any]
     # 阶段 0.5：单次审查 LLM 预算对象（llm_budget.ReviewBudget | None），
     # 由 upload 请求创建、贯穿预审与审查线程；放 state 仅为透传给 model_review
     budget: Any
@@ -279,10 +282,24 @@ def node_quality(state: ReviewState) -> ReviewState:
         facts=facts_out,
         verify=verify_out,
     )
+    # 阶段 3.1 异议层：LLM 对 heuristic/existence 提疑似误报/漏报候选
+    # （铁律 3：异议永不改档位；hardline 分流拦截不送审）
+    try:
+        objections_out = objection_service.run_objections(
+            text=state.get("text") or "",
+            items=state.get("items") or [],
+            stance=state.get("stance") or "neutral",
+            clause_index=state.get("clause_index"),
+            budget=state.get("budget"),
+        )
+    except Exception:  # noqa: BLE001
+        logging.getLogger(__name__).exception("Objection pass failed")
+        objections_out = objection_service.outcome_unavailable("error")
     return {
         "quality": out,
         "completion": "fully_complete",
         "verify": verify_out,
+        "objections": objections_out,
     }
 
 
@@ -353,6 +370,7 @@ def run_review(
         "blind_skipped_reason": final.get("blind_skipped_reason"),
         "blind_enabled": bool(final.get("blind_enabled")),
         "quality": final.get("quality") or {},
+        "objections": final.get("objections") or {},
         "document_version": final.get("document_version") or "",
         "completion": final.get("completion") or (
             "fully_complete" if not final.get("error") else ""

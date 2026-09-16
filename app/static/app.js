@@ -575,6 +575,7 @@
 
     renderQuality(data);
     renderVerify(data);
+    renderObjections(data);
   }
 
   /** 阶段 2.1 质量层：清单之后的「AI 观察」虚线容器。
@@ -917,7 +918,150 @@
     panel.classList.remove("hidden");
   }
 
-  /** M3.5 评分卡：参考层。不可用时整卡不渲染（无 Key 在 meta 加一行灰字）。 */
+  /** 阶段 3 异议层：规则异议候选（疑似误报/疑似漏报）。
+   * 铁律 3：异议永不改档位——这里只展示候选线索；「采纳」只生成规则改进
+   * 提案供人工评审，不是当次改判。只渲染 accepted=true 的条目
+   * （五要件拒收条目是内部留痕，不外露）；不可用与旧记录静默隐藏。
+   * 模型态字段一律 textContent，零 innerHTML 拼接（同质量层纪律）。 */
+  const OBJECTION_DIR_LABEL = {
+    false_positive: "疑似误报",
+    omission: "疑似漏报",
+  };
+
+  function renderObjections(data) {
+    const panel = $("objections-panel");
+    if (!panel) return;
+    const obj = data.objections;
+    const list = (obj && obj.available && Array.isArray(obj.objections))
+      ? obj.objections
+      : [];
+    const shown = list.filter((x) => x && x.accepted);
+    if (!shown.length) {
+      panel.innerHTML = "";
+      panel.classList.add("hidden");
+      return;
+    }
+    panel.innerHTML = "";
+
+    const head = document.createElement("div");
+    head.className = "quality-head";
+    const badge = document.createElement("span");
+    badge.className = "source-badge quality";
+    badge.textContent = "规则异议";
+    head.appendChild(badge);
+    const disclaimer = document.createElement("span");
+    disclaimer.className = "quality-disclaimer";
+    disclaimer.textContent = obj.disclaimer || "异议只是候选线索，不改变逐条核查结论；是否成立由人工与规则修订决定。";
+    head.appendChild(disclaimer);
+    panel.appendChild(head);
+
+    const ul = document.createElement("ul");
+    ul.className = "quality-list";
+    list.forEach((ob, rawIndex) => {
+      if (!ob || !ob.accepted) return; // 拒收留痕不渲染，但保留原始下标供采纳
+      const li = document.createElement("li");
+      li.className = "quality-item";
+
+      const line1 = document.createElement("p");
+      line1.className = "quality-title-line";
+      const dir = document.createElement("span");
+      dir.className = "quality-dim";
+      dir.textContent = OBJECTION_DIR_LABEL[ob.direction] || "异议";
+      line1.appendChild(dir);
+      const title = document.createElement("span");
+      title.className = "quality-title";
+      title.textContent = itemLabelById(ob.item_id) || "对一条规则结论的异议";
+      line1.appendChild(title);
+      li.appendChild(line1);
+
+      if (ob.quote) {
+        const quote = document.createElement("div");
+        quote.className = "quality-quote";
+        quote.textContent = "原文：" + ob.quote;
+        li.appendChild(quote);
+        const jump = document.createElement("button");
+        jump.type = "button";
+        jump.className = "link evidence-jump";
+        jump.textContent = "看原文";
+        jump.onclick = () => jumpToEvidence(quote, { clause_id: ob.clause_id || null });
+        li.appendChild(jump);
+      }
+
+      if (ob.legal_reasoning) {
+        const reasoning = document.createElement("p");
+        reasoning.className = "quality-comment";
+        reasoning.textContent = ob.legal_reasoning;
+        li.appendChild(reasoning);
+      }
+
+      // 提案文本：采纳后人工评审的唯一输入（3.2 交付物出口，textContent 零拼接）
+      if (ob.proposal) {
+        const proposal = document.createElement("p");
+        proposal.className = "quality-comment objection-proposal";
+        proposal.textContent = "改进提案：" + ob.proposal;
+        li.appendChild(proposal);
+      }
+
+      const line4 = document.createElement("p");
+      line4.className = "quality-meta-line";
+      const heading = clauseHeadingById(ob.clause_id);
+      if (heading) {
+        const clause = document.createElement("span");
+        clause.className = "quality-clause";
+        clause.textContent = "条款 " + heading;
+        line4.appendChild(clause);
+      }
+      const confirm = document.createElement("span");
+      confirm.className = "quality-confirm";
+      confirm.textContent = "待人工确认";
+      line4.appendChild(confirm);
+      li.appendChild(line4);
+
+      // 采纳动作：只生成规则改进提案（复制给人评审），不改当次结论
+      const adoptBtn = document.createElement("button");
+      adoptBtn.type = "button";
+      adoptBtn.className = "link objection-adopt";
+      if (ob.adopted) {
+        adoptBtn.textContent = "已采纳（提案待人工评审）";
+        adoptBtn.disabled = true;
+      } else {
+        adoptBtn.textContent = "采纳为规则改进提案";
+        adoptBtn.onclick = () =>
+          adoptObjection(data.id, rawIndex, adoptBtn);
+      }
+      li.appendChild(adoptBtn);
+
+      ul.appendChild(li);
+    });
+    panel.appendChild(ul);
+    panel.classList.remove("hidden");
+  }
+
+  async function adoptObjection(reviewId, index, btn) {
+    if (!reviewId || typeof index !== "number") return;
+    btn.disabled = true;
+    try {
+      const res = await fetch("/api/review/" + reviewId + "/objections/adopt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ index }),
+      });
+      const body = await res.json();
+      if (!res.ok) {
+        console.warn("adopt failed", body && body.detail);
+        btn.disabled = false;
+        return;
+      }
+      if (state.review && state.review.id === reviewId && state.review.objections
+          && Array.isArray(state.review.objections.objections)) {
+        state.review.objections.objections[index].adopted = true;
+      }
+      btn.textContent = "已采纳（提案待人工评审）";
+    } catch (err) {
+      console.warn("adopt error", err);
+      btn.disabled = false;
+    }
+  }
   function renderScorecard(data) {
     const card = $("score-card");
     const sc = data.scorecard || {};
@@ -1064,6 +1208,15 @@
     if (!index || !Array.isArray(index.clauses)) return "";
     const target = index.clauses.find((c) => c.id === clauseId);
     return (target && target.heading) || "";
+  }
+
+  /** 阶段 3 异议层：条目 id → 清单显示名（异议面板标题用）。 */
+  function itemLabelById(itemId) {
+    if (!itemId) return "";
+    const items = state.review && state.review.items;
+    if (!Array.isArray(items)) return "";
+    const target = items.find((it) => it && it.id === itemId);
+    return (target && (target.name || target.title)) || "";
   }
 
   function selectItem(item) {

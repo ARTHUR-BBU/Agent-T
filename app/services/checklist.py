@@ -167,6 +167,18 @@ def _load_yaml(path: Path) -> dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
+_VALID_RULE_CLASSES = {"hardline", "existence", "heuristic"}
+
+
+def _rule_class(rule: dict[str, Any], item: dict[str, Any]) -> str:
+    """三分法类别（路线图宪章，异议层受理分流依据）。
+    优先级与裁定书（docs/stage3-class-opinion.md 第三节）对齐：
+    命中规则自带 class（规则级）> 簇级 class（经 item 透传）> 默认 heuristic。
+    非法值一律回落 heuristic（fail-safe：多问人、不放水）。"""
+    raw = str(rule.get("class") or item.get("class") or "").strip().lower()
+    return raw if raw in _VALID_RULE_CLASSES else "heuristic"
+
+
 def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
     base = {
         "id": item["id"],
@@ -198,7 +210,7 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
     # MatchEvidence（外部审计二轮 P1-1）：一次扫描同时定档位与证据坐标，
     # quote/条款归属均从同一 occurrence 派生——旧实现判定与摘句各自重扫，
     # 「风险在第二处、摘句引第一处」的结论-证据错位即源于此
-    for rule in rules.get("need_attention") or []:
+    for n, rule in enumerate(rules.get("need_attention") or []):
         evidence = _first_unprotected_occurrence(text, rule)
         if evidence:
             if pass_fulltext_fallback and _pass_matches(rules, text):
@@ -211,10 +223,13 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
                 "hits": _extract_hits_from_rule(text, rule),
                 "evidence_start": evidence["start"],
                 "evidence_end": evidence["end"],
+                # 阶段 3 异议层地基（阶段 0 P3 承诺）：簇 id + 三分法类别透传
+                "rule_id": f"{item['id']}#r{n}",
+                "rule_class": _rule_class(rule, item),
             }
 
     # 2) pass
-    for rule in rules.get("pass") or []:
+    for n, rule in enumerate(rules.get("pass") or []):
         evidence = _first_unprotected_occurrence(text, rule)
         if evidence:
             return {
@@ -225,6 +240,8 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
                 "hits": _extract_hits_from_rule(text, rule),
                 "evidence_start": evidence["start"],
                 "evidence_end": evidence["end"],
+                "rule_id": f"{item['id']}#p{n}",
+                "rule_class": _rule_class(rule, item),
             }
 
     # 3) not found / missing
@@ -240,6 +257,9 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
         "note": missing_note if missing_as == STATUS_ATTENTION else "未在合同中找到相关约定",
         "quote": "",
         "hits": [],
+        # 未找到=「有没有写 X」未命中：item 级类别（existence 判定的落点）
+        "rule_id": None,
+        "rule_class": _rule_class({}, item),
     }
 
 
