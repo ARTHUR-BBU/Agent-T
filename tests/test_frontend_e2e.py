@@ -198,6 +198,17 @@ def test_home_renders_upload_screen(home):
     assert home.is_visible("#btn-upload")
 
 
+def test_http_warning_visible_on_http(home):
+    """外审 P1-3：HTTP 连接下红线警示常驻（e2e 服务器是 localhost http）。"""
+    assert location_protocol(home) == "http:"
+    assert home.is_visible("#http-warning")
+    assert "请勿上传真实合同" in home.inner_text("#http-warning")
+
+
+def location_protocol(page):
+    return page.evaluate("window.location.protocol")
+
+
 def test_upload_without_file_shows_error(home):
     home.click("#btn-upload")
     home.wait_for_selector("#upload-error", state="visible")

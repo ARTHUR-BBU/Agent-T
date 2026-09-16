@@ -787,6 +787,18 @@ mark.kw,
 /* 上传页隐私说明（外部审计 P1：原文发送至第三方模型须明示） */
 .privacy-note { font-size: 12px; color: var(--color-caption-muted); margin-top: 10px; line-height: 1.6; }
 
+/* 外审 P1-3：HTTP 红线警示——显眼但不刺眼（琥珀警示语义，常驻上传按钮下方） */
+.http-warning {
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid #b45309;
+  border-radius: var(--radius-btn);
+  background: #fef3c7;
+  color: #92400e;
+  font: var(--type-caption);
+  line-height: 1.6;
+}
+
 /* LLM 预审确认（阶段 1.4⑤ dialog 化，阳仔线框）与品类存疑提示
    （分类≠裁判：AI 只建议，用户拍板）——琥珀色=「AI 在等你决定」的认知延续 */
 .precheck-dialog {

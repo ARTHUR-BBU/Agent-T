@@ -64,16 +64,23 @@ def build_system_prompt(stance: str = "neutral") -> str:
 def build_user_prompt(
     candidates_block: str,
     clause_catalog: str = "",
+    body_block: str = "",
 ) -> str:
-    """user prompt：候选条目块（含摘句与规则备注）+ 条款目录。
+    """user prompt：候选条目块（含摘句与规则备注）+ 条款目录 +（漏报场景）合同正文。
 
-    不送合同全文：异议针对具体条目，相关条款原文随候选块给出
-    （延迟护栏 + 攻击面收窄；对齐评分 reduce 先例）。"""
+    正文供给（外审 P1-1）：omission（漏报）候选要找「规则没认出的等价写法」，
+    必须看得到正文——只给条款目录等于让学生改漏判的卷子却不给卷子。
+    误报候选证据已有规则摘句，不送正文（攻击面按需扩大）。
+    正文块由服务端按条款构造并标注截断范围；模型引用只能出自正文条款，
+    服务端按「送出的条款集」做证据相关性校验（外审 P1-2）。"""
     catalog = f"条款目录（供 quote 摘录定位）：\n{clause_catalog}\n\n" if clause_catalog else ""
+    body = f"\n{body_block}\n\n" if body_block else ""
     return f"""候选条目（只对这些条目提异议；每条的「相关条款原文」供摘录核对）：
 {candidates_block}
 
-{catalog}请按系统指令只输出 JSON。"""
+{catalog}{body}引用要求：quote/counter_evidence 只能出自上方候选块的相关条款原文{'或「合同正文」中实际出现的条款' if body_block else ''}；正文里没有的内容不得引用。
+
+请按系统指令只输出 JSON。"""
 
 
 def build_retry_system_prompt(system: str) -> str:

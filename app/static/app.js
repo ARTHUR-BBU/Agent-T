@@ -1886,6 +1886,18 @@
     $("precheck-dialog").dataset.suggested = "";
   });
 
+  // 外审 P1-3：HTTP 红线警示——非加密连接时显眼常驻（HTTPS 下移除）。
+  // 判定按 location.protocol（file:// 本地开发不吓人，https 正式环境不显示）
+  (function renderHttpWarning() {
+    const el = $("http-warning");
+    if (!el) return;
+    if (location.protocol === "https:") {
+      el.classList.add("hidden");
+    } else if (location.protocol === "http:") {
+      el.classList.remove("hidden");
+    }
+  })();
+
   loadStanceMeta();
   resumeFromHash();
 })();
