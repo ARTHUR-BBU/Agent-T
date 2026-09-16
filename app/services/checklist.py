@@ -141,6 +141,32 @@ def _validate_category_config(category: str, cfg: dict[str, Any]) -> None:
     if problems:
         raise ValueError("\n".join(problems))
     _validate_segment_mapping(cfg, category)
+    _validate_rule_classes(category, cfg)
+
+
+def _validate_rule_classes(category: str, cfg: dict[str, Any]) -> None:
+    """三分法 class 校验（外审批 2，老钱裁定书第六节红线）：
+
+    显式标注的 class 只允许 hardline/existence/heuristic；拼错（如 hardlin）
+    **启动/加载即失败**，绝不静默回落 heuristic——那是「铁律线被拼错成启发式、
+    AI 获得异议资格」的制度性漏洞。未标注仍是合法默认 heuristic（裁定书口径）。"""
+    bad: list[str] = []
+
+    def _check(owner: str, raw: Any) -> None:
+        if raw is None:
+            return
+        val = str(raw).strip().lower()
+        if val not in _VALID_RULE_CLASSES:
+            bad.append(f"{category}/{owner}: class={raw!r} 非法（允许：{sorted(_VALID_RULE_CLASSES)}）")
+
+    for item in cfg.get("items", []):
+        iid = str(item.get("id") or "?")
+        _check(f"{iid}(item)", item.get("class"))
+        for phase in ("need_attention", "pass"):
+            for n, rule in enumerate((item.get("rules") or {}).get(phase) or []):
+                _check(f"{iid}#{phase}[{n}]", rule.get("class") if isinstance(rule, dict) else None)
+    if bad:
+        raise ValueError("品类 class 配置错误（fail-closed，修订须走裁定书第六节通道）：\n" + "\n".join(bad))
 
 
 def _regex_problems(category: str, item_id: str, rule: dict[str, Any]) -> list[str]:

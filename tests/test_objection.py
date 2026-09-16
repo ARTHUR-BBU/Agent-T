@@ -339,15 +339,28 @@ def test_body_block_only_for_omission(monkeypatch):
 
 
 def test_max_objections_cap(monkeypatch):
-    """MAX_OBJECTIONS=6 截断：超出部分 break 不入库（钉上限行为）。"""
+    """外审批 2：MAX=6 只约束受理数——拒收留痕垃圾不得耗尽有效异议名额。
+    3 条伪造 quote 垃圾在前 + 6 条有效在后 → 6 条有效全部入库。"""
     _enable(monkeypatch)
-    payload = _payload([_ok_payload(quote=f"第三条 转租：乙方不得转租，违反的出租方可解除合同。变体{i}。")
-                        for i in range(9)])
+    good_quotes = [
+        "乙方不得转租，违反的出租方可解除合同。",
+        "第三条 转租：乙方不得转租",
+        "违反的出租方可解除合同",
+        "转租：乙方不得转租，违反的出租方可解除合同",
+        "乙方不得转租，违反的",
+        "出租方可解除合同。",
+    ]
+    bombs = [_ok_payload(quote=f"伪造文本第{i}号，绝不在合同原文之中。", legal_reasoning="垃圾条目" * 10)
+             for i in range(3)]
+    goods = [_ok_payload(quote=q) for q in good_quotes]
     out = objection_service.run_objections(
-        text=_CONTRACT, items=_ITEMS, chat_fn=lambda s, u: payload,
+        text=_CONTRACT, items=_ITEMS, chat_fn=lambda s, u: _payload(bombs + goods),
         clause_index=build_clause_index(_CONTRACT),
     )
-    assert len(out["objections"]) == 6
+    accepted = [o for o in out["objections"] if o["accepted"]]
+    assert len(accepted) == 6, "垃圾占位后有效异议必须仍足额入库"
+    assert len(out["objections"]) == 9 and out["rejected_count"] == 3
+    assert out["coverage"] and out["coverage"]["reviewed"] == 9
 
 
 def test_forbidden_phrase_triggers_retry_then_clean_or_fail(monkeypatch):
@@ -450,3 +463,27 @@ def test_body_block_truncation_and_guards(monkeypatch):
     clauses = {"clauses": [{"id": "c01", "heading": "第一条", "start": 0, "end": None}]}
     block, sent = _body_block("短合同正文。", clauses)
     assert sent == set() and "短合同正文。" in block
+
+
+def test_stance_neutral_literal_no_longer_passes_specific_stance(monkeypatch):
+    """外审批 2：删 "neutral" 字面量豁免——用户选了具体立场时模型写
+    neutral 不得蒙混过关；中立立场由 stance 参数本身表达。"""
+    _enable(monkeypatch)
+    out = objection_service.run_objections(
+        text=_CONTRACT, items=_ITEMS, stance="lessee",
+        chat_fn=lambda s, u: _payload([_ok_payload(stance_check="neutral")]),
+    )
+    assert out["rejected_count"] == 1 and out["objections"][0]["accepted"] is False
+
+
+def test_coverage_accounting(monkeypatch):
+    """外审批 2：coverage 计账——eligible/sent/reviewed/truncated 不再无痕。"""
+    _enable(monkeypatch)
+    out = objection_service.run_objections(
+        text=_CONTRACT, items=_ITEMS, chat_fn=lambda s, u: _payload([]),
+    )
+    cov = out["coverage"]
+    assert cov is not None
+    assert cov["eligible"] == 2, "sublet(误报)+governing_law(漏报) 两个候选"
+    assert cov["sent"] == 2 and cov["truncated"] is False
+    assert cov["reviewed"] == 0

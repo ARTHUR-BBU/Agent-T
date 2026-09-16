@@ -1011,6 +1011,13 @@
         clause.textContent = "条款 " + heading;
         line4.appendChild(clause);
       }
+      if (ob.clause_ambiguous) {
+        // 外审批 2：摘句跨多条款时明示（受理但归属不定，人工确认时重点核对）
+        const amb = document.createElement("span");
+        amb.className = "quality-clause";
+        amb.textContent = "摘句跨多个条款";
+        line4.appendChild(amb);
+      }
       const confirm = document.createElement("span");
       confirm.className = "quality-confirm";
       confirm.textContent = "待人工确认";
