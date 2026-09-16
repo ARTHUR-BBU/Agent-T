@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 Status = Literal["通过", "需关注", "未找到", "本类不适用"]
 TagSource = Literal["rule", "blind"]
-CompletionStage = Literal["rules_complete", "ai_partial", "fully_complete"]
+CompletionStage = Literal["rules_complete", "ai_partial", "quality_complete", "fully_complete"]
 
 
 class EvidenceRefInfo(BaseModel):

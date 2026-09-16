@@ -6,8 +6,6 @@ SQLite 存储与过期、评分头尾采样、追问错误不泄露、措辞降�
 from __future__ import annotations
 
 import io
-import os
-import tempfile
 import time
 from pathlib import Path
 

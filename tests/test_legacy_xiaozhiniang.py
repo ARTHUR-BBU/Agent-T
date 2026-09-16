@@ -100,7 +100,7 @@ DIRTY_STATUSES = [
 ]
 
 
-@pytest.mark.parametrize("label,status", DIRTY_STATUSES, ids=[l for l, _ in DIRTY_STATUSES])
+@pytest.mark.parametrize("label,status", DIRTY_STATUSES, ids=[label for label, _ in DIRTY_STATUSES])
 def test_dirty_status_variant_never_endorses_all_pass(label, status):
     """每个脏 status：进第二节表（标注从严）、计为未知档位、绝不打出「全部适用项均通过」。"""
     row = _row([_item("a", "主体信息", "通过"), _item("b", "神秘项", status)])

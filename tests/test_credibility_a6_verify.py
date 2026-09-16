@@ -9,14 +9,12 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services import verify as verify_service
 from app.services.clause_index import build_clause_index
 from app.services.store import store
-from tests.helpers import wait_review_done
 
 client = TestClient(app)
 

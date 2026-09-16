@@ -8,10 +8,9 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from fastapi.testclient import TestClient
 
-from app.main import MAX_REQUEST_BODY_BYTES, BodySizeLimitMiddleware, app, _BodyTooLarge
+from app.main import MAX_REQUEST_BODY_BYTES, BodySizeLimitMiddleware, app
 from app.services import llm_ask, model_review, quality as quality_service, scorecard
 from app.services.checklist import run_checklist
 from app.services.clause_index import build_clause_index, locate_quote_clauses

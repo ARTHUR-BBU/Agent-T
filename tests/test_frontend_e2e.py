@@ -86,7 +86,6 @@ def base_url():
         )
     # Key 混入探针（肉饼 P2）：白名单剔除若静默失效，服务会带真实 Key 跑 LLM，
     # 金标断言与确定性全部作废——这里显式 fail 而不是让用例 flaky
-    import httpx
     probe = httpx.post(
         f"{url}/api/upload",
         files={"file": ("probe.txt", "押金不予退还".encode("utf-8"), "text/plain")},

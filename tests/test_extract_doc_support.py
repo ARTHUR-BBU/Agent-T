@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import pytest
 
-from app.services import extract as extract_module
 from app.services.extract import ExtractionError, extract_text
 
 _OLE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\x00" * 64  # OLE2 魔数 + 填充

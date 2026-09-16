@@ -97,7 +97,7 @@ def test_hardline_never_sent(monkeypatch):
         captured["user"] = user
         return _payload([])
 
-    out = objection_service.run_objections(
+    objection_service.run_objections(
         text=_CONTRACT, items=_ITEMS, chat_fn=chat,
     )
     assert "deposit" not in captured["user"], "hardline 簇不得送审"

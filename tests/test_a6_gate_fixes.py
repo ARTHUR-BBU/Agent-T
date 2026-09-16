@@ -9,13 +9,11 @@
 """
 from __future__ import annotations
 
-import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services import verify as verify_service
 from app.services.clause_index import build_clause_index
-from app.services.evidence import build_evidence
 from app.services.store import store
 
 client = TestClient(app)
@@ -127,15 +125,6 @@ def test_evidence_ticket_binds_real_clause_not_claimed():
     )
     idx = build_clause_index(text)
     quote = "应支付合同总额百分之二十的违约金"  # 实际在 c02
-    suspect = {
-        "source": "quality_obs",
-        "source_ref": "obs:0",
-        "question": "请确认违约金条款",
-        "title": "违约金",  # 价值判断词：不按价款机器放行（P2-1 同闸）
-        "clause_id": "c01",  # 声称错号
-        "quote": quote,
-        "parse_source": "quality",
-    }
     out = verify_service.run_bounded_verify(
         text=text,
         items=[],

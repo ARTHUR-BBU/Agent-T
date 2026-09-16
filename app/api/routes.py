@@ -1,4 +1,8 @@
-"""API routers: upload / review / ask / report."""
+"""API routers: upload / review / ask / report（聚合入口）。
+
+外审批 3 按领域拆分：verify 四端点 → routes_verify.py；异议 adopt →
+routes_objection.py；共享依赖 → deps.py。URL 与对外语义零变化（纯机械搬移），
+本文件保留核心审查流（categories/upload/review/report/ask）与并发闸门。"""
 from __future__ import annotations
 
 import logging
@@ -6,6 +10,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
+
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -15,21 +21,16 @@ from app.api.schemas import (
     AskRequest,
     AskResponse,
     ClauseIndexInfo,
-    ConfirmRequest,
-    ConfirmResponse,
     PrecheckInfo,
     QualityInfo,
-    ReverifyRequest,
-    ReverifyResponse,
     ReviewSummary,
     ScorecardInfo,
     UploadResponse,
-    VerifyBudgetInfo,
-    VerifyInfo,
 )
+from app.api.routes_objection import router as _objection_router
+from app.api.routes_verify import _pack_verify, router as _verify_router
 from app.graph.pipeline import run_review
 from app.services import llm_ask, precheck as precheck_service, report as report_service
-from app.services import verify as verify_service
 from app.services import llm_budget, rate_limit
 from app.services.checklist import list_categories
 from app.services.clause_index import build_clause_context
@@ -81,19 +82,6 @@ async def _read_limited(file: Any) -> tuple[bytes, bool]:
     return b"".join(chunks), False
 
 
-
-
-def _pack_verify(raw: dict | None) -> VerifyInfo | None:
-    """把 store.verify 打成 API 形状（附 budget 快照）。"""
-    if not raw or not isinstance(raw, dict):
-        return None
-    try:
-        info = verify_service.VerifyInfo.model_validate(raw)
-    except Exception:  # noqa: BLE001
-        return None
-    payload = info.model_dump()
-    payload["budget"] = info.budget_snapshot()
-    return VerifyInfo(**payload)
 
 
 @router.get("/categories")
@@ -312,6 +300,7 @@ async def upload(
             branch = {"action": "proceed", "suspect": True}
         if branch["action"] != "proceed":
             r = outcome.result
+            assert r is not None, "不 proceed 分支必携带预审结果（run_precheck 契约）"
             return UploadResponse(
                 message="category_confirm",
                 status="category_confirm",
@@ -497,199 +486,6 @@ def ask(body: AskRequest):
     )
 
 
-def _require_done_row(review_id: str) -> dict:
-    row = store.get(review_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="审查记录不存在")
-    if row.get("status") != "done":
-        raise HTTPException(status_code=409, detail="审查尚未完成，暂不能核验确认")
-    return row
-
-
-@router.get("/review/{review_id}/verify", response_model=VerifyInfo)
-def get_verify(review_id: str):
-    """列出待确认问题 + 剩余预算（A6）。"""
-    row = store.get(review_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="审查记录不存在")
-    packed = _pack_verify(row.get("verify"))
-    if packed is None:
-        return VerifyInfo(
-            available=False,
-            reason="not_attempted",
-            disclaimer="主动核查只提疑点，不改变清单规则档",
-            budget=VerifyBudgetInfo(),
-        )
-    return packed
-
-
-@router.post("/review/{review_id}/verify", response_model=VerifyInfo)
-def trigger_verify(review_id: str):
-    """再跑一轮有界核验（受 rounds/取证次数封顶）。不改规则档位。"""
-    row = _require_done_row(review_id)
-    with verify_service.lock_for(review_id):
-        # 门禁 P2-3：锁内重取 row——锁外快照可能与并发的 confirm 写入交错，
-        # 用 stale prior 重建会把人工确认冲回 pending（confirm/reverify 均在
-        # 锁内重取，唯独此处漏了）
-        row = store.get(review_id) or row
-        prior = row.get("verify") or {}
-        try:
-            out = verify_service.run_bounded_verify(
-                text=row.get("text") or "",
-                items=row.get("items") or [],
-                quality=row.get("quality") or {},
-                blind_candidates=row.get("blind_candidates") or [],
-                facts=row.get("facts") or (row.get("quality") or {}).get("facts") or [],
-                clause_index=row.get("clause_index"),
-                document_version=row.get("document_version") or "",
-                prior=prior if isinstance(prior, dict) else {},
-            )
-        except Exception:  # noqa: BLE001
-            logger.exception("trigger verify failed review_id=%s", review_id)
-            raise HTTPException(status_code=500, detail="核验失败，请稍后重试")
-        store.update(review_id, verify=out)
-    packed = _pack_verify(out)
-    assert packed is not None
-    return packed
-
-
-@router.post(
-    "/review/{review_id}/confirm",
-    response_model=ConfirmResponse,
-)
-def confirm_question(review_id: str, body: ConfirmRequest):
-    """提交人工确认。只改 verify；规则 items 档位不动（Design B）。"""
-    row = _require_done_row(review_id)
-    # 快照规则档位，写入后对照
-    status_snap = {
-        str(i.get("id")): i.get("status")
-        for i in (row.get("items") or [])
-        if isinstance(i, dict) and i.get("id")
-    }
-    with verify_service.lock_for(review_id):
-        row = store.get(review_id) or row
-        try:
-            updated = verify_service.apply_confirmation(
-                row.get("verify") or {},
-                question_id=body.question_id,
-                choice=body.choice,
-                human_note=body.human_note or "",
-                revised_quote=body.revised_quote or "",
-            )
-        except KeyError:
-            return ConfirmResponse(ok=False, error="问题不存在")
-        except ValueError as exc:
-            return ConfirmResponse(ok=False, error=str(exc))
-        # Design B：update 只带 verify，不带 items
-        store.update(review_id, verify=updated)
-        after = store.get(review_id) or {}
-        after_snap = {
-            str(i.get("id")): i.get("status")
-            for i in (after.get("items") or [])
-            if isinstance(i, dict) and i.get("id")
-        }
-        if after_snap != status_snap:
-            logger.error("Design B violation on confirm review_id=%s", review_id)
-            raise HTTPException(status_code=500, detail="内部错误：规则档位被意外改动")
-    return ConfirmResponse(ok=True, verify=_pack_verify(updated))
-
-
-@router.post(
-    "/review/{review_id}/reverify",
-    response_model=ReverifyResponse,
-)
-def reverify_question(review_id: str, body: ReverifyRequest):
-    """确认后的再核（预算内）。不改规则档位。"""
-    row = _require_done_row(review_id)
-    status_snap = [
-        (i.get("id"), i.get("status"))
-        for i in (row.get("items") or [])
-        if isinstance(i, dict)
-    ]
-    with verify_service.lock_for(review_id):
-        row = store.get(review_id) or row
-        try:
-            updated, items_back = verify_service.recheck_question(
-                text=row.get("text") or "",
-                verify_state=row.get("verify") or {},
-                question_id=body.question_id,
-                clause_index=row.get("clause_index"),
-                items_snapshot=row.get("items") or [],
-            )
-        except KeyError:
-            return ReverifyResponse(ok=False, error="问题不存在")
-        except ValueError as exc:
-            return ReverifyResponse(ok=False, error=str(exc))
-        except RuntimeError as exc:
-            code = str(exc)
-            if code in {"budget_exceeded", "recheck_budget_exceeded"}:
-                return ReverifyResponse(
-                    ok=False,
-                    error="核对次数已用完",
-                    verify=_pack_verify(row.get("verify")),
-                )
-            return ReverifyResponse(ok=False, error=code)
-        store.update(review_id, verify=updated)
-        after = store.get(review_id) or {}
-        after_snap = [
-            (i.get("id"), i.get("status"))
-            for i in (after.get("items") or [])
-            if isinstance(i, dict)
-        ]
-        if after_snap != status_snap or items_back != (row.get("items") or []):
-            # items_back 应是原样快照；档位必须一致
-            if after_snap != status_snap:
-                logger.error("Design B violation on reverify review_id=%s", review_id)
-                raise HTTPException(status_code=500, detail="内部错误：规则档位被意外改动")
-    return ReverifyResponse(
-        ok=True,
-        verify=_pack_verify(updated),
-        rule_statuses_unchanged=True,
-    )
-
-
-@router.post("/review/{review_id}/objections/adopt", response_model=ObjectionInfo)
-def adopt_objection(review_id: str, body: dict):
-    """采纳异议为规则改进提案（阶段 3.2）。只标 adopted 键；规则 items 档位
-    不动（Design B：快照比对，不一致 500）。提案文本由前端复制给人评审，
-    真正的规则变更走版本化修订通道（铁律 3）。"""
-    row = _require_done_row(review_id)
-    raw_index = body.get("index")
-    # 严格整数：bool/浮点/非整数字符串一律 422（0.9→0、true→1 之类 lax 转换不开口；
-    # int("0.9") 本就抛 ValueError，无需额外判断）
-    if isinstance(raw_index, bool) or not isinstance(raw_index, (int, str)):
-        raise HTTPException(status_code=422, detail="index 必须是整数")
-    try:
-        index = int(str(raw_index).strip())
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=422, detail="index 必须是整数")
-    with verify_service.lock_for(review_id):
-        row = store.get(review_id) or row
-        obj_row = row.get("objections")
-        if not isinstance(obj_row, dict) or not obj_row.get("available"):
-            raise HTTPException(status_code=404, detail="该审查没有异议数据")
-        obs = obj_row.get("objections") or []
-        if not (0 <= index < len(obs)):
-            raise HTTPException(status_code=404, detail="异议序号不存在")
-        # 只受理已过五要件的条目：拒收留痕条目（accepted=False）不可采纳
-        if not obs[index].get("accepted"):
-            raise HTTPException(status_code=422, detail="该异议未通过受理校验，不可采纳")
-        # 快照规则档位，写入后对照（Design B）
-        status_snap = {
-            str(i.get("id")): i.get("status")
-            for i in (row.get("items") or [])
-            if isinstance(i, dict) and i.get("id")
-        }
-        obs[index] = {**obs[index], "adopted": True}
-        store.update(review_id, objections={**obj_row, "objections": obs})
-        after = store.get(review_id) or {}
-        status_after = {
-            str(i.get("id")): i.get("status")
-            for i in (after.get("items") or [])
-            if isinstance(i, dict) and i.get("id")
-        }
-        if status_snap != status_after:
-            logger.error("Design B violation on objections/adopt review_id=%s", review_id)
-            raise HTTPException(status_code=500, detail="内部错误：规则档位不得被异议改动")
-        new_obj = after.get("objections") or obj_row
-    return ObjectionInfo(**new_obj)
+# 领域子路由聚合（URL 不变；本文件 router 即总 router）
+router.include_router(_verify_router)
+router.include_router(_objection_router)

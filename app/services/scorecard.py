@@ -473,7 +473,7 @@ def unavailable(reason: str) -> dict[str, Any]:
 
 # ---------- 兼容 re-export（外部审计二轮 PR-E 分层）：提示词/切块实现在 ----------
 # scorecard_prompts.py，既有 import 路径（scorecard.build_* / clip_*）不变。
-from app.services.scorecard_prompts import (  # noqa: E402,F401
+from app.services.scorecard_prompts import (  # noqa: E402,F401,F811
     MAX_CONTRACT_CHARS,
     _clip_for_scoring,
     build_map_system_prompt,

@@ -6,6 +6,21 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: 安装 lint 工具
+        run: pip install ruff pyright
+      - name: Ruff（外审批 3：F+基础 E 集；扩展规则待卫生批收编）
+        run: python -m ruff check app tests
+      - name: Pyright（basic 模式，存量 0 错误为门禁基线）
+        run: python -m pyright app
+
   pytest:
     runs-on: ubuntu-latest
     steps:
@@ -18,14 +33,16 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install -r requirements-lock.txt
-          pip install pytest
-      # Playwright E2E 未装浏览器时整模块自动 skip；远程 CI 证明的是
-      # 315+ 条单元/API/金标回归（外部审计：此前无远程 CI 证据）
+          pip install pytest playwright
+      # 外审批 3：Playwright 浏览器 E2E 正式进 required CI——此前远程 CI
+      # 无浏览器时 e2e 整模块 skip，前端回归只有本地跑（审计点名 752 vs 794 口径差）
+      - name: 安装 Chromium
+        run: python -m playwright install --with-deps chromium
       # test_precheck_corpus.py 是 live_llm 专项（无 Key 全 skip 的常态），
       # 显式排除与本地口径对齐（CI flake：run 34910117239 首跑 429 假红灯）
       # 测试环境显式无 Key（肉饼门禁 P3-5 防御：测试必须确定性，Key 泄进
       # CI 会让 live 层真烧钱；空串在 llm_ask 的 `or None` 口径下等价未设）
-      - name: 运行全量测试
+      - name: 运行全量测试（含浏览器 E2E）
         env:
           DEEPSEEK_API_KEY: ""
           ZHIPU_API_KEY: ""

@@ -422,7 +422,7 @@ def run_objections(
     sent = {(str(c["item_id"]), str(c["direction"])) for c in candidates}
     seen_refs: set[str] = set()
     reviewed = 0
-    for r in parsed:
+    for r in parsed or []:
         if not isinstance(r, dict):
             continue
         reviewed += 1
