@@ -135,7 +135,7 @@ def test_invalid_class_fails_closed():
 
     import pytest as _pytest
 
-    from app.services.checklist import load_checklist
+    from app.services.checklist import _validate_category_config, load_checklist
 
     # 三份正式配置全部合法（回归确认现有标注无拼错）
     for cat in ("procurement", "lease", "nda"):
@@ -153,4 +153,4 @@ def test_invalid_class_fails_closed():
                 - pattern: "坏词"
     """)
     with _pytest.raises(ValueError, match="hardlin"):
-        load_checklist.__globals__["_validate_category_config"]("procurement", __import__("yaml").safe_load(bad_cfg))
+        _validate_category_config("procurement", __import__("yaml").safe_load(bad_cfg))

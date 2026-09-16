@@ -258,6 +258,7 @@ class ObjectionInfo(BaseModel):
     objections: list[Objection] = Field(default_factory=list)
     rejected_count: int = 0
     disclaimer: str = "异议只是候选线索，不改变逐条核查结论；是否成立由人工与规则修订决定。"
+    coverage: Optional[dict[str, Any]] = None  # 外审批 2：eligible/sent/reviewed/truncated 计账
 
 
 class ReviewSummary(BaseModel):

@@ -14,8 +14,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: 安装 lint 工具
-        run: pip install ruff pyright
+      - name: 安装依赖与 lint 工具（pyright 需项目依赖解析 import）
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements-lock.txt
+          pip install ruff pyright
       - name: Ruff（外审批 3：F+基础 E 集；扩展规则待卫生批收编）
         run: python -m ruff check app tests
       - name: Pyright（basic 模式，存量 0 错误为门禁基线）

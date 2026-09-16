@@ -55,7 +55,7 @@ class ReviewState(TypedDict, total=False):
     # worker 注入（写 store.stage），pipeline 自身不感知持久化
     on_stage: Any
     # 架构 batch3 / A5：阶段性结果回调（completion, partial_fields）
-    # completion ∈ rules_complete | ai_partial | fully_complete
+    # completion ∈ rules_complete | ai_partial | quality_complete | fully_complete
     on_partial: Any
     # 上传预审已解析的全文：复用一次解析产物，避免 silent double-parse
     parsed_text: str

@@ -487,3 +487,35 @@ def test_coverage_accounting(monkeypatch):
     assert cov["eligible"] == 2, "sublet(误报)+governing_law(漏报) 两个候选"
     assert cov["sent"] == 2 and cov["truncated"] is False
     assert cov["reviewed"] == 0
+
+
+def test_rule_id_from_server_not_model(monkeypatch):
+    """外审批 2 钉死（小智娘门禁 P3-2）：rule_id 服务端唯一决定——模型申报
+    错误 rule_id 不入库，一律以引擎富化 items 为准。"""
+    _enable(monkeypatch)
+    out = objection_service.run_objections(
+        text=_CONTRACT, items=_ITEMS, chat_fn=lambda s, u: _payload([
+            _ok_payload(rule_id="totally_wrong_rule#r9"),
+        ]),
+        clause_index=build_clause_index(_CONTRACT),
+    )
+    assert out["objections"][0]["rule_id"] == "sublet#r0", "模型申报的 rule_id 不得入库"
+
+
+def test_coverage_truncation_and_drift_guard(monkeypatch):
+    """外审批 2 钉死（小智娘门禁 P3-1）：coverage.truncated 路径 +
+    _eligible_count 与 _collect_candidates 双实现防漂移。"""
+    _enable(monkeypatch)
+    # 15 个 eligible 候选（existence+未找到）> MAX_CANDIDATES=12 → truncated
+    items = [{
+        "id": f"e{i}", "name": "存在性", "status": "未找到", "note": "", "quote": "",
+        "hits": [], "rule_id": None, "rule_class": "existence",
+    } for i in range(15)]
+    out = objection_service.run_objections(
+        text=_CONTRACT, items=items, chat_fn=lambda s, u: _payload([]),
+    )
+    cov = out["coverage"]
+    assert cov["eligible"] == 15 and cov["sent"] == 12 and cov["truncated"] is True
+    # 防漂移：全量上限下两实现结果必须一致
+    assert objection_service._eligible_count(items) == len(
+        objection_service._collect_candidates(items, max_candidates=10**9))
