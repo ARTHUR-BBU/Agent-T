@@ -25,7 +25,6 @@ import os
 from typing import Any, Optional
 
 from app.services import blind_spot, llm_ask, scorecard
-from app.services.checklist import STATUS_ATTENTION
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +88,7 @@ def run_model_review(
     observations: list[dict[str, Any]] = []
     map_gap_ids: list[str] = []
     coverage: Optional[dict[str, Any]] = None
+    chunks_total = chunks_ok = 0  # 非 segmented 路径不引用；初始化消 Unbound
     segmented = len(text or "") > scorecard.MAX_CONTRACT_CHARS
     if segmented:
         observations, map_gap_ids, chunks_ok, chunks_total, coverage = _run_map_pass(

@@ -45,6 +45,7 @@ ChatFn = Callable[[str, str], str]
 SYSTEM_MARKER = objection_prompts.SYSTEM_MARKER
 
 MAX_OBJECTIONS = 6
+MAX_CANDIDATES = 12  # 单次送审候选上限（coverage.truncated 记账）
 MAX_REASONING_CHARS = 300
 MIN_REASONING_CHARS = 30
 MAX_QUOTE_CHARS = 200
@@ -79,6 +80,10 @@ class ObjectionInfo(BaseModel):
     objections: list[Objection] = Field(default_factory=list)
     rejected_count: int = 0  # 五要件拒收数（观测用，前端不渲染）
     disclaimer: str = "异议只是候选线索，不改变逐条核查结论；是否成立由人工与规则修订决定。"
+    # 覆盖计账（外审批 2）：「最多送 12 个候选」等截断行为不再无痕——
+    # eligible=全合同符合受理矩阵的候选总数；sent=实际送审数（≤MAX_CANDIDATES）；
+    # reviewed=模型本轮返回并被逐条处理的条数；truncated=候选因送审上限被截
+    coverage: Optional[dict[str, Any]] = None
 
 
 def is_objections_enabled() -> bool:
@@ -312,11 +317,29 @@ def _validate(
     reasoning = (reasoning_clean or str(r.get("legal_reasoning") or "").strip())
     if len(reasoning) < MIN_REASONING_CHARS:
         return False, "要件③法律逻辑链过短", clause_id, clause_ambiguous
-    # ④ 立场自检
+    # ④ 立场自检（外审批 2 收紧：删 "neutral" 字面量豁免——用户选了具体立场时
+    # 模型写 neutral 不再蒙混过关；中立立场由 stance 参数本身为 neutral 表达）
     stance_check = str(r.get("stance_check") or "").strip()
-    if stance_check not in {stance, "与立场无关", "neutral"}:
+    if stance_check not in {stance, "与立场无关"}:
         return False, f"要件④立场自检不符（{stance_check or '空'}）", clause_id, clause_ambiguous
     return True, None, clause_id, clause_ambiguous
+
+
+def _eligible_count(items: list[dict[str, Any]]) -> int:
+    """符合受理矩阵的候选总数（不截断）——coverage 账目分母。
+    与 _collect_candidates 同一判断逻辑：分流规则改动两处必须同步。"""
+    n = 0
+    for it in items or []:
+        if not isinstance(it, dict) or it.get("category_na"):
+            continue
+        rc = str(it.get("rule_class") or "heuristic")
+        st = it.get("status")
+        has_hit = bool(it.get("rule_id"))
+        if (rc == "heuristic" and st == "需关注" and has_hit) or (
+            rc == "existence" and (st == "未找到" or (st == "需关注" and not has_hit))
+        ):
+            n += 1
+    return n
 
 
 def run_objections(
@@ -337,10 +360,14 @@ def run_objections(
     if chat is None:
         return outcome_unavailable("no_llm_key")
 
-    candidates = _collect_candidates(items, max_candidates=12)
+    eligible = _eligible_count(items or [])
+    candidates = _collect_candidates(items, max_candidates=MAX_CANDIDATES)
     if not candidates:
         # 没有可送审候选（如全 hardline/通过）：合法空结果
-        return ObjectionInfo(available=True, reason=None, objections=[]).model_dump()
+        return ObjectionInfo(
+            available=True, reason=None, objections=[],
+            coverage={"eligible": eligible, "sent": 0, "reviewed": 0, "truncated": False},
+        ).model_dump()
 
     block = _candidates_block(candidates, text, clause_index)
     catalog_lines = [
@@ -387,15 +414,20 @@ def run_objections(
 
     objections: list[Objection] = []
     rejected = 0
+    accepted_n = 0  # MAX 只数受理条目——拒收留痕垃圾不得耗尽有效异议名额（外审批 2）
     valid_by_id = {str(it.get("id")): it for it in items or [] if isinstance(it, dict)}
     # 送审候选集合（第二道防线）：候选外的 (item_id, direction) 一律静默丢弃
     # （模型幻觉/注入的未送审组合，如 existence+需关注+omission 的洗白方向——
     # 连 rejected 都不计：结构性错误不是可展示的候选）
     sent = {(str(c["item_id"]), str(c["direction"])) for c in candidates}
     seen_refs: set[str] = set()
-    for r in parsed:
-        if not isinstance(r, dict) or len(objections) >= MAX_OBJECTIONS:
-            break
+    reviewed = 0
+    for r in parsed or []:
+        if not isinstance(r, dict):
+            continue
+        reviewed += 1
+        if accepted_n >= MAX_OBJECTIONS:
+            break  # 上限只约束受理数：留痕条目继续处理，有效名额不被垃圾挤占
         item_id = str(r.get("item_id") or "")
         direction = str(r.get("direction") or "")
         if (item_id, direction) not in sent:
@@ -429,13 +461,17 @@ def run_objections(
             allowed_clause_ids=allowed)
         if not accepted:
             rejected += 1
+        else:
+            accepted_n += 1
         ref = f"{item_id}|{direction}|{(r.get('quote') or '')[:40]}"
         if ref in seen_refs:
             continue
         seen_refs.add(ref)
         proposal = llm_ask._scrub_banned_echo(scorecard.scrub_forbidden(
             str(r.get("proposal") or ""))).strip()
-        rid = r.get("rule_id") or it.get("rule_id")
+        # rule_id 服务端唯一决定（外审批 2）：模型可能把提案挂到错误规则上，
+        # 输出一律以引擎富化的 items 为准，模型申报的 rule_id 不入库
+        rid = it.get("rule_id")
         objections.append(
             Objection(
                 item_id=item_id,
@@ -460,4 +496,10 @@ def run_objections(
         reason=None,
         objections=objections,
         rejected_count=rejected,
+        coverage={
+            "eligible": eligible,
+            "sent": len(candidates),
+            "reviewed": reviewed,
+            "truncated": eligible > len(candidates),
+        },
     ).model_dump()

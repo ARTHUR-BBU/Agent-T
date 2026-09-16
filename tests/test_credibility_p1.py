@@ -8,9 +8,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 
-from app.services import llm_ask, model_review, quality as quality_service, scorecard
+from app.services import llm_ask, model_review, quality as quality_service
 from app.services.checklist import run_checklist
 from app.services.extract import extract_text
 from app.services.llm_budget import ReviewBudget

@@ -25,14 +25,14 @@ import json
 import logging
 import os
 import re
-from typing import Any, Callable, Literal, Optional
+from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, Field
 
 from app.prompts import quality as quality_prompts
 from app.services import blind_spot, llm_ask, scorecard
 from app.services.clause_index import locate_quote_clauses
-from app.services.evidence import attach_evidence_to_item, build_evidence, document_version_for
+from app.services.evidence import build_evidence, document_version_for
 from app.services import facts as facts_service
 from app.services.scorecard_prompts import (
     _rule_block,

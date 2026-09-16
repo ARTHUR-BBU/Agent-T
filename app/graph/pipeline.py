@@ -9,7 +9,7 @@ Uses langgraph as a library only — not LangGraph Platform.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, TypedDict
+from typing import Any, Callable, TypedDict, cast
 
 from langgraph.graph import END, StateGraph
 
@@ -55,7 +55,7 @@ class ReviewState(TypedDict, total=False):
     # worker 注入（写 store.stage），pipeline 自身不感知持久化
     on_stage: Any
     # 架构 batch3 / A5：阶段性结果回调（completion, partial_fields）
-    # completion ∈ rules_complete | ai_partial | fully_complete
+    # completion ∈ rules_complete | ai_partial | quality_complete | fully_complete
     on_partial: Any
     # 上传预审已解析的全文：复用一次解析产物，避免 silent double-parse
     parsed_text: str
@@ -99,14 +99,14 @@ def node_parse(state: ReviewState) -> ReviewState:
         if reused:
             text = reused
         else:
-            text = extract_text(state["filename"], state["raw_bytes"])
+            text = extract_text(state.get("filename") or "", state.get("raw_bytes") or b"")
         doc_ver = document_version_for(text)
-        return {
+        return cast(ReviewState, {
             "text": text,
             "error": "",
             "clause_index": build_clause_index(text),
             "document_version": doc_ver,
-        }
+        })
     except ExtractionError as exc:
         return {"text": "", "error": str(exc)}
     except Exception:  # noqa: BLE001
@@ -151,7 +151,7 @@ def node_checklist(state: ReviewState) -> ReviewState:
         document_version=doc_ver,
         text_preview=text[:500]
     )
-    return out
+    return cast(ReviewState, out)
 
 
 def node_model_review(state: ReviewState) -> ReviewState:
@@ -161,14 +161,14 @@ def node_model_review(state: ReviewState) -> ReviewState:
     """
     _emit_stage(state, "scoring")
     if state.get("error"):
-        return {
+        return cast(ReviewState, {
             # 解析已失败，与「有规则结果才出分」的 no_rule_results 门禁区分开（肉饼审查 P3-4）
             "scorecard": {"available": False, "reason": "error"},
             "blind_candidates": [],
             "blind_skipped_messages": [],
             "blind_skipped_reason": None,
             "blind_enabled": False,
-        }
+        })
     try:
         out = run_model_review(
             text=state.get("text") or "",
@@ -218,7 +218,7 @@ def node_model_review(state: ReviewState) -> ReviewState:
         blind_skipped_reason=payload["blind_skipped_reason"],
         blind_enabled=payload["blind_enabled"]
     )
-    return payload
+    return cast(ReviewState, payload)
 
 
 def node_quality(state: ReviewState) -> ReviewState:
@@ -277,15 +277,30 @@ def node_quality(state: ReviewState) -> ReviewState:
         )
     _emit_partial(
         state,
-        "fully_complete",
+        "quality_complete",
         quality=out,
         facts=facts_out,
         verify=verify_out,
     )
-    # 阶段 3.1 异议层：LLM 对 heuristic/existence 提疑似误报/漏报候选
-    # （铁律 3：异议永不改档位；hardline 分流拦截不送审）
+    return cast(ReviewState, {
+        "quality": out,
+        "verify": verify_out,
+    })
+
+
+def node_objection(state: ReviewState) -> ReviewState:
+    """阶段 3.1 异议层：独立 graph 节点（外审批 3）。
+
+    拆出动机（审计）：此前 objections 在 node_quality 内部尾部跑，而
+    fully_complete 在 objections 真正执行前就已发出——生命周期名不符实；
+    且 node_quality 实际负责 quality→facts→verify→objections 四件事，
+    模块职责重新粘在一起的信号。拆出后 fully_complete 只能在异议层
+    结束后出现。铁律 3：异议永不改档位；失败软降级不阻断。"""
+    if state.get("error") or not (state.get("text") or "").strip():
+        # 解析已失败：异议层 error 短路（与 quality 同语义，不掩盖上游错误）
+        return {"objections": objection_service.outcome_unavailable("error")}
     try:
-        objections_out = objection_service.run_objections(
+        out = objection_service.run_objections(
             text=state.get("text") or "",
             items=state.get("items") or [],
             stance=state.get("stance") or "neutral",
@@ -294,13 +309,9 @@ def node_quality(state: ReviewState) -> ReviewState:
         )
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("Objection pass failed")
-        objections_out = objection_service.outcome_unavailable("error")
-    return {
-        "quality": out,
-        "completion": "fully_complete",
-        "verify": verify_out,
-        "objections": objections_out,
-    }
+        out = objection_service.outcome_unavailable("error")
+    _emit_partial(state, "fully_complete", objections=out)
+    return cast(ReviewState, {"objections": out, "completion": "fully_complete"})
 
 
 def build_graph():
@@ -309,11 +320,13 @@ def build_graph():
     g.add_node("checklist", node_checklist)
     g.add_node("model_review", node_model_review)
     g.add_node("quality", node_quality)
+    g.add_node("objection", node_objection)
     g.set_entry_point("parse")
     g.add_edge("parse", "checklist")
     g.add_edge("checklist", "model_review")
     g.add_edge("model_review", "quality")
-    g.add_edge("quality", END)
+    g.add_edge("quality", "objection")
+    g.add_edge("objection", END)
     return g.compile()
 
 
@@ -344,7 +357,7 @@ def run_review(
     stance: str = "neutral",
 ) -> dict[str, Any]:
     graph = get_graph()
-    final: ReviewState = graph.invoke(
+    final = cast(ReviewState, graph.invoke(
         {
             "filename": filename,
             "raw_bytes": raw_bytes,
@@ -355,7 +368,7 @@ def run_review(
             "on_partial": on_partial,
             "parsed_text": parsed_text or "",
         }
-    )
+    ))
     return {
         "text": final.get("text") or "",
         "items": final.get("items") or [],

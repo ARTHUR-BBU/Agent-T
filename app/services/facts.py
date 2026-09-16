@@ -123,12 +123,12 @@ def parse_map_extras(raw: str) -> tuple[list[dict[str, Any]], list[str]]:
             return [], []
     if not isinstance(obj, dict):
         return [], []
-    facts_raw = obj.get("facts") if isinstance(obj.get("facts"), list) else []
-    pending_raw = (
-        obj.get("pending_questions")
-        if isinstance(obj.get("pending_questions"), list)
-        else []
-    )
+    facts_raw = obj.get("facts")
+    if not isinstance(facts_raw, list):
+        facts_raw = []
+    pending_raw = obj.get("pending_questions")
+    if not isinstance(pending_raw, list):
+        pending_raw = []
     facts: list[dict[str, Any]] = []
     for row in facts_raw:
         if isinstance(row, dict):

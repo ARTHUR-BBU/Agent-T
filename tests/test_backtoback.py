@@ -6,7 +6,7 @@ pass 词表会把背靠背条款洗成「通过」（最危险结局）。
 """
 from __future__ import annotations
 
-from app.services.checklist import STATUS_ATTENTION, STATUS_PASS, run_checklist
+from app.services.checklist import STATUS_ATTENTION, run_checklist
 
 
 def _payment_status(text: str) -> dict:

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 Status = Literal["通过", "需关注", "未找到", "本类不适用"]
 TagSource = Literal["rule", "blind"]
-CompletionStage = Literal["rules_complete", "ai_partial", "fully_complete"]
+CompletionStage = Literal["rules_complete", "ai_partial", "quality_complete", "fully_complete"]
 
 
 class EvidenceRefInfo(BaseModel):
@@ -258,6 +258,7 @@ class ObjectionInfo(BaseModel):
     objections: list[Objection] = Field(default_factory=list)
     rejected_count: int = 0
     disclaimer: str = "异议只是候选线索，不改变逐条核查结论；是否成立由人工与规则修订决定。"
+    coverage: Optional[dict[str, Any]] = None  # 外审批 2：eligible/sent/reviewed/truncated 计账
 
 
 class ReviewSummary(BaseModel):

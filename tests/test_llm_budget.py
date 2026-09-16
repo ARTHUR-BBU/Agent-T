@@ -8,10 +8,9 @@ from __future__ import annotations
 import json
 import threading
 
-import pytest
 
 from app.graph import pipeline as pipeline_mod
-from app.services import llm_budget, precheck as precheck_service
+from app.services import precheck as precheck_service
 from app.services.llm_budget import DEFAULT_BUDGET, ReviewBudget, limit_from_env, new_review_budget
 from app.services.model_review import run_model_review
 

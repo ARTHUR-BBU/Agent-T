@@ -435,7 +435,7 @@ def _collect_suspects(
         ver = (ev or {}).get("verification") or "unverified"
         label = str(fact.get("label") or fact.get("kind") or "事实").strip()
         value = str(fact.get("value") or "").strip()
-        if ver in {"verified"} and ev.get("clause_id"):
+        if ver in {"verified"} and (ev or {}).get("clause_id"):
             # 已核过的确定性事实不刷屏——但**金额**除外（门禁 P1-1）：
             # 五条⑤「金额跨条款一致才静默」恰恰要求对已核实事实做跨条款
             # 复核，矛盾发生在两个各自真实的事实之间（总价十万 vs 结算八万）。
@@ -659,7 +659,7 @@ def run_bounded_verify(
         )
         # 仅 must_human 进入「需你确认」待办；机器放行/静默不打扰人（Design B 仍不改规则档）
         if disposition == "must_human" and room > 0:
-            questions.append(ConfirmQuestion(**q_payload))
+            questions.append(ConfirmQuestion.model_validate(q_payload))
             room -= 1
         # machine_ok / machine_silent：只记 triage_log，不占 pending 名额
 

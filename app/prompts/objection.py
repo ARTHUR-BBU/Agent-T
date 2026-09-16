@@ -11,7 +11,6 @@
 """
 from __future__ import annotations
 
-from typing import Any, Optional
 
 from app.prompts.guards import with_untrusted_guard
 

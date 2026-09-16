@@ -18,7 +18,7 @@ import re
 import threading
 from typing import Any, Callable, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.prompts import precheck as precheck_prompts
 from app.services import llm_ask

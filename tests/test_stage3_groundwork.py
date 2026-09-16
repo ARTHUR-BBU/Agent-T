@@ -125,3 +125,32 @@ def test_schema_relay_accepts_rule_class():
     assert new.rule_class == "hardline"
     old = ChecklistItemResult(id="x", name="x", status="通过")
     assert old.rule_id is None and old.rule_class is None, "旧记录兼容"
+
+
+def test_invalid_class_fails_closed():
+    """外审批 2 / 老钱裁定书第六节红线：显式标注的 class 拼错（hardlin）
+    必须 fail-closed 启动失败，绝不静默回落 heuristic——那是「铁律线被
+    拼错成启发式、AI 获得异议资格」的制度性漏洞。未标注仍是合法默认。"""
+    import textwrap
+
+    import pytest as _pytest
+
+    from app.services.checklist import _validate_category_config, load_checklist
+
+    # 三份正式配置全部合法（回归确认现有标注无拼错）
+    for cat in ("procurement", "lease", "nda"):
+        load_checklist(cat)  # 不 raise 即通过
+
+    bad_cfg = textwrap.dedent("""
+        category: procurement
+        category_label: 采购合同
+        items:
+          - id: x
+            name: X
+            class: hardlin
+            rules:
+              need_attention:
+                - pattern: "坏词"
+    """)
+    with _pytest.raises(ValueError, match="hardlin"):
+        _validate_category_config("procurement", __import__("yaml").safe_load(bad_cfg))

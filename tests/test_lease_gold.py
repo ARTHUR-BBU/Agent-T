@@ -46,7 +46,6 @@ def _capped_total(name: str) -> int:
     """模型满分 + 代码重算/封顶后的总分。"""
     text = (LEASE / name).read_text(encoding="utf-8")
     items = annotate_rule_items(run_checklist(text, "lease")["items"])
-    segments = scorecard.load_scorecard_config("lease")["segments"]
     hard_names = "、".join(
         i["name"] for i in items if i["status"] != "通过" and not i.get("category_na")
     )
