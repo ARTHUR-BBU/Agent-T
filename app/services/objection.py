@@ -183,13 +183,20 @@ def _body_block(text: str, clause_index: Optional[dict]) -> tuple[str, set[str]]
     parts: list[str] = []
     sent: set[str] = set()
     used = 0
-    skipped_note = "（正文过长，部分超长条款未呈现——你的引用只能出自以上列出的条款）"
+    truncated_note = "…（本条款超长，仅呈现前段——引用只能出自已呈现的条款内容）"
+    skipped_note = "（正文预算已用尽，后续条款未呈现——不得引用未呈现的条款）"
     for c in clauses:
         block = f"【{c['id']} {str(c.get('heading') or '')[:40]}】\n{text[c['start']:c['end']] or ''}"
         if used + len(block) > BODY_CHAR_BUDGET:
-            # 跳过超预算单条款，继续装后面的（门禁 P3-2：break 会让单条款
-            # >16k 的合同饿死整个正文块，防线静默降档）
-            if skipped_note not in parts:
+            # Codex P2：超预算条款截断装入并保留 id（而不是整条丢弃——否则
+            # 等价写法写在超长条款里时模型看不到，omission 召回落空）；预算
+            # 用尽后剩余条款诚实标注未呈现
+            remaining = BODY_CHAR_BUDGET - used
+            if remaining > MIN_QUOTE_CHARS * 2:
+                parts.append(block[:remaining] + truncated_note)
+                sent.add(str(c["id"]))
+                used = BODY_CHAR_BUDGET
+            elif skipped_note not in parts:
                 parts.append(skipped_note)
             continue
         parts.append(block)

@@ -430,19 +430,20 @@ def test_body_block_truncation_and_guards(monkeypatch):
     big = "字" * (BODY_CHAR_BUDGET + 1000)
     block, sent = _body_block(big, {})
     assert len(block) < len(big) and "仅呈现前段" in block and sent == set()
-    # ② 有索引但全部条款超预算：空块 + 空 sent（调用方不送正文）
+    # ② 全部条款超预算：截断装入并保留 id（Codex P2——不再整块饿死，
+    # omission 检测与相关性绑定都不静默失效）
     clauses = {"clauses": [{"id": "c01", "heading": "第一条", "start": 0,
                             "end": BODY_CHAR_BUDGET + 100}]}
     block, sent = _body_block("字" * (BODY_CHAR_BUDGET + 100), clauses)
-    assert block == "" and sent == set()
-    # ③ 混合：超长条款被跳过，后续小条款仍装入（skip-and-continue）
+    assert sent == {"c01"} and "仅呈现前段" in block
+    # ③ 混合：超长条款截断装入并保留 id（Codex P2——不整条丢弃，保 omission 召回）
     text = "长" * (BODY_CHAR_BUDGET + 100) + "甲乙双方约定如下：货款十万元。" * 2
     clauses = {"clauses": [
         {"id": "c01", "heading": "第一条", "start": 0, "end": BODY_CHAR_BUDGET + 100},
         {"id": "c02", "heading": "第二条", "start": BODY_CHAR_BUDGET + 100, "end": len(text)},
     ]}
     block, sent = _body_block(text, clauses)
-    assert sent == {"c02"} and "c02" in block and "c01" not in block
+    assert sent == {"c01"} and "c01" in block and "仅呈现前段" in block
     # ④ end 非法的条款被过滤（门禁 P3-1：不再 KeyError/吞全文进条款块）；
     # 全部条款非法时回落无索引兜底（短合同整篇，相关性绑定退化为存在性——
     # 与 docstring 声明的降级语义一致）
