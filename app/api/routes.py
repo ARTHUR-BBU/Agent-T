@@ -309,6 +309,7 @@ async def upload(
                     detected_type=r.detected_type,
                     confidence=r.confidence,
                     summary=r.summary,
+                    coverage=outcome.coverage,
                 ),
                 suggested_category=r.suggested_category if r.is_supported else None,
                 supported_categories=list_categories(),

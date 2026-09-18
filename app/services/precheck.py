@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from app.services.reason_codes import Reason
 from app.prompts import precheck as precheck_prompts
 from app.services import llm_ask
+from app.services.coverage import head_tail_sampling_coverage
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,8 @@ class PrecheckResult(BaseModel):
 
 class PrecheckOutcome(BaseModel):
     performed: bool = False
+    # 宪法 P0-D2：头尾采样覆盖账目（「在我看到的范围内没找到」≠「合同中不存在」）
+    coverage: Optional[dict[str, Any]] = None
     # skip_reason: no_llm_key / llm_error / parse_failed / disabled / busy /
     #              budget_exceeded（阶段 0.5：单次审查 LLM 预算耗尽，软降级）
     skip_reason: Optional[str] = None
@@ -200,7 +203,13 @@ def run_precheck(
                 raw, inconsistent_as_unsupported=(attempt == 2)
             )
             if result is not None:
-                return PrecheckOutcome(performed=True, result=result)
+                sent = min(len(text or ""), MAX_PRECHECK_CHARS)
+                return PrecheckOutcome(
+                    performed=True,
+                    result=result,
+                    coverage=head_tail_sampling_coverage(
+                        len(text or ""), sent, node="precheck"),
+                )
             logger.warning("Precheck payload parse failed (attempt %s)", attempt)
             system = precheck_prompts.build_retry_system_prompt(
                 precheck_prompts.build_system_prompt(list_categories())
