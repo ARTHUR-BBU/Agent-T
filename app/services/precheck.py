@@ -20,6 +20,7 @@ from typing import Any, Callable, Optional
 
 from pydantic import BaseModel
 
+from app.services.reason_codes import Reason
 from app.prompts import precheck as precheck_prompts
 from app.services import llm_ask
 
@@ -158,17 +159,17 @@ def run_precheck(
     """分类预审。任何失败都降级为 skip（照旧开审），绝不阻断主流程。
 
     budget（阶段 0.5）：ReviewBudget 对象，每次调用 LLM 前扣减，耗尽降级
-    skip_reason="budget_exceeded"。检查点在重试循环内——「首轮成功、
+    skip_reason=Reason.BUDGET_EXCEEDED.value。检查点在重试循环内——「首轮成功、
     重试前预算尽」也正确跳过重试。
     stance（阶段 1.3）：只进 prompt 供可审性判定（老钱视角规则修订），
     预审输出仍然只有分类字段，永不触碰档位。
     """
     if not is_precheck_enabled():
-        return PrecheckOutcome(skip_reason="disabled")
+        return PrecheckOutcome(skip_reason=Reason.DISABLED.value)
 
     chat = chat_fn or _default_chat_fn()
     if chat is None:
-        return PrecheckOutcome(skip_reason="no_llm_key")
+        return PrecheckOutcome(skip_reason=Reason.NO_LLM_KEY.value)
 
     # 并发闸门（肉饼门禁 P1）：占满时降级跳过，不排队——排队会把
     # 上传请求拖成变相 DoS，跳过则主流程完全不受影响
@@ -187,13 +188,13 @@ def run_precheck(
         for attempt in (1, 2):
             if budget is not None and not budget.try_consume():
                 logger.warning("Precheck skipped: LLM budget exhausted (attempt %s)", attempt)
-                return PrecheckOutcome(skip_reason="budget_exceeded")
+                return PrecheckOutcome(skip_reason=Reason.BUDGET_EXCEEDED.value)
             try:
                 raw = chat(system, user)
             except Exception:  # noqa: BLE001
                 # 异常详情只进日志（对齐 llm_ask 信息泄露防线），降级 skip
                 logger.exception("Precheck LLM call failed (attempt %s)", attempt)
-                return PrecheckOutcome(skip_reason="llm_error")
+                return PrecheckOutcome(skip_reason=Reason.LLM_ERROR.value)
 
             result = _parse_payload(
                 raw, inconsistent_as_unsupported=(attempt == 2)
@@ -205,7 +206,7 @@ def run_precheck(
                 precheck_prompts.build_system_prompt(list_categories())
             )
 
-        return PrecheckOutcome(skip_reason="parse_failed")
+        return PrecheckOutcome(skip_reason=Reason.PARSE_FAILED.value)
     finally:
         _precheck_slots.release()
 

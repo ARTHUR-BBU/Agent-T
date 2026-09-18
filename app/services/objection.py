@@ -34,6 +34,7 @@ from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, Field
 
+from app.services.reason_codes import Reason
 from app.prompts import objection as objection_prompts
 from app.services import blind_spot, llm_ask, scorecard
 from app.services.clause_index import _find_compressed, locate_quote_clauses
@@ -443,12 +444,12 @@ def run_objections(
 ) -> dict[str, Any]:
     """异议层主入口。失败绝不 raise，失败矩阵见 ObjectionInfo.reason。"""
     if not is_objections_enabled():
-        return outcome_unavailable("disabled")
+        return outcome_unavailable(Reason.DISABLED.value)
     if not (text or "").strip():
-        return outcome_unavailable("error")
+        return outcome_unavailable(Reason.ERROR.value)
     chat = chat_fn or _default_chat_fn()
     if chat is None:
-        return outcome_unavailable("no_llm_key")
+        return outcome_unavailable(Reason.NO_LLM_KEY.value)
 
     eligible = _eligible_count(items or [])
     candidates = _collect_candidates(items, max_candidates=MAX_CANDIDATES)
@@ -484,7 +485,7 @@ def run_objections(
     user = objection_prompts.build_user_prompt(block, catalog, body_block)
     if budget is not None and not budget.try_consume():
         logger.warning("Objections skipped: LLM budget exhausted")
-        return outcome_unavailable("budget_exceeded")
+        return outcome_unavailable(Reason.BUDGET_EXCEEDED.value)
 
     def _is_bad(p: Optional[list[dict[str, Any]]]) -> bool:
         return p is None or _has_forbidden(p)
@@ -493,20 +494,20 @@ def run_objections(
         raw = chat(system, user)
     except Exception:  # noqa: BLE001
         logger.exception("Objections LLM error")
-        return outcome_unavailable("llm_error")
+        return outcome_unavailable(Reason.LLM_ERROR.value)
     parsed = _parse_objections(raw)
     if _is_bad(parsed):
         if budget is not None and not budget.try_consume():
-            return outcome_unavailable("budget_exceeded")
+            return outcome_unavailable(Reason.BUDGET_EXCEEDED.value)
         try:
             raw = chat(objection_prompts.build_retry_system_prompt(system), user)
         except Exception:  # noqa: BLE001
             logger.exception("Objections retry LLM error")
-            return outcome_unavailable("llm_error")
+            return outcome_unavailable(Reason.LLM_ERROR.value)
         parsed = _parse_objections(raw)
         if _is_bad(parsed):
             # 重试后仍解析失败或带禁语：整单软降级（防线对称，不给「二轮洗白」口）
-            return outcome_unavailable("parse_failed")
+            return outcome_unavailable(Reason.PARSE_FAILED.value)
 
     objections: list[Objection] = []
     rejected = 0

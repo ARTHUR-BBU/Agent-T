@@ -293,3 +293,36 @@ def test_model_review_error_reason_no_exc_leak(monkeypatch):
     assert sc["available"] is False
     assert sc["reason"] == "llm_error", f"reason 不得携带异常详情：{sc['reason']}"
     assert "deepseek.com" not in (sc["reason"] or "")
+
+
+def test_llm_runtime_config_startup_validation():
+    """宪法 P0-C2：LLM 运行时配置垃圾值启动即拒（fail-closed 对齐 STORE_TTL 先例）。"""
+    import pytest as _pytest
+
+    from app.services.config_validate import validate_llm_runtime_config
+    import os
+
+    old = {k: os.getenv(k) for k in (
+        "LLM_TIMEOUT_SECONDS", "LLM_BUDGET_PER_REVIEW")}
+    try:
+        os.environ.pop("LLM_TIMEOUT_SECONDS", None)
+        os.environ.pop("LLM_BUDGET_PER_REVIEW", None)
+        validate_llm_runtime_config()  # 未配置=合法
+
+        os.environ["LLM_TIMEOUT_SECONDS"] = "abc"
+        with _pytest.raises(ValueError, match="LLM_TIMEOUT_SECONDS"):
+            validate_llm_runtime_config()
+
+        os.environ["LLM_TIMEOUT_SECONDS"] = "180"
+        os.environ["LLM_BUDGET_PER_REVIEW"] = "-3"
+        with _pytest.raises(ValueError, match="不能为负数"):
+            validate_llm_runtime_config()
+
+        os.environ["LLM_BUDGET_PER_REVIEW"] = "18"
+        validate_llm_runtime_config()  # 合法值通过
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v

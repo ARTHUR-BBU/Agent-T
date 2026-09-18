@@ -13,6 +13,7 @@ from __future__ import annotations
 
 
 from app.prompts.guards import with_untrusted_guard
+from app.prompts.versioning import source_version
 
 # 系统提示词身份标识（测试桩按它路由异议调用）
 SYSTEM_MARKER = "规则异议"
@@ -59,6 +60,9 @@ def build_system_prompt(stance: str = "neutral") -> str:
 只对下面给出的「候选条目」提异议；候选之外的条目一律不碰。"""
     return with_untrusted_guard(prompt)
 
+
+
+PROMPT_VERSION = source_version(build_system_prompt)
 
 def build_user_prompt(
     candidates_block: str,

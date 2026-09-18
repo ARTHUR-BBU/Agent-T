@@ -24,6 +24,7 @@ import logging
 import os
 from typing import Any, Optional
 
+from app.services.reason_codes import Reason
 from app.services import blind_spot, llm_ask, scorecard
 
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ def run_model_review(
     zhipu = llm_ask._zhipu_key()
     xai = llm_ask._xai_key()
     if not deepseek and not zhipu and not xai and chat_fn is None:
-        result["scorecard"] = scorecard.unavailable("no_llm_key")
+        result["scorecard"] = scorecard.unavailable(Reason.NO_LLM_KEY.value)
         result["blind_skipped_reason"] = "no_llm_key" if blind_on else None
         return result
 
@@ -112,7 +113,7 @@ def run_model_review(
                         "fully_covered": False,
                     },
                     chunks_reviewed=0,
-                    reason="map_fail_fallback",
+                    reason=Reason.MAP_FAIL_FALLBACK.value,
                 )
 
     if segmented:
@@ -128,7 +129,7 @@ def run_model_review(
     # 不硬失败）。重试前同样检查——「第 1 次成功、重试时预算尽」也正确降级
     if budget is not None and not budget.try_consume():
         logger.warning("Model-review skipped: LLM budget exhausted")
-        result["scorecard"] = scorecard.unavailable("budget_exceeded")
+        result["scorecard"] = scorecard.unavailable(Reason.BUDGET_EXCEEDED.value)
         result["blind_skipped_reason"] = "budget_exceeded" if blind_on else None
         return result
 
@@ -137,7 +138,7 @@ def run_model_review(
     except Exception:  # noqa: BLE001
         # reason 只给固定码：exc 含供应商 URL/响应体，会经 API 和 docx 报告外泄（肉饼门禁 P2-2）
         logger.exception("Model-review LLM error")
-        result["scorecard"] = scorecard.unavailable("llm_error")
+        result["scorecard"] = scorecard.unavailable(Reason.LLM_ERROR.value)
         return result
 
     payload = scorecard.parse_model_payload(raw)
@@ -148,17 +149,17 @@ def run_model_review(
         retry_system = system + "\n\n【再次提醒】上一轮输出包含禁止表述或结构错误。重新输出，严禁出现任何整体性背书/推翻规则档位的表述，只输出 JSON。"
         if budget is not None and not budget.try_consume():
             logger.warning("Model-review retry skipped: LLM budget exhausted")
-            result["scorecard"] = scorecard.unavailable("budget_exceeded")
+            result["scorecard"] = scorecard.unavailable(Reason.BUDGET_EXCEEDED.value)
             return result
         try:
             raw = _call_llm(zhipu, xai, retry_system, user, chat_fn, deepseek=deepseek)
         except Exception:  # noqa: BLE001
             logger.exception("Model-review retry LLM error")
-            result["scorecard"] = scorecard.unavailable("llm_error")
+            result["scorecard"] = scorecard.unavailable(Reason.LLM_ERROR.value)
             return result
         payload = scorecard.parse_model_payload(raw)
         if payload is None:
-            result["scorecard"] = scorecard.unavailable("parse_failed")
+            result["scorecard"] = scorecard.unavailable(Reason.PARSE_FAILED.value)
             return result
         if scorecard.check_forbidden(_scorecard_text(payload)):
             degraded = True
@@ -168,7 +169,7 @@ def run_model_review(
         final = scorecard.postprocess(payload, items, segments)
     except (TypeError, ValueError, OverflowError, AttributeError):
         logger.exception("Model-review postprocess failed on malformed payload")
-        result["scorecard"] = scorecard.unavailable("incomplete_model_output")
+        result["scorecard"] = scorecard.unavailable(Reason.INCOMPLETE_MODEL_OUTPUT.value)
         return result
     if degraded or not scorecard.naming_complete(final, items):
         final = scorecard.degrade_to_score_only(final)
