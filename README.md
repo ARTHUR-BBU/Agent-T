@@ -82,6 +82,9 @@ AI 功能需要配置模型服务。当前 Word 报告不包含页面中的 AI �
 
 > **[《Agent-T Constitution / Agent-T 宪法》](docs/agent-t-constitution.md)**  
 > 它定义每一层“可以做什么、绝对不能做什么、发生冲突时听谁、规则如何修改，以及代码进入 main 前必须满足什么程序”。
+>
+> **[《LLM 在 Agent-T 中的定位、权限与分阶段开发规范》](docs/llm-position-authority-phased-development.md)**
+> 它以当前代码为基线，逐节点规定 LLM 何时被调用、能看什么、输出什么、如何验收，以及下一阶段先做什么。
 
 ## 不只标出问题，还会继续核查
 
@@ -240,7 +243,9 @@ Agent-T 使用 **FastAPI + LangGraph + SQLite**，搭配轻量 Web 界面。规�
 
 | 想了解什么 | 从这里开始 |
 |---|---|
-| **开发权力边界、证据规则与合并门禁** | **[Agent-T 宪法](docs/agent-t-constitution.md)** |\n| 本地启动、模型配置、测试与 API | [安装与配置](docs/getting-started.md) |
+| **开发权力边界、证据规则与合并门禁** | **[Agent-T 宪法](docs/agent-t-constitution.md)** |
+| **LLM 节点、权限、当前完成度与分阶段验收** | **[LLM 开发规范](docs/llm-position-authority-phased-development.md)** |
+| 本地启动、模型配置、测试与 API | [安装与配置](docs/getting-started.md) |
 | 部署到服务器 | [部署指南](docs/deploy-server.md) |
 | 调整核查规则、预算与限频 | [管理员配置](docs/admin-config.md) |
 | 了解产品方向与后续计划 | [开发路线](docs/roadmap-llm-ui.md) |

@@ -3,6 +3,7 @@
 > **Status: Normative engineering governance document**  
 > **Scope: Agent-T rules, AI, evidence, workflow, state, tests, code review, and release process**  
 > **Core principle: Rules decide. AI challenges. Evidence constrains. Procedure checks power. Humans retain final responsibility.**
+> **Companion implementation standard: [LLM Position, Authority, and Phased Development Standard](llm-position-authority-phased-development.md)** *(Chinese)*
 
 ---
 

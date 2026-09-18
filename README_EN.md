@@ -82,6 +82,9 @@ The normative engineering document is:
 
 > **[Agent-T Constitution](docs/agent-t-constitution-en.md)**  
 > It defines what each layer may do, what it must never do, how conflicts are resolved, how rules may change, and what procedural gates must be satisfied before code reaches `main`.
+>
+> **[LLM Position, Authority, and Phased Development Standard](docs/llm-position-authority-phased-development.md)** *(Chinese)*
+> It audits the current code and specifies, node by node, when an LLM is called, what it may see and produce, how it is gated, and what must be delivered next.
 
 ## It doesn't stop at flagging an issue
 
@@ -240,7 +243,9 @@ Agent-T uses **FastAPI + LangGraph + SQLite** with a lightweight web interface. 
 
 | What you need | Start here |
 |---|---|
-| **Authority boundaries, evidence rules, and merge gates** | **[Agent-T Constitution](docs/agent-t-constitution-en.md)** |\n| Local setup, model configuration, tests, and API | [Setup and configuration](docs/getting-started.md) — Chinese |
+| **Authority boundaries, evidence rules, and merge gates** | **[Agent-T Constitution](docs/agent-t-constitution-en.md)** |
+| **LLM nodes, authority, implementation status, and phased acceptance** | **[LLM development standard](docs/llm-position-authority-phased-development.md)** — Chinese |
+| Local setup, model configuration, tests, and API | [Setup and configuration](docs/getting-started.md) — Chinese |
 | Server deployment | [Deployment guide](docs/deploy-server.md) — Chinese |
 | Rule, budget, and rate-limit configuration | [Administrator guide](docs/admin-config.md) — Chinese |
 | Product direction and roadmap | [Development roadmap](docs/roadmap-llm-ui.md) — Chinese |
