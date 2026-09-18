@@ -295,7 +295,7 @@ Decision / Human Decision（正式结果或人工决定）
 | 权限 | heuristic 只可提 `false_positive`；existence 只可提 `omission`；hardline 与 N/A 不送审。可生成规则改进提案，不得修改当次 status。 |
 | 验证门禁 | 送审集合比对；方向×类别矩阵；quote 存在并定位；证据属于允许条款范围；counter evidence；清洗后 reasoning ≥30 字；stance 自检；rule_id 由服务端决定。 |
 | 失败语义 | `disabled / no_llm_key / budget_exceeded / llm_error / parse_failed / error`；不影响规则、评分与质量层结果。合法无候选为 `available=true + objections=[]`。 |
-| 当前日志 / coverage | `eligible / sent / reviewed / truncated` 与 rejected_count；无逐条 reject 统计指标、provider/model/prompt/latency/token。 |
+| 当前日志 / coverage | 候选维 `eligible / sent / reviewed / candidate_limited` + 正文维 `body_chars_total/sent、clauses_total/sent、body_limited`，rejected_count；正文范围已 span 级绑定（引用须落在实际发送区间）。仍无 provider/model/prompt/latency/token 逐调用账本。 |
 | 当前测试 | class × direction、hardline 拒绝、候选外注入、真实但错 scope、正文截断、五要件、adopt 不改档位、corpus 对抗。 |
 
 ### N4 验收标准
@@ -432,7 +432,7 @@ Fail-soft 的统一含义是“该能力未完成或不可用”，不是“已�
 - 服务端异常日志，不向客户端回传供应商内部错误；
 - ReviewBudget 的内存调用次数控制；
 - Scorecard / Quality 的长合同 coverage；
-- Objection 的 eligible / sent / reviewed / truncated；
+- Objection 的候选维 + 正文维 coverage（candidate_limited / body_chars_* / clauses_* / body_limited）；
 - Quality dropped_count 与 Objection rejected_count；
 - Review `stage` 与 `completion`；
 - EvidenceRef 的文档版本与坐标；
@@ -487,7 +487,7 @@ Fail-soft 的统一含义是“该能力未完成或不可用”，不是“已�
 - `truncation_reason`；
 - `limited`。
 
-Precheck 和 Ask 当前缺少这一统一对象；Objection 只有候选 coverage，正文阅读范围未以公共 Coverage schema 对外透出。以上均为下一阶段必须补齐的 P0。
+Precheck 和 Ask 当前缺少这一统一对象；Objection 已在自身 coverage 内记录正文范围（span 绑定 + body_chars/clauses/body_limited），但尚未收敛到公共 Coverage schema。以上均为下一阶段必须补齐的 P0。
 
 ---
 
