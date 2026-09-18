@@ -31,6 +31,7 @@ from app.api.routes_objection import router as _objection_router
 from app.api.routes_verify import _pack_verify, router as _verify_router
 from app.graph.pipeline import run_review
 from app.services import llm_ask, precheck as precheck_service, report as report_service
+from app.prompts import precheck as precheck_prompts
 from app.services import llm_budget, llm_call_log, rate_limit
 from app.services.checklist import list_categories
 from app.services.clause_index import build_clause_context
@@ -292,7 +293,10 @@ async def upload(
     if contract_text is not None:
         # 宪法 P0-D1：precheck 时 review_id 尚未生成（create 在预审后），
         # 账本先记 node 标签，review 关联留待后续补全
-        with llm_call_log.record_node("precheck"):
+        with llm_call_log.record_node(
+                "precheck",
+                prompt_version=precheck_prompts.PROMPT_VERSION,
+            ):
             outcome = await run_in_threadpool(
                 precheck_service.run_precheck, contract_text, category, None, budget, stance
             )
