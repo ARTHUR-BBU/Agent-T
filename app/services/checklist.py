@@ -199,10 +199,13 @@ _VALID_RULE_CLASSES = {"hardline", "existence", "heuristic"}
 def _rule_class(rule: dict[str, Any], item: dict[str, Any]) -> str:
     """三分法类别（路线图宪章，异议层受理分流依据）。
     优先级与裁定书（docs/stage3-class-opinion.md 第三节）对齐：
-    命中规则自带 class（规则级）> 簇级 class（经 item 透传）> 默认 heuristic。
-    非法值一律回落 heuristic（fail-safe：多问人、不放水）。"""
+    命中规则自带 class（规则级）> 簇级 class（经 item 透传）> 默认 heuristic（未标注）。
+    「未标注 → 默认 heuristic」是裁定书合法语义，保留；「非法显式值静默回落」
+    旧兜底已删（三轮审计 G：与 fail-closed 制度不一致）——非法值由
+    load_checklist 校验链拦截，直调防御路径下透传原值，消费端永不送审。"""
     raw = str(rule.get("class") or item.get("class") or "").strip().lower()
-    return raw if raw in _VALID_RULE_CLASSES else "heuristic"
+    # 未标注（falsy）= 合法默认；非法显式值透传（消费端 _eligible_direction 不送审）
+    return raw if raw else "heuristic"
 
 
 def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
