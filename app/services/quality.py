@@ -29,6 +29,7 @@ from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, Field
 
+from app.services.reason_codes import Reason
 from app.prompts import quality as quality_prompts
 from app.services import blind_spot, llm_ask, scorecard
 from app.services.clause_index import locate_quote_clauses
@@ -156,13 +157,13 @@ def run_quality(
     被牺牲（budget_exceeded 软降级），既有参考层优先级不被稀释。
     """
     if not is_quality_enabled():
-        return outcome_unavailable("disabled")
+        return outcome_unavailable(Reason.DISABLED.value)
     if not (text or "").strip():
-        return outcome_unavailable("error")
+        return outcome_unavailable(Reason.ERROR.value)
 
     chat = chat_fn or _default_chat_fn()
     if chat is None:
-        return outcome_unavailable("no_llm_key")
+        return outcome_unavailable(Reason.NO_LLM_KEY.value)
 
     policies = policies or []
     segmented = len(text) > scorecard.MAX_CONTRACT_CHARS
@@ -181,7 +182,7 @@ def run_quality(
     if segmented:
         chunks, plan_meta = build_review_plan(text, clause_index, max_segments=_max_segments())
         if not chunks:
-            return outcome_unavailable("error")
+            return outcome_unavailable(Reason.ERROR.value)
         system = quality_prompts.build_system_prompt(policies, category=category, stance=stance)
         chunks_total = len(chunks)
         chunks_ok = 0
@@ -232,7 +233,7 @@ def run_quality(
         if chunks_ok == 0:
             logger.warning("Quality map produced nothing (all chunks failed)")
             return QualityInfo(
-                available=False, reason="parse_failed", dropped_count=dropped,
+                available=False, reason=Reason.PARSE_FAILED.value, dropped_count=dropped,
                 coverage=coverage, facts=merged_facts,
                 pending_questions=pending_questions,
             ).model_dump()
@@ -245,7 +246,7 @@ def run_quality(
             dropped += dropped_n
             if failed:
                 return QualityInfo(
-                    available=False, reason="parse_failed", dropped_count=dropped,
+                    available=False, reason=Reason.PARSE_FAILED.value, dropped_count=dropped,
                     coverage=coverage, facts=merged_facts,
                     pending_questions=pending_questions,
                 ).model_dump()
@@ -254,26 +255,26 @@ def run_quality(
         user = quality_prompts.build_user_prompt(text, items, clause_index, category=category, stance=stance)
         if budget is not None and not budget.try_consume():
             logger.warning("Quality skipped: LLM budget exhausted")
-            return outcome_unavailable("budget_exceeded")
+            return outcome_unavailable(Reason.BUDGET_EXCEEDED.value)
         try:
             raw = chat(system, user)
         except Exception:  # noqa: BLE001
             logger.exception("Quality LLM error")
-            return outcome_unavailable("llm_error")
+            return outcome_unavailable(Reason.LLM_ERROR.value)
         parsed = _parse_observations(raw)
         if parsed is None or _has_forbidden(parsed):
             if budget is not None and not budget.try_consume():
                 logger.warning("Quality retry skipped: budget exhausted")
-                return outcome_unavailable("budget_exceeded")
+                return outcome_unavailable(Reason.BUDGET_EXCEEDED.value)
             retry_system = quality_prompts.build_retry_system_prompt(system)
             try:
                 raw = chat(retry_system, user)
             except Exception:  # noqa: BLE001
                 logger.exception("Quality retry LLM error")
-                return outcome_unavailable("llm_error")
+                return outcome_unavailable(Reason.LLM_ERROR.value)
             parsed = _parse_observations(raw)
             if parsed is None:
-                return outcome_unavailable("parse_failed")
+                return outcome_unavailable(Reason.PARSE_FAILED.value)
         observations, dropped = _clean_observations(
             parsed, text, clause_index, document_version=doc_ver
         )

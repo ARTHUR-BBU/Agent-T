@@ -13,6 +13,11 @@ from typing import Any, Callable, TypedDict, cast
 
 from langgraph.graph import END, StateGraph
 
+from app.prompts import objection as objection_prompts
+from app.prompts import quality as quality_prompts
+from app.services.llm_call_log import record_node
+from app.services import scorecard_prompts
+from app.services.reason_codes import Reason
 from app.services import quality as quality_service
 from app.services import objection as objection_service
 from app.services.blind_spot import annotate_rule_items
@@ -26,6 +31,7 @@ from app.services.model_review import run_model_review
 
 
 class ReviewState(TypedDict, total=False):
+    review_id: str  # 宪法 P0-D1：LLM 调用账本的关联键
     filename: str
     raw_bytes: bytes
     category: str
@@ -163,28 +169,30 @@ def node_model_review(state: ReviewState) -> ReviewState:
     if state.get("error"):
         return cast(ReviewState, {
             # 解析已失败，与「有规则结果才出分」的 no_rule_results 门禁区分开（肉饼审查 P3-4）
-            "scorecard": {"available": False, "reason": "error"},
+            "scorecard": {"available": False, "reason": Reason.ERROR.value},
             "blind_candidates": [],
             "blind_skipped_messages": [],
             "blind_skipped_reason": None,
             "blind_enabled": False,
         })
     try:
-        out = run_model_review(
-            text=state.get("text") or "",
-            items=state.get("items") or [],
-            policies=state.get("policies") or [],
-            category=state.get("category") or "procurement",
-            clause_index=state.get("clause_index"),
-            budget=state.get("budget"),
-        )
+        with record_node("model_review", state.get("review_id"),
+                             prompt_version=scorecard_prompts.PROMPT_VERSION):
+            out = run_model_review(
+                text=state.get("text") or "",
+                items=state.get("items") or [],
+                policies=state.get("policies") or [],
+                category=state.get("category") or "procurement",
+                clause_index=state.get("clause_index"),
+                budget=state.get("budget"),
+            )
     except Exception:  # noqa: BLE001 — F03：模型坏输出不得抹掉已完成规则结果
         logging.getLogger(__name__).exception("Model review failed; keeping rule items")
         return {
-            "scorecard": {"available": False, "reason": "incomplete_model_output"},
+            "scorecard": {"available": False, "reason": Reason.INCOMPLETE_MODEL_OUTPUT.value},
             "blind_candidates": [],
             "blind_skipped_messages": [],
-            "blind_skipped_reason": "incomplete_model_output",
+            "blind_skipped_reason": Reason.INCOMPLETE_MODEL_OUTPUT.value,
             "blind_enabled": False,
         }
     candidates = out.get("blind_candidates") or []
@@ -229,23 +237,25 @@ def node_quality(state: ReviewState) -> ReviewState:
     """
     if state.get("error") or not (state.get("text") or "").strip():
         # 解析已失败：quality 走 error 短路，语义不掩盖上游错误
-        return {"quality": quality_service.outcome_unavailable("error")}
+        return {"quality": quality_service.outcome_unavailable(Reason.ERROR.value)}
     # 只在真要跑时点亮 analyzing 段位——关闭态不让等待页闪过一段
     if quality_service.is_quality_enabled():
         _emit_stage(state, "analyzing")
     try:
-        out = quality_service.run_quality(
-            text=state.get("text") or "",
-            items=state.get("items") or [],
-            policies=state.get("policies") or [],
-            category=state.get("category") or "procurement",
-            stance=state.get("stance") or "neutral",
-            clause_index=state.get("clause_index"),
-            budget=state.get("budget"),
-        )
+        with record_node("quality", state.get("review_id"),
+                             prompt_version=quality_prompts.PROMPT_VERSION):
+            out = quality_service.run_quality(
+                text=state.get("text") or "",
+                items=state.get("items") or [],
+                policies=state.get("policies") or [],
+                category=state.get("category") or "procurement",
+                stance=state.get("stance") or "neutral",
+                clause_index=state.get("clause_index"),
+                budget=state.get("budget"),
+            )
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("Quality pass failed")
-        out = quality_service.outcome_unavailable("error")
+        out = quality_service.outcome_unavailable(Reason.ERROR.value)
     # 质量关闭/失败时仍落确定性事实材料（A2）；规则 items 绝不动（Design B）
     if not (out.get("facts") or []):
         text_body = state.get("text") or ""
@@ -272,7 +282,7 @@ def node_quality(state: ReviewState) -> ReviewState:
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("Bounded verify failed")
         verify_out = verify_service.empty_verify(
-            reason="error",
+            reason=Reason.ERROR.value,
             document_version=state.get("document_version") or "",
         )
     _emit_partial(
@@ -298,18 +308,20 @@ def node_objection(state: ReviewState) -> ReviewState:
     结束后出现。铁律 3：异议永不改档位；失败软降级不阻断。"""
     if state.get("error") or not (state.get("text") or "").strip():
         # 解析已失败：异议层 error 短路（与 quality 同语义，不掩盖上游错误）
-        return {"objections": objection_service.outcome_unavailable("error")}
+        return {"objections": objection_service.outcome_unavailable(Reason.ERROR.value)}
     try:
-        out = objection_service.run_objections(
-            text=state.get("text") or "",
-            items=state.get("items") or [],
-            stance=state.get("stance") or "neutral",
-            clause_index=state.get("clause_index"),
-            budget=state.get("budget"),
-        )
+        with record_node("objection", state.get("review_id"),
+                             prompt_version=objection_prompts.PROMPT_VERSION):
+            out = objection_service.run_objections(
+                text=state.get("text") or "",
+                items=state.get("items") or [],
+                stance=state.get("stance") or "neutral",
+                clause_index=state.get("clause_index"),
+                budget=state.get("budget"),
+            )
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("Objection pass failed")
-        out = objection_service.outcome_unavailable("error")
+        out = objection_service.outcome_unavailable(Reason.ERROR.value)
     _emit_partial(state, "fully_complete", objections=out)
     return cast(ReviewState, {"objections": out, "completion": "fully_complete"})
 
@@ -355,10 +367,12 @@ def run_review(
     on_partial: Callable[[str, dict], None] | None = None,
     parsed_text: str | None = None,
     stance: str = "neutral",
+    review_id: str | None = None,
 ) -> dict[str, Any]:
     graph = get_graph()
     final = cast(ReviewState, graph.invoke(
-        {
+        cast(ReviewState, {
+            "review_id": review_id,
             "filename": filename,
             "raw_bytes": raw_bytes,
             "category": category or "procurement",
@@ -367,7 +381,7 @@ def run_review(
             "on_stage": on_stage,
             "on_partial": on_partial,
             "parsed_text": parsed_text or "",
-        }
+        })
     ))
     return {
         "text": final.get("text") or "",

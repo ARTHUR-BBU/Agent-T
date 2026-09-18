@@ -117,6 +117,8 @@ class PrecheckInfo(BaseModel):
     stance_notice: bool = False
     # 提示文案由服务端单一来源（stance.counterparty_view_notice）生成下发
     stance_notice_text: str = ""
+    # 宪法 P0-D2：头尾采样覆盖账目（统一 Coverage schema，规范 23 节）
+    coverage: Optional[dict[str, Any]] = None
 
 
 class QualityObservation(BaseModel):

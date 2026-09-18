@@ -31,7 +31,7 @@ from app.api.routes_objection import router as _objection_router
 from app.api.routes_verify import _pack_verify, router as _verify_router
 from app.graph.pipeline import run_review
 from app.services import llm_ask, precheck as precheck_service, report as report_service
-from app.services import llm_budget, rate_limit
+from app.services import llm_budget, llm_call_log, rate_limit
 from app.services.checklist import list_categories
 from app.services.clause_index import build_clause_context
 from app.services.extract import ExtractionError, extract_text
@@ -164,6 +164,7 @@ def _start_review(
                     on_stage=on_stage, on_partial=on_partial,
                     parsed_text=reused_text,
                     stance=stance,
+                    review_id=review_id,
                 )
                 if result.get("error"):
                     store.update(
@@ -309,6 +310,7 @@ async def upload(
                     detected_type=r.detected_type,
                     confidence=r.confidence,
                     summary=r.summary,
+                    coverage=outcome.coverage,
                 ),
                 suggested_category=r.suggested_category if r.is_supported else None,
                 supported_categories=list_categories(),
@@ -332,6 +334,7 @@ async def upload(
                 "summary": r.summary,
                 "suspect": bool(branch["suspect"]),
                 "stance_notice": stance_notice,
+                "coverage": outcome.coverage,  # 宪法 P0-D2：正常 proceed 路径同账
             }
 
     # 占并发槽位：满则 429（无界线程池被脚本刷 500 次上传 = 500 个 LLM 调用）
@@ -457,23 +460,27 @@ def ask(body: AskRequest):
     if not item:
         raise HTTPException(status_code=404, detail="清单项不存在")
 
-    result = llm_ask.ask_about_item(
-        question=body.question,
-        item=item,
-        contract_text=row.get("text") or "",
-        policies=row.get("policies") or [],
-        # 条款上下文（外部审计批1-③）：命中条款全文+相邻条款做主上下文；
-        # 无索引/未定位回退头尾采样（llm_ask 内处理）
-        clause_context=build_clause_context(
+    # 宪法 P0-D1/D5：Ask 也进 LLM 调用账本（不能成为观测盲区）
+    with llm_call_log.record_node(
+        "ask", body.review_id,
+        prompt_version=llm_ask.PROMPT_VERSION):
+            result = llm_ask.ask_about_item(
+            question=body.question,
+            item=item,
+            contract_text=row.get("text") or "",
+            policies=row.get("policies") or [],
+            # 条款上下文（外部审计批1-③）：命中条款全文+相邻条款做主上下文；
+            # 无索引/未定位回退头尾采样（llm_ask 内处理）
+            clause_context=build_clause_context(
             row.get("text") or "",
             row.get("clause_index") or {},
             item.get("clause_ids") or [],
             primary_clause_id=item.get("primary_clause_id") or "",
         ),
-        # A4：立场进追问解释（规则档位不变）
-        category=row.get("category") or "procurement",
-        stance=row.get("stance") or "neutral",
-    )
+            # A4：立场进追问解释（规则档位不变）
+            category=row.get("category") or "procurement",
+            stance=row.get("stance") or "neutral",
+        )
     return AskResponse(
         ok=bool(result.get("ok")),
         item_id=item.get("id", body.item_id),

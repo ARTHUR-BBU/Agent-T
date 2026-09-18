@@ -8,6 +8,7 @@ docs/spec-llm-precheck.md 3.3.1 节要点）。核心铁律：
 from __future__ import annotations
 
 from app.prompts.guards import UNTRUSTED_DOCUMENT_INSTRUCTION
+from app.prompts.versioning import source_version
 from app.services import stance as stance_service
 
 OUTPUT_FIELDS = ["detected_type", "is_supported", "suggested_category", "confidence", "summary"]
@@ -61,6 +62,9 @@ def build_system_prompt(supported_categories: list[dict[str, str]]) -> str:
 
 只输出 JSON，不要 markdown 围栏。"""
 
+
+
+PROMPT_VERSION = source_version(build_system_prompt)
 
 def build_retry_system_prompt(system: str) -> str:
     return system + "\n\n【再次提醒】上一轮输出不是合法 JSON 或字段缺失。重新输出，严格只输出一个 JSON 对象，字段为：detected_type / is_supported / suggested_category / confidence / summary。"

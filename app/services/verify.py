@@ -20,6 +20,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from app.services.reason_codes import Reason
 from app.services.blind_spot import MAX_QUOTE_CHARS, quote_supported
 from app.services.evidence import build_evidence, document_version_for, locate_quote_span
 
@@ -495,14 +496,14 @@ def run_bounded_verify(
     fetches_used = int(prior.get("clause_fetches_used") or 0)
 
     if not (text or "").strip():
-        return empty_verify(reason="error", document_version=doc_ver)
+        return empty_verify(reason=Reason.ERROR.value, document_version=doc_ver)
 
     if rounds_used >= lim["max_rounds"]:
         # 保留既有问题，标预算耗尽
         kept = prior.get("questions") or []
         info = VerifyInfo(
             available=True,
-            reason="budget_exceeded",
+            reason=Reason.BUDGET_EXCEEDED.value,
             rounds_used=rounds_used,
             max_rounds=lim["max_rounds"],
             clause_fetches_used=fetches_used,

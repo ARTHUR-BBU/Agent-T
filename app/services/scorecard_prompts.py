@@ -11,6 +11,7 @@ import re
 from typing import Any, Optional
 
 from app.prompts.guards import with_untrusted_guard
+from app.prompts.versioning import source_version
 
 # 单次文本上限（2026-09-07 线上事故常量：12000 字 + 评分指令让 glm-5.2 超 240s；
 # 压到 6000 后回到 ~30-60s。头+尾采样——主体在头部、签署区在尾部）
@@ -61,6 +62,9 @@ segments[].gap_item_ids 说明：该段内你认为「表述弱、有缺口、�
 candidates 说明：对「规则未标需关注、但你发现真实风险且能引用原文」的条目提出候选；quote 必须是合同原文连续摘录，没有原文依据就不要输出该项；无候选输出 []。禁止改写规则已有结论。"""
     return with_untrusted_guard(prompt)
 
+
+
+PROMPT_VERSION = source_version(build_system_prompt)
 
 def _clip_for_scoring(text: str) -> str:
     """头 + 尾采样截断（总预算 MAX_CONTRACT_CHARS）：

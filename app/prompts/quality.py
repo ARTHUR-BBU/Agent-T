@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from app.prompts.guards import with_untrusted_guard
+from app.prompts.versioning import source_version
 from app.services import stance as stance_service
 from app.services.scorecard_prompts import _rule_block
 
@@ -69,6 +70,9 @@ facts 用于跨段对照（即使本段看起来没问题也请抽出主体/金�
 pending_questions 为本段无法独自确认、需对照其他段落的问题，最多 4 条。"""
     return with_untrusted_guard(prompt)
 
+
+
+PROMPT_VERSION = source_version(build_system_prompt)
 
 def build_user_prompt(
     text: str,
