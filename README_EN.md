@@ -39,6 +39,29 @@ Agent-T gives you a structured first pass before signing. Upload a contract, rev
 
 AI features require a configured model provider. The current Word export does not include the AI observations or follow-up answers shown in the web interface, so check the report scope before sharing it.
 
+## One sentence: the rule engine is the judge; the AI objection layer is counsel
+
+> **Rules decide. AI challenges. Evidence constrains. Humans retain final responsibility.**
+
+This is one of the most important architectural principles in Agent-T. The model is deliberately not placed directly in the “judge's seat.” LLMs are good at spotting ambiguities, surfacing alternative interpretations, and raising issues that deterministic checks may miss—but they can also misunderstand context, miss conditions, or produce a plausible conclusion without reliable support in the contract.
+
+Agent-T therefore gives each layer a clear boundary of authority:
+
+- **The rule engine is the judge.** It produces the formal checklist status from explicit, testable, reproducible rules. A rule-based result should be explainable through code, configuration, and tests.
+- **The AI objection layer is counsel.** It may raise its hand and say, “This may be a false positive,” “There may be an exception elsewhere in the contract,” or “Something may have been omitted.” It cannot silently reverse the rule result or overwrite the official finding.
+- **The contract text and Evidence are the record.** Rules and AI should return to identifiable clauses, exact passages, and locations. One risk match should become one stable evidence fact, and downstream explanations, objections, and follow-up questions should reuse that evidence rather than independently guessing again.
+- **Human review retains final responsibility.** When facts are incomplete, wording is genuinely ambiguous, or commercial and legal judgment is required, the system should say what is still missing instead of pretending certainty.
+- **Tests, CI, and code review are the procedural safeguards.** They help ensure that a model response, rule change, or refactor cannot quietly change a formal result without evidence and review.
+
+That creates several boundaries that should not be crossed casually:
+
+1. **An AI objection must not directly rewrite a rule-based conclusion.**
+2. **An objection should carry verifiable source evidence whenever possible; when evidence is insufficient, the system should say so explicitly.**
+3. **Rule results, AI objections, and human decisions should remain separate and traceable.**
+4. **If AI repeatedly discovers the same class of issue, the right response is to turn that learning into a rule, a test, or a new verification workflow—not to let the model take over the judge's role at runtime.**
+
+This design does not make AI less important. It puts AI where it is strongest: **free to challenge aggressively, while remaining constrained by evidence and process.**
+
 ## It doesn't stop at flagging an issue
 
 Many contract tools behave like an airport scanner: a keyword triggers an alarm. Agent-T is being built to go one step further and behave like a careful review assistant—**when it finds a concern, it returns to the contract, looks for evidence, and only then decides what needs your attention.**
