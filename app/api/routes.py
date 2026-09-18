@@ -290,9 +290,12 @@ async def upload(
         finally:
             _parse_slots.release()
     if contract_text is not None:
-        outcome = await run_in_threadpool(
-            precheck_service.run_precheck, contract_text, category, None, budget, stance
-        )
+        # 宪法 P0-D1：precheck 时 review_id 尚未生成（create 在预审后），
+        # 账本先记 node 标签，review 关联留待后续补全
+        with llm_call_log.record_node("precheck"):
+            outcome = await run_in_threadpool(
+                precheck_service.run_precheck, contract_text, category, None, budget, stance
+            )
         branch = precheck_service.decide_branch(outcome, category)
         # force（小智娘门禁 P1）：用户在确认弹窗里已拍板（切换或坚持原品类）。
         # 不带 force 重传会重跑预审——LLM 持续不同意时用户永远开不了审（死循环）。
