@@ -113,26 +113,32 @@ def _default_chat_fn() -> Optional[ChatFn]:
     return None
 
 
+def _eligible_direction(item: dict[str, Any]) -> Optional[str]:
+    """受理矩阵谓词（裁定书第五节的唯一权威实现）：
+    返回该条目的异议方向（false_positive/omission）或 None（不送审）。
+    _collect_candidates 与 _eligible_count 都走这里——杜绝双实现漂移
+    （三轮审计 G 项）。"""
+    rc = str(item.get("rule_class") or "heuristic")
+    st = item.get("status")
+    has_hit = bool(item.get("rule_id"))  # 命中具体规则才算「标了」；None=missing 落点
+    if rc == "heuristic" and st == "需关注" and has_hit:
+        return "false_positive"
+    if rc == "existence" and (st == "未找到" or (st == "需关注" and not has_hit)):
+        return "omission"
+    return None  # hardline 与其余组合（含 existence+通过）：不送审
+
+
 def _collect_candidates(
     items: list[dict[str, Any]], max_candidates: int
 ) -> list[dict[str, Any]]:
-    """按三分法分流候选（送审前拦截，裁定书 stage3-class-opinion.md 第五节矩阵）：
-    heuristic+需关注（有命中）→ 误报候选；
-    existence+未找到 / existence+missing_as 缺项档位（需关注且无命中规则）→ 漏报候选；
-    hardline 与其余组合（含 existence+通过：词表已认出无「缺」可漏）不送审。
+    """按三分法分流候选（送审前拦截）：谓词见 _eligible_direction。
     missing 落点以 rule_id is None 识别（checklist 引擎保证该路径不产生 rule_id）。"""
     out: list[dict[str, Any]] = []
     for it in items or []:
         if not isinstance(it, dict) or it.get("category_na"):
             continue
+        direction = _eligible_direction(it)
         rc = str(it.get("rule_class") or "heuristic")
-        st = it.get("status")
-        has_hit = bool(it.get("rule_id"))  # 命中具体规则才算「标了」；None=missing 落点
-        direction: Optional[str] = None
-        if rc == "heuristic" and st == "需关注" and has_hit:
-            direction = "false_positive"
-        elif rc == "existence" and (st == "未找到" or (st == "需关注" and not has_hit)):
-            direction = "omission"
         if not direction:
             continue  # hardline 与其余组合：不送审
         out.append(
@@ -401,19 +407,12 @@ def _validate(
 
 def _eligible_count(items: list[dict[str, Any]]) -> int:
     """符合受理矩阵的候选总数（不截断）——coverage 账目分母。
-    与 _collect_candidates 同一判断逻辑：分流规则改动两处必须同步。"""
-    n = 0
-    for it in items or []:
-        if not isinstance(it, dict) or it.get("category_na"):
-            continue
-        rc = str(it.get("rule_class") or "heuristic")
-        st = it.get("status")
-        has_hit = bool(it.get("rule_id"))
-        if (rc == "heuristic" and st == "需关注" and has_hit) or (
-            rc == "existence" and (st == "未找到" or (st == "需关注" and not has_hit))
-        ):
-            n += 1
-    return n
+    走 _eligible_direction 同一谓词（三轮审计 G：单实现防漂移）。"""
+    return sum(
+        1 for it in items or []
+        if isinstance(it, dict) and not it.get("category_na")
+        and _eligible_direction(it)
+    )
 
 
 def run_objections(
