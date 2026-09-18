@@ -59,7 +59,6 @@ def test_record_node_context(isolated_db):
 
 def test_transport_writes_record(isolated_db, monkeypatch):
     """transport 真实路径（mock httpx）落账：success + usage 记录。"""
-    import httpx as real_httpx
     from app.services import llm_client
 
     class FakeResp:
