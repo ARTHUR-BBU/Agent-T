@@ -119,14 +119,17 @@ def build_evidence(
 
 
 def evidence_id_for(ref: dict[str, Any]) -> str:
-    """由票据内容推导稳定 evidence_id（无需中心化发号）。"""
+    """由票据内容推导稳定 evidence_id（无需中心化发号）。
+
+    Codex P2：parse_source 不入哈希——同一 span 被 rules/quality 两层发现
+    时必须同 ID（跨层引用与去重依赖身份一致）；来源在票据字段保留溯源。
+    """
     blob = "".join([
         str(ref.get("document_version") or ""),
         str(ref.get("quote") or ""),
         str(ref.get("start")),
         str(ref.get("end")),
         str(ref.get("clause_id") or ""),
-        str(ref.get("parse_source") or ""),
     ])
     return "ev-" + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 

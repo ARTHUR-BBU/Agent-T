@@ -188,3 +188,26 @@ def test_adopt_rejects_unaccepted_objection():
                     "rejected_count": 0, "disclaimer": "x"},
     )
     assert client.post(f"/api/review/{rid2}/objections/adopt", json={"index": 0}).status_code == 404
+
+
+def test_evidence_id_reaches_api_client():
+    """宪法证据法批（Codex P1 钉死）：API 响应的 evidence.evidence_id 必须
+    真实到达客户端——schema 缺字段时 pydantic 静默 ignore（教训背书）。"""
+    rid = _make_done_with_objections()
+    # 注入含 evidence_id 的受理异议
+    row = store_module.get(rid)
+    assert row is not None
+    obs = row["objections"]["objections"]
+    obs[0]["evidence"] = {
+        "evidence_id": "ev-test12345678",
+        "document_version": "dv", "quote": "q",
+        "start": 0, "end": 1, "clause_id": None,
+        "verification": "verified", "parse_source": "objection",
+    }
+    store_module.update(rid, objections=row["objections"])
+    r = client.get(f"/api/review/{rid}")
+    assert r.status_code == 200
+    obs_api = r.json()["objections"]["objections"]
+    with_ev = [o for o in obs_api if o.get("evidence")]
+    assert with_ev, "evidence 字段必须出现在 API 响应（静默 ignore 即失守）"
+    assert with_ev[0]["evidence"]["evidence_id"] == "ev-test12345678",         "evidence_id 必须到达客户端（Codex P1：schema 缺字段被静默剥掉）"

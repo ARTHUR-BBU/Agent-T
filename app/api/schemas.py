@@ -14,6 +14,7 @@ CompletionStage = Literal["rules_complete", "ai_partial", "quality_complete", "f
 class EvidenceRefInfo(BaseModel):
     """证据引用（代码名 EvidenceRef）；界面勿渲染英文学名。"""
 
+    evidence_id: str = ""  # 宪法证据法批：稳定 ID（同发现跨层一致，可引用可去重）
     document_version: str = ""
     quote: str = ""
     start: Optional[int] = None
