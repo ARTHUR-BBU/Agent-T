@@ -5,8 +5,9 @@
 跑法：PRECHECK_LIVE=1 python -X utf8 -m pytest tests/test_objection_live_corpus.py
 
 mock 层（test_objection_corpus.py）回答「模型给我这种输出我能不能安全处理」；
-本层回答「真实 DeepSeek/GLM 到底能不能提出正确异议」——换模型时先跑这里，
-才知道「代码没变，律师脑子变了没有」。
+本层是**可用性/红线冒烟测试**（Codex P2 更正）：验证真实 LLM 下异议层
+不降级、零禁语、铁律 3 不破。它**尚不能**衡量「律师水平」——召回/误报
+金标未建立，accepted/rejected 仅采集不断言；金标落地后本层升级为记分卡。
 
 记录指标（审计第十二节清单）：
 - available 率 / 调用量（每份合同 1-2 次，预算账目）
