@@ -45,7 +45,7 @@ ChatFn = Callable[[str, str], str]
 SYSTEM_MARKER = objection_prompts.SYSTEM_MARKER
 
 MAX_OBJECTIONS = 6
-MAX_CANDIDATES = 12  # 单次送审候选上限（coverage.truncated 记账）
+MAX_CANDIDATES = 12  # 单次送审候选上限（coverage.candidate_limited 记账）
 MAX_REASONING_CHARS = 300
 MIN_REASONING_CHARS = 30
 MAX_QUOTE_CHARS = 200
@@ -82,7 +82,7 @@ class ObjectionInfo(BaseModel):
     disclaimer: str = "异议只是候选线索，不改变逐条核查结论；是否成立由人工与规则修订决定。"
     # 覆盖计账（外审批 2）：「最多送 12 个候选」等截断行为不再无痕——
     # eligible=全合同符合受理矩阵的候选总数；sent=实际送审数（≤MAX_CANDIDATES）；
-    # reviewed=模型本轮返回并被逐条处理的条数；truncated=候选因送审上限被截
+    # reviewed=模型本轮返回并被逐条处理的条数；candidate_limited=候选因送审上限被截
     coverage: Optional[dict[str, Any]] = None
 
 
@@ -230,9 +230,14 @@ def _body_block(text: str, clause_index: Optional[dict]) -> tuple[str, dict[str,
             remaining = BODY_CHAR_BUDGET - used
             if remaining > MIN_QUOTE_CHARS * 2:
                 parts.append(block[:remaining] + truncated_note)
-                # span 只记实际发送的前段（-40 为标题行保守估算，宁可偏小——
-                # 把可能未发送的尾部排除是 fail-closed 方向）
-                spans.append((c["start"], c["start"] + max(remaining - 40, 0), str(c["id"])))
+                # span 按精确前缀长度计算（block 前缀=【id + heading截40 + 】\n），
+                # 小智娘 P3：-40 估算在长 heading 下会多含未发送字符，不恒 fail-closed
+                prefix_len = len(f"【{c['id']} {str(c.get('heading') or '')[:40]}】\n")
+                spans.append((
+                    c["start"],
+                    c["start"] + max(remaining - prefix_len, MIN_QUOTE_CHARS),
+                    str(c["id"]),
+                ))
                 used = BODY_CHAR_BUDGET
             elif skipped_note not in parts:
                 parts.append(skipped_note)
@@ -439,7 +444,12 @@ def run_objections(
         # 没有可送审候选（如全 hardline/通过）：合法空结果
         return ObjectionInfo(
             available=True, reason=None, objections=[],
-            coverage={"eligible": eligible, "sent": 0, "reviewed": 0, "truncated": False},
+            coverage={
+                "eligible": eligible, "sent": 0, "reviewed": 0,
+                "candidate_limited": eligible > 0,
+                "body_chars_total": len(text), "body_chars_sent": 0,
+                "clauses_total": 0, "clauses_sent": 0, "body_limited": False,
+            },
         ).model_dump()
 
     block = _candidates_block(candidates, text, clause_index)
@@ -510,9 +520,9 @@ def run_objections(
             continue  # 候选外申报：静默丢弃，不留痕
         it = valid_by_id.get(item_id) or {}
         rc = str(it.get("rule_class") or "heuristic")
-        # 方向×类别匹配（与候选分流同矩阵，三重保险的第三道）
-        expected = "false_positive" if rc == "heuristic" else "omission" if rc == "existence" else None
-        if expected is None or direction != expected:
+        # 方向×类别匹配（第三道）：直接调受理矩阵谓词（小智娘 P3：消灭手写
+        # 第二实现——矩阵改动只动 _eligible_direction 一处）
+        if _eligible_direction(it) != direction:
             rejected += 1
             continue
         # 禁语清洗先行：要件③对清洗后的文本复验长度（先凑禁语到 30 字再洗空的绕过面）
@@ -527,6 +537,15 @@ def run_objections(
             allowed_spans = body_info["spans"] or None
         elif cand and cand.get("scope"):
             allowed_spans = _clauses_to_spans(cand["scope"], clause_index)
+            if allowed_spans is None:
+                # scope 有值但条款坐标缺失/降级：不得静默跳过相关性校验
+                # （肉饼门禁 P2-2：fail-open 开孔）。按规则摘句定位兜底转 span
+                fallback = locate_quote_clauses(
+                    text, str(it.get("quote") or ""), clause_index or {})
+                allowed_spans = _clauses_to_spans({str(i) for i in fallback}, clause_index)
+                logger.warning(
+                    "Objections: candidate %s scope->span mapping failed, fallback=%s",
+                    item_id, bool(allowed_spans))
         elif cand is not None:
             # clause 映射静默降级（scope 为空，门禁 P3-3 fail-open）：按规则摘句
             # 定位兜底转 span，不让相关性校验在被审计的洞上悄悄开孔

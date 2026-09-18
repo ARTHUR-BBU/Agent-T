@@ -39,10 +39,13 @@ def _resolve_key():
     返回 (env变量名, key)——供应商变量名必须原样保留（智谱 Key 塞进
     DEEPSEEK_API_KEY 会 401，首轮实测踩过）。"""
     order = ["DEEPSEEK_API_KEY", "ZHIPU_API_KEY", "GLM_API_KEY"]
-    for name in order:
-        v = os.getenv(name)
-        if v:
-            return name, v
+    live_opt_in = os.getenv("PRECHECK_LIVE", "").strip().lower() not in {"", "0", "false", "no"}
+    # 环境变量路径同样要求 opt-in（小智娘 P3-4：防开发者本地带 Key 跑标准命令误烧）
+    if live_opt_in:
+        for name in order:
+            v = os.getenv(name)
+            if v:
+                return name, v
     live_opt_in = os.getenv("PRECHECK_LIVE", "").strip().lower() not in {"", "0", "false", "no"}
     if live_opt_in:
         envf = ROOT / ".env"

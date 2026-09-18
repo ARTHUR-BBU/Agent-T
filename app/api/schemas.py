@@ -42,6 +42,8 @@ class ChecklistItemResult(BaseModel):
     # （hardline=永不受理异议 / existence=只收漏报 / heuristic=可收误报；
     # 未标默认 heuristic）。旧记录为 None。
     rule_id: Optional[str] = None
+    # 三轮审计 G：校验链拦截非法显式值后，防御路径下原值透传仅供诊断；
+    # 消费端（异议层 _eligible_direction）对非法类别永不送审
     rule_class: Optional[Literal["hardline", "existence", "heuristic"]] = None
     evidence: Optional[EvidenceRefInfo] = None
 
@@ -258,7 +260,7 @@ class ObjectionInfo(BaseModel):
     objections: list[Objection] = Field(default_factory=list)
     rejected_count: int = 0
     disclaimer: str = "异议只是候选线索，不改变逐条核查结论；是否成立由人工与规则修订决定。"
-    coverage: Optional[dict[str, Any]] = None  # 外审批 2：eligible/sent/reviewed/truncated 计账
+    coverage: Optional[dict[str, Any]] = None  # 外审批 2+三轮审计 D：candidate 维（eligible/sent/reviewed/candidate_limited）+ body 维（body_*/clauses_*/body_limited）
 
 
 class ReviewSummary(BaseModel):

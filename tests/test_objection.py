@@ -570,7 +570,7 @@ def test_fp_scope_primary_not_same_word_other_clauses(monkeypatch):
         "id": "penalty", "name": "违约金", "status": "需关注",
         "note": "违约金过高", "quote": "违约金为合同总额的百分之三十",
         "hits": ["违约金"], "rule_id": "penalty#r0", "rule_class": "heuristic",
-        # 同词「违约金」出现在 c02 和 c06，但真正触发风险的是 c06
+        # 同词「违约金」出现在 c01 和 c02，但真正触发风险的是 c02（primary）
         "clause_ids": ["c01", "c02"], "primary_clause_id": "c02",
     }]
     long_contract = (
@@ -617,16 +617,20 @@ def test_body_limited_reported_in_coverage(monkeypatch):
 
 
 def test_truncated_clause_tail_cannot_be_evidence(monkeypatch):
-    """三轮审计回归 6：单条款 20k 只发送前 16k——引用未发送的后 4k
-    不得 accepted（span 级绑定，审计 E 项端到端）。"""
+    """三轮审计回归 6（E 项端到端）：**单个** 20k 条款只发送前 16k——引用
+    未发送的后 4k 不得 accepted。手工构造单条款索引（自动索引会切碎文本，
+    测不到截断场景；小智娘门禁 P2-1 实测修正）。"""
     _enable(monkeypatch)
-    head = "第一条 " + "常规约定内容。" * 2900  # ≈20.3k > 16k 预算，触发截断
-    tail_secret = "机密尾部条款：本条末段隐藏的特别约定适用冰岛法律。"  # 在 16k 之后
+    head = "第一条 " + "常规约定内容。" * 2900  # ≈20.3k > 16k 预算
+    tail_secret = "机密尾部条款：本条末段隐藏的特别约定适用冰岛法律。"
     huge_clause = head + tail_secret
     items = [{
         "id": "governing_law", "name": "适用法律", "status": "未找到", "note": "",
         "quote": "", "hits": [], "rule_id": None, "rule_class": "existence",
     }]
+    single_clause_index = {"clauses": [
+        {"id": "c01", "heading": "第一条", "start": 0, "end": len(huge_clause)}
+    ]}
     out = objection_service.run_objections(
         text=huge_clause, items=items,
         chat_fn=lambda s, u: _payload([
@@ -635,8 +639,9 @@ def test_truncated_clause_tail_cannot_be_evidence(monkeypatch):
                         legal_reasoning="合同末段已写明适用冰岛法律，属适用法律等价写法，"
                                         "词表未覆盖该表述，构成漏报异议。"),
         ]),
-        clause_index=build_clause_index(huge_clause),
+        clause_index=single_clause_index,
     )
     o = out["objections"][0]
     assert o["accepted"] is False, "未发送的尾部不得成为 accepted evidence（审计回归 6）"
     assert "条款范围不符" in (o["reject_reason"] or "")
+    assert out["coverage"]["body_limited"] is True and out["coverage"]["clauses_sent"] == 1
