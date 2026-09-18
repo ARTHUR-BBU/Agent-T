@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 
 from app.prompts import objection as objection_prompts
 from app.services import blind_spot, llm_ask, scorecard
-from app.services.clause_index import locate_quote_clauses
+from app.services.clause_index import _find_compressed, locate_quote_clauses
 
 logger = logging.getLogger(__name__)
 
@@ -337,16 +337,28 @@ def _quote_span_hits(
 ) -> list[str]:
     """返回 quote 在 text 中全部**落在发送区间内**的出现位置所属 clause_id。
     三轮审计 E：证据必须出自模型实际看过的字符区间（截断条款未发送尾部
-    不算）；clause_id 由包含位置的 span 派生（不信任模型编号）。"""
-    hits: list[str] = []
+    不算）；clause_id 由包含位置的 span 派生（不信任模型编号）。
+    匹配容差与 quote_supported/locate 一致（Codex P2）：精确匹配之外再用
+    clause_index._find_compressed 空白压缩域查找——PDF/Word 换行归一的合法
+    引用不得因精确 find 不中被误拒。压缩命中按 quote 长度近似跨度判界
+    （原文含空白时跨度略长，判界偏紧=fail-closed 方向）。"""
+    starts: list[int] = []
     pos = text.find(quote)
-    qlen = len(quote)
     while pos != -1:
+        starts.append(pos)
+        pos = text.find(quote, pos + 1)
+    compact_q = re.sub(r"\s+", "", quote)
+    if compact_q and len(compact_q) >= MIN_QUOTE_CHARS:
+        for p in _find_compressed(text, compact_q):
+            if p not in starts:
+                starts.append(p)
+    hits: list[str] = []
+    qlen = len(quote)
+    for start in starts:
         for (s, e, cid) in spans:
-            if s <= pos and pos + qlen <= e:
+            if s <= start and start + qlen <= e:
                 hits.append(cid)
                 break
-        pos = text.find(quote, pos + 1)
     return hits
 
 
