@@ -43,6 +43,7 @@ def chat_completion(
         node=llm_call_log.current_node() or "unknown",
         provider=provider,
         model=model,
+        prompt_version=llm_call_log.current_prompt_version(),
         review_id=llm_call_log.current_review_id(),
         chars_sent=len(system) + len(user),
     )
@@ -78,6 +79,14 @@ def chat_completion(
         _rec.latency_ms = int((time.monotonic() - _t0) * 1000)
         _rec.outcome = "provider_error"
         _rec.error_detail = str(exc)[:200]
+        llm_call_log.emit(_rec)
+        raise exc
+    except httpx.RequestError as exc:
+        # Codex P2：ConnectError/DNS/TLS 等网络层失败同样落账
+        # （此前只捕 Timeout/HTTPStatusError，网络失败成为账目盲区）
+        _rec.latency_ms = int((time.monotonic() - _t0) * 1000)
+        _rec.outcome = "provider_error"
+        _rec.error_detail = f"request_error: {type(exc).__name__}"
         llm_call_log.emit(_rec)
         raise exc
     _rec.latency_ms = int((time.monotonic() - _t0) * 1000)

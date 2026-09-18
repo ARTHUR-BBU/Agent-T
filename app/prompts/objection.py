@@ -62,7 +62,7 @@ def build_system_prompt(stance: str = "neutral") -> str:
 
 
 
-PROMPT_VERSION = source_version(build_system_prompt)
+PROMPT_VERSION = source_version(build_system_prompt, DIRECTION_LINES)
 
 def build_user_prompt(
     candidates_block: str,

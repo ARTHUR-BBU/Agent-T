@@ -14,15 +14,17 @@ import inspect
 from typing import Callable
 
 
-def source_version(fn: Callable[..., str]) -> str:
-    """以函数源码 sha256 前 12 位作为 prompt 版本标识。
+def source_version(fn: Callable[..., str], *constants: str) -> str:
+    """以 prompt 构建函数源码 + 渲染用常量的 sha256 前 12 位为版本标识。
 
-    注意：哈希覆盖函数源码及其闭包引用的模块级常量不会自动纳入——
-    prompt 模板若提取为模块级常量，应把常量也传入（source_version(fn, CONST)）。
+    Codex P2：只哈希函数源码时，模块级常量（如 DIRECTION_LINES/IRON_RULES）
+    的变化不会改变版本——渲染内容变了版本必须变。凡被 f-string 渲染进
+    prompt 的模块级常量都应作为附加参数传入。
     """
     try:
         src = inspect.getsource(fn)
+        blob = "\x1f".join([src, *constants])
     except (OSError, TypeError):
         return "v0-unknown"
-    digest = hashlib.sha256(src.encode("utf-8")).hexdigest()[:12]
+    digest = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
     return f"sha-{digest}"

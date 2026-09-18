@@ -13,7 +13,10 @@ from typing import Any, Callable, TypedDict, cast
 
 from langgraph.graph import END, StateGraph
 
+from app.prompts import objection as objection_prompts
+from app.prompts import quality as quality_prompts
 from app.services.llm_call_log import record_node
+from app.services import scorecard_prompts
 from app.services.reason_codes import Reason
 from app.services import quality as quality_service
 from app.services import objection as objection_service
@@ -173,7 +176,8 @@ def node_model_review(state: ReviewState) -> ReviewState:
             "blind_enabled": False,
         })
     try:
-        with record_node("model_review", state.get("review_id")):
+        with record_node("model_review", state.get("review_id"),
+                             prompt_version=scorecard_prompts.PROMPT_VERSION):
             out = run_model_review(
                 text=state.get("text") or "",
                 items=state.get("items") or [],
@@ -238,7 +242,8 @@ def node_quality(state: ReviewState) -> ReviewState:
     if quality_service.is_quality_enabled():
         _emit_stage(state, "analyzing")
     try:
-        with record_node("quality", state.get("review_id")):
+        with record_node("quality", state.get("review_id"),
+                             prompt_version=quality_prompts.PROMPT_VERSION):
             out = quality_service.run_quality(
                 text=state.get("text") or "",
                 items=state.get("items") or [],
@@ -305,7 +310,8 @@ def node_objection(state: ReviewState) -> ReviewState:
         # 解析已失败：异议层 error 短路（与 quality 同语义，不掩盖上游错误）
         return {"objections": objection_service.outcome_unavailable(Reason.ERROR.value)}
     try:
-        with record_node("objection", state.get("review_id")):
+        with record_node("objection", state.get("review_id"),
+                             prompt_version=objection_prompts.PROMPT_VERSION):
             out = objection_service.run_objections(
                 text=state.get("text") or "",
                 items=state.get("items") or [],

@@ -29,6 +29,7 @@ import httpx  # noqa: F401 保留：测试与异常类型引用
 from app.prompts.guards import with_untrusted_guard
 from app.services import stance as stance_service
 from app.services import llm_client
+from app.prompts.versioning import source_version
 
 logger = logging.getLogger(__name__)
 
@@ -362,6 +363,9 @@ def _build_system_prompt(
 「还想问」给 1-2 个用户可继续追问的短问题。
 只输出 JSON，不要 markdown 围栏。"""
     return with_untrusted_guard(prompt)
+
+
+PROMPT_VERSION = source_version(_build_system_prompt)
 
 
 def _build_user_prompt(

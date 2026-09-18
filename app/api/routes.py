@@ -164,6 +164,7 @@ def _start_review(
                     on_stage=on_stage, on_partial=on_partial,
                     parsed_text=reused_text,
                     stance=stance,
+                    review_id=review_id,
                 )
                 if result.get("error"):
                     store.update(
@@ -333,6 +334,7 @@ async def upload(
                 "summary": r.summary,
                 "suspect": bool(branch["suspect"]),
                 "stance_notice": stance_notice,
+                "coverage": outcome.coverage,  # 宪法 P0-D2：正常 proceed 路径同账
             }
 
     # 占并发槽位：满则 429（无界线程池被脚本刷 500 次上传 = 500 个 LLM 调用）
@@ -459,7 +461,9 @@ def ask(body: AskRequest):
         raise HTTPException(status_code=404, detail="清单项不存在")
 
     # 宪法 P0-D1/D5：Ask 也进 LLM 调用账本（不能成为观测盲区）
-    with llm_call_log.record_node("ask", body.review_id):
+    with llm_call_log.record_node(
+        "ask", body.review_id,
+        prompt_version=llm_ask.PROMPT_VERSION):
             result = llm_ask.ask_about_item(
             question=body.question,
             item=item,

@@ -36,24 +36,37 @@ _current_node: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
 _current_review: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
     "llm_call_review", default=None
 )
+_current_prompt_version: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "llm_prompt_version", default=None
+)
 
 
 @contextlib.contextmanager
-def record_node(node: str, review_id: Optional[str] = None) -> Generator[None, None, None]:
-    """上下文管理器：包裹一段调用，标记 node 与 review_id。
+def record_node(
+    node: str,
+    review_id: Optional[str] = None,
+    prompt_version: Optional[str] = None,
+) -> Generator[None, None, None]:
+    """上下文管理器：包裹一段调用，标记 node/review_id/prompt_version。
 
     用法（调用点）：
-        with record_node("objection", review_id=rid):
+        with record_node("objection", review_id=rid,
+                         prompt_version=objection_prompts.PROMPT_VERSION):
             out = run_objections(...)
     嵌套以内层为准（contextvar 语义天然支持）。
     """
-    t1 = _current_node.set(node)
-    t2 = _current_review.set(review_id)
+    tokens = [
+        _current_node.set(node),
+        _current_review.set(review_id),
+        _current_prompt_version.set(prompt_version),
+    ]
     try:
         yield
     finally:
-        _current_node.reset(t1)
-        _current_review.reset(t2)
+        for var, tok in zip(
+            (_current_node, _current_review, _current_prompt_version), tokens
+        ):
+            var.reset(tok)
 
 
 def current_node() -> Optional[str]:
@@ -62,6 +75,10 @@ def current_node() -> Optional[str]:
 
 def current_review_id() -> Optional[str]:
     return _current_review.get()
+
+
+def current_prompt_version() -> Optional[str]:
+    return _current_prompt_version.get()
 
 
 @dataclass

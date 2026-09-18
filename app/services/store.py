@@ -87,13 +87,16 @@ class ReviewStore:
     def _purge_expired(self, conn: sqlite3.Connection) -> None:
         if self._ttl <= 0:
             return
-        conn.execute("DELETE FROM reviews WHERE created_at < ?", (time.time() - self._ttl,))
-        # 宪法 P0-D1：LLM 调用账本随审查数据同 TTL 域清理（账本故障不影响主链）
+        cutoff = time.time() - self._ttl
+        conn.execute("DELETE FROM reviews WHERE created_at < ?", (cutoff,))
+        # 宪法 P0-D1：账本随审查数据同 TTL 同事务清理（Codex P2：不在另一
+        # 连接上跑独立 DELETE——与 reviews 的清理保持原子性）
         try:
-            from app.services.llm_call_log import purge_expired
-            purge_expired(self._ttl)
-        except Exception:  # noqa: BLE001
-            pass
+            conn.execute(
+                "DELETE FROM llm_calls WHERE created_at < ?", (cutoff,)
+            )
+        except sqlite3.OperationalError:
+            pass  # 表尚未建（从无 LLM 调用）属正常
 
     def create(self, **kwargs: Any) -> str:
         rid = uuid.uuid4().hex[:12]
