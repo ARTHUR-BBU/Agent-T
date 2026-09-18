@@ -12,14 +12,19 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel
 
 VerificationStatus = Literal["verified", "unverified", "ambiguous", "missing"]
-ParseSource = Literal["rules", "blind", "quality", "ask", "fact"]
+ParseSource = Literal["rules", "blind", "quality", "ask", "fact", "objection"]
 
 _QUOTE_TRIM = "「」\"'“”『』…."
 
 
 class EvidenceRef(BaseModel):
-    """证据票据：同一发现可追到文档版本 + 坐标。"""
+    """证据票据：同一发现可追到文档版本 + 坐标。
 
+    evidence_id（宪法 P1/证据法批）：稳定标识 = document_version + quote +
+    span + clause_id + parse_source 的哈希——同一发现跨层重现时 ID 一致，
+    后续层引用而非重新搜索（Single Evidence Fact，第十六条）。"""
+
+    evidence_id: str = ""
     document_version: str = ""
     quote: str = ""
     start: Optional[int] = None
@@ -99,7 +104,7 @@ def build_evidence(
     if not cid and isinstance(s, int) and clause_index:
         cid = _clause_at(clause_index, s)
 
-    return EvidenceRef(
+    ref = EvidenceRef(
         document_version=document_version or document_version_for(text or ""),
         quote=(quote or "")[:300],
         start=s,
@@ -107,7 +112,23 @@ def build_evidence(
         clause_id=cid or None,
         verification=ver,
         parse_source=parse_source,
-    ).to_dict()
+    )
+    # 稳定 ID：同输入同 ID（可引用、可去重、可追溯跨层是否同一发现）
+    ref.evidence_id = evidence_id_for(ref.model_dump())
+    return ref.to_dict()
+
+
+def evidence_id_for(ref: dict[str, Any]) -> str:
+    """由票据内容推导稳定 evidence_id（无需中心化发号）。"""
+    blob = "".join([
+        str(ref.get("document_version") or ""),
+        str(ref.get("quote") or ""),
+        str(ref.get("start")),
+        str(ref.get("end")),
+        str(ref.get("clause_id") or ""),
+        str(ref.get("parse_source") or ""),
+    ])
+    return "ev-" + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 
 def attach_evidence_to_item(

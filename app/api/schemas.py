@@ -252,6 +252,9 @@ class Objection(BaseModel):
     reject_reason: Optional[str] = None
     clause_id: Optional[str] = None
     clause_ambiguous: bool = False
+    # 宪法证据法批：受理异议的服务端票据（span 命中位置+版本+parse_source=objection）
+    # ——此前 objections 是六层里唯一裸字符串引用的一层（审计 B1-4）
+    evidence: Optional[EvidenceRefInfo] = None
     adopted: bool = False
     needs_confirm: bool = True
 

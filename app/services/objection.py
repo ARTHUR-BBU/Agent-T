@@ -38,6 +38,7 @@ from app.services.reason_codes import Reason
 from app.prompts import objection as objection_prompts
 from app.services import blind_spot, llm_ask, scorecard
 from app.services.clause_index import _find_compressed, locate_quote_clauses
+from app.services.evidence import build_evidence
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,7 @@ class Objection(BaseModel):
     reject_reason: Optional[str] = None
     clause_id: Optional[str] = None  # 服务端按 quote 定位（不信任模型编号）
     clause_ambiguous: bool = False  # 摘句跨多条款时 True
+    evidence: Optional[dict[str, Any]] = None  # 宪法证据法批：服务端票据（含 evidence_id）
     adopted: bool = False  # 人工「采纳为规则改进提案」动作（只改本键）
     needs_confirm: bool = True  # 代码强制；模型输出 schema 里没有此字段
 
@@ -441,6 +443,7 @@ def run_objections(
     clause_index: Optional[dict[str, Any]] = None,
     chat_fn: Optional[ChatFn] = None,
     budget: Optional[Any] = None,
+    document_version: str = "",
 ) -> dict[str, Any]:
     """异议层主入口。失败绝不 raise，失败矩阵见 ObjectionInfo.reason。"""
     if not is_objections_enabled():
@@ -577,6 +580,16 @@ def run_objections(
             accepted_n += 1
         else:
             rejected += 1
+        # 宪法证据法批：受理异议生成服务端票据（含稳定 evidence_id）——
+        # 六层里此前唯一裸字符串引用的一层补齐（审计 B1-4）
+        obj_evidence = None
+        if accepted:
+            obj_evidence = build_evidence(
+                text=text, quote=str(r.get("quote") or ""),
+                parse_source="objection",
+                document_version=document_version or "",
+                clause_id=clause_id,
+            )
         proposal = llm_ask._scrub_banned_echo(scorecard.scrub_forbidden(
             str(r.get("proposal") or ""))).strip()
         # rule_id 服务端唯一决定（外审批 2）：模型可能把提案挂到错误规则上，
@@ -597,6 +610,7 @@ def run_objections(
                 reject_reason=why,
                 clause_id=clause_id,
                 clause_ambiguous=bool(ambiguous),
+                evidence=obj_evidence,
                 needs_confirm=True,  # 代码强制
             )
         )
