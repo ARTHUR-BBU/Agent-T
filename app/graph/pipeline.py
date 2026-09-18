@@ -13,6 +13,7 @@ from typing import Any, Callable, TypedDict, cast
 
 from langgraph.graph import END, StateGraph
 
+from app.services.llm_call_log import record_node
 from app.services.reason_codes import Reason
 from app.services import quality as quality_service
 from app.services import objection as objection_service
@@ -27,6 +28,7 @@ from app.services.model_review import run_model_review
 
 
 class ReviewState(TypedDict, total=False):
+    review_id: str  # 宪法 P0-D1：LLM 调用账本的关联键
     filename: str
     raw_bytes: bytes
     category: str
@@ -171,14 +173,15 @@ def node_model_review(state: ReviewState) -> ReviewState:
             "blind_enabled": False,
         })
     try:
-        out = run_model_review(
-            text=state.get("text") or "",
-            items=state.get("items") or [],
-            policies=state.get("policies") or [],
-            category=state.get("category") or "procurement",
-            clause_index=state.get("clause_index"),
-            budget=state.get("budget"),
-        )
+        with record_node("model_review", state.get("review_id")):
+            out = run_model_review(
+                text=state.get("text") or "",
+                items=state.get("items") or [],
+                policies=state.get("policies") or [],
+                category=state.get("category") or "procurement",
+                clause_index=state.get("clause_index"),
+                budget=state.get("budget"),
+            )
     except Exception:  # noqa: BLE001 — F03：模型坏输出不得抹掉已完成规则结果
         logging.getLogger(__name__).exception("Model review failed; keeping rule items")
         return {
@@ -235,15 +238,16 @@ def node_quality(state: ReviewState) -> ReviewState:
     if quality_service.is_quality_enabled():
         _emit_stage(state, "analyzing")
     try:
-        out = quality_service.run_quality(
-            text=state.get("text") or "",
-            items=state.get("items") or [],
-            policies=state.get("policies") or [],
-            category=state.get("category") or "procurement",
-            stance=state.get("stance") or "neutral",
-            clause_index=state.get("clause_index"),
-            budget=state.get("budget"),
-        )
+        with record_node("quality", state.get("review_id")):
+            out = quality_service.run_quality(
+                text=state.get("text") or "",
+                items=state.get("items") or [],
+                policies=state.get("policies") or [],
+                category=state.get("category") or "procurement",
+                stance=state.get("stance") or "neutral",
+                clause_index=state.get("clause_index"),
+                budget=state.get("budget"),
+            )
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("Quality pass failed")
         out = quality_service.outcome_unavailable(Reason.ERROR.value)
@@ -301,13 +305,14 @@ def node_objection(state: ReviewState) -> ReviewState:
         # 解析已失败：异议层 error 短路（与 quality 同语义，不掩盖上游错误）
         return {"objections": objection_service.outcome_unavailable(Reason.ERROR.value)}
     try:
-        out = objection_service.run_objections(
-            text=state.get("text") or "",
-            items=state.get("items") or [],
-            stance=state.get("stance") or "neutral",
-            clause_index=state.get("clause_index"),
-            budget=state.get("budget"),
-        )
+        with record_node("objection", state.get("review_id")):
+            out = objection_service.run_objections(
+                text=state.get("text") or "",
+                items=state.get("items") or [],
+                stance=state.get("stance") or "neutral",
+                clause_index=state.get("clause_index"),
+                budget=state.get("budget"),
+            )
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("Objection pass failed")
         out = objection_service.outcome_unavailable(Reason.ERROR.value)
@@ -356,10 +361,12 @@ def run_review(
     on_partial: Callable[[str, dict], None] | None = None,
     parsed_text: str | None = None,
     stance: str = "neutral",
+    review_id: str | None = None,
 ) -> dict[str, Any]:
     graph = get_graph()
     final = cast(ReviewState, graph.invoke(
-        {
+        cast(ReviewState, {
+            "review_id": review_id,
             "filename": filename,
             "raw_bytes": raw_bytes,
             "category": category or "procurement",
@@ -368,7 +375,7 @@ def run_review(
             "on_stage": on_stage,
             "on_partial": on_partial,
             "parsed_text": parsed_text or "",
-        }
+        })
     ))
     return {
         "text": final.get("text") or "",
