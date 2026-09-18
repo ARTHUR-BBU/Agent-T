@@ -339,28 +339,67 @@ def test_body_block_only_for_omission(monkeypatch):
 
 
 def test_max_objections_cap(monkeypatch):
-    """外审批 2：MAX=6 只约束受理数——拒收留痕垃圾不得耗尽有效异议名额。
-    3 条伪造 quote 垃圾在前 + 6 条有效在后 → 6 条有效全部入库。"""
+    """三轮审计 A：候选身份去重先于配额——同候选 6 个不同 quote 不得独占
+    名额（每 (item_id, direction) 最多一条受理）。"""
     _enable(monkeypatch)
-    good_quotes = [
+    goods = [_ok_payload(quote=q) for q in [
         "乙方不得转租，违反的出租方可解除合同。",
         "第三条 转租：乙方不得转租",
         "违反的出租方可解除合同",
         "转租：乙方不得转租，违反的出租方可解除合同",
         "乙方不得转租，违反的",
         "出租方可解除合同。",
-    ]
-    bombs = [_ok_payload(quote=f"伪造文本第{i}号，绝不在合同原文之中。", legal_reasoning="垃圾条目" * 10)
-             for i in range(3)]
-    goods = [_ok_payload(quote=q) for q in good_quotes]
+    ]]
     out = objection_service.run_objections(
-        text=_CONTRACT, items=_ITEMS, chat_fn=lambda s, u: _payload(bombs + goods),
+        text=_CONTRACT, items=_ITEMS, chat_fn=lambda s, u: _payload(goods),
         clause_index=build_clause_index(_CONTRACT),
     )
     accepted = [o for o in out["objections"] if o["accepted"]]
-    assert len(accepted) == 6, "垃圾占位后有效异议必须仍足额入库"
-    assert len(out["objections"]) == 9 and out["rejected_count"] == 3
-    assert out["coverage"] and out["coverage"]["reviewed"] == 9
+    assert len(accepted) == 1, "同一候选换 6 个 quote 也不得独占名额（审计回归 2）"
+    assert out["coverage"]["reviewed"] == 6
+
+
+def test_duplicate_then_valid_not_starved(monkeypatch):
+    """三轮审计 P1 核心（审计回归 1）：6 条完全相同的合法异议 + 1 条不同的
+    有效异议——不同异议不得被饿死（旧代码 accepted_n 先于去重自增）。"""
+    _enable(monkeypatch)
+    items = _ITEMS + [{
+        "id": "governing_law2", "name": "适用法律二", "status": "未找到",
+        "note": "", "quote": "", "hits": [], "rule_id": None, "rule_class": "existence",
+    }]
+    same = _ok_payload()
+    diff = _ok_payload(item_id="governing_law2", rule_id=None, direction="omission",
+                       quote="因本合同引起的争议，双方协商解决；协商不成的，适用中华人民共和国法律",
+                       legal_reasoning="第五条已明确约定适用中华人民共和国法律，属适用法律的"
+                                       "等价写法，规则词表未覆盖该表述，构成漏报。")
+    out = objection_service.run_objections(
+        text=_CONTRACT, items=items,
+        chat_fn=lambda s, u: _payload([same] * 6 + [diff]),
+        clause_index=build_clause_index(_CONTRACT),
+    )
+    accepted = [o for o in out["objections"] if o["accepted"]]
+    assert len(accepted) == 2, "重复候选只受理 1 条，不同候选仍能入库"
+    assert out["coverage"]["reviewed"] == 7, "reviewed 精确：配额满后不得虚增（审计回归 3）"
+
+
+def test_quota_full_no_reviewed_inflation(monkeypatch):
+    """三轮审计 P2（审计回归 3）：配额满后剩余条目不计 reviewed。"""
+    _enable(monkeypatch)
+    items = [{
+        "id": f"e{i}", "name": "存在性", "status": "未找到", "note": "", "quote": "",
+        "hits": [], "rule_id": None, "rule_class": "existence",
+    } for i in range(9)]
+    bombs = [_ok_payload(item_id=f"e{i}", rule_id=None, direction="omission",
+                         quote="因本合同引起的争议，双方协商解决；协商不成的，适用中华人民共和国法律",
+                         legal_reasoning="第五条明确约定适用中华人民共和国法律，属适用法律条款的等价写法，规则词表未覆盖该表述，构成漏报。")
+             for i in range(9)]
+    out = objection_service.run_objections(
+        text=_CONTRACT, items=items, chat_fn=lambda s, u: _payload(bombs),
+        clause_index=build_clause_index(_CONTRACT),
+    )
+    accepted = [o for o in out["objections"] if o["accepted"]]
+    assert len(accepted) == 6, "MAX=6 受理上限"
+    assert out["coverage"]["reviewed"] == 6, "配额满后 break 前不得多算 reviewed"
 
 
 def test_forbidden_phrase_triggers_retry_then_clean_or_fail(monkeypatch):
@@ -436,33 +475,35 @@ def test_injected_instruction_in_body_cannot_produce_conclusion(monkeypatch):
 
 
 def test_body_block_truncation_and_guards(monkeypatch):
-    """_body_block 直测（小智娘门禁 P3-6）：截断/超预算跳过/空 sent 不送。"""
+    """_body_block 直测（三轮审计 D/E 语义）：span 精确记录 + 截断 + 账目。"""
     from app.services.objection import BODY_CHAR_BUDGET, _body_block
 
-    # ① 无索引兜底：整篇截断到预算
+    # ① 无索引兜底：整篇截断到预算，span 语义（chars_sent 记账）
     big = "字" * (BODY_CHAR_BUDGET + 1000)
-    block, sent = _body_block(big, {})
-    assert len(block) < len(big) and "仅呈现前段" in block and sent == set()
-    # ② 全部条款超预算：截断装入并保留 id（Codex P2——不再整块饿死，
-    # omission 检测与相关性绑定都不静默失效）
+    block, info = _body_block(big, {})
+    assert len(block) < len(big) and "仅呈现前段" in block
+    assert info["body_limited"] is True and info["chars_sent"] == BODY_CHAR_BUDGET
+    # ② 全部条款超预算：截断装入并保留 span（Codex P2——不整块饿死），
+    #    span 只记实际发送前段（三轮审计 E）
     clauses = {"clauses": [{"id": "c01", "heading": "第一条", "start": 0,
                             "end": BODY_CHAR_BUDGET + 100}]}
-    block, sent = _body_block("字" * (BODY_CHAR_BUDGET + 100), clauses)
-    assert sent == {"c01"} and "仅呈现前段" in block
-    # ③ 混合：超长条款截断装入并保留 id（Codex P2——不整条丢弃，保 omission 召回）
+    block, info = _body_block("字" * (BODY_CHAR_BUDGET + 100), clauses)
+    assert info["spans"] and info["spans"][0][0] == 0
+    assert info["spans"][0][1] < BODY_CHAR_BUDGET + 100, "截断条款 span 只记实际发送前段"
+    # ③ 混合：超长条款截断保留 span，预算耗尽后 c02 不得进 span
     text = "长" * (BODY_CHAR_BUDGET + 100) + "甲乙双方约定如下：货款十万元。" * 2
     clauses = {"clauses": [
         {"id": "c01", "heading": "第一条", "start": 0, "end": BODY_CHAR_BUDGET + 100},
         {"id": "c02", "heading": "第二条", "start": BODY_CHAR_BUDGET + 100, "end": len(text)},
     ]}
-    block, sent = _body_block(text, clauses)
-    assert sent == {"c01"} and "c01" in block and "仅呈现前段" in block
-    # ④ end 非法的条款被过滤（门禁 P3-1：不再 KeyError/吞全文进条款块）；
-    # 全部条款非法时回落无索引兜底（短合同整篇，相关性绑定退化为存在性——
-    # 与 docstring 声明的降级语义一致）
+    block, info = _body_block(text, clauses)
+    assert [sp[2] for sp in info["spans"]] == ["c01"], "预算耗尽后 c02 不得进 span"
+    assert info["clauses_total"] == 2 and info["clauses_sent"] == 1
+    assert info["body_limited"] is True
+    # ④ end 非法的条款被过滤（门禁 P3-1：不再 KeyError/吞全文进条款块）
     clauses = {"clauses": [{"id": "c01", "heading": "第一条", "start": 0, "end": None}]}
-    block, sent = _body_block("短合同正文。", clauses)
-    assert sent == set() and "短合同正文。" in block
+    block, info = _body_block("短合同正文。", clauses)
+    assert info["spans"] == [] and "短合同正文。" in block
 
 
 def test_stance_neutral_literal_no_longer_passes_specific_stance(monkeypatch):
@@ -485,7 +526,7 @@ def test_coverage_accounting(monkeypatch):
     cov = out["coverage"]
     assert cov is not None
     assert cov["eligible"] == 2, "sublet(误报)+governing_law(漏报) 两个候选"
-    assert cov["sent"] == 2 and cov["truncated"] is False
+    assert cov["sent"] == 2 and cov["candidate_limited"] is False
     assert cov["reviewed"] == 0
 
 
@@ -515,7 +556,92 @@ def test_coverage_truncation_and_drift_guard(monkeypatch):
         text=_CONTRACT, items=items, chat_fn=lambda s, u: _payload([]),
     )
     cov = out["coverage"]
-    assert cov["eligible"] == 15 and cov["sent"] == 12 and cov["truncated"] is True
+    assert cov["eligible"] == 15 and cov["sent"] == 12 and cov["candidate_limited"] is True
     # 防漂移：全量上限下两实现结果必须一致
     assert objection_service._eligible_count(items) == len(
         objection_service._collect_candidates(items, max_candidates=10**9))
+
+
+def test_fp_scope_primary_not_same_word_other_clauses(monkeypatch):
+    """三轮审计回归 4：primary=c03（真实现场），同词 hit 还出现在 c02——
+    引用 c02 的另一处约定不得通过误报证据校验（scope 只认 primary）。"""
+    _enable(monkeypatch)
+    items = [{
+        "id": "penalty", "name": "违约金", "status": "需关注",
+        "note": "违约金过高", "quote": "违约金为合同总额的百分之三十",
+        "hits": ["违约金"], "rule_id": "penalty#r0", "rule_class": "heuristic",
+        # 同词「违约金」出现在 c01 和 c02，但真正触发风险的是 c02（primary）
+        "clause_ids": ["c01", "c02"], "primary_clause_id": "c02",
+    }]
+    long_contract = (
+        "第二条 违约金担保：本合同项下违约金条款适用民法典相关规定。\n"
+        "第六条 违约金为合同总额的百分之三十，出租方有权直接没收。\n"
+        "本合同一式两份，自双方签字盖章之日起生效。\n"
+    )
+    ci = build_clause_index(long_contract)
+    out = objection_service.run_objections(
+        text=long_contract, items=items,
+        chat_fn=lambda s, u: _payload([
+            # 引用 c02 的句子（真实存在但不是真实现场）
+            _ok_payload(item_id="penalty", rule_id="penalty#r0",
+                        quote="违约金条款适用民法典相关规定",
+                        legal_reasoning="违约金约定属于正常权利配置，需结合实际损失判断，"
+                                        "本条不必然构成真实风险，疑似词表误报。"),
+        ]),
+        clause_index=ci,
+    )
+    o = out["objections"][0]
+    assert o["accepted"] is False, "同词其他条款不得替真实现场作证（审计回归 4）"
+    assert "条款范围不符" in (o["reject_reason"] or "")
+
+
+def test_body_limited_reported_in_coverage(monkeypatch):
+    """三轮审计回归 5：长合同正文截断必须记入 coverage.body_limited——
+    「候选没截断」≠「全文读完」。"""
+    _enable(monkeypatch)
+    filler = "第X条 常规条款内容，双方按约履行。" * 1200  # >16k
+    tail = "第二十五条 因本合同引起的争议，适用中华人民共和国法律并提交有管辖权的法院。"
+    long_contract = filler + tail
+    items = [{
+        "id": "governing_law", "name": "适用法律", "status": "未找到", "note": "",
+        "quote": "", "hits": [], "rule_id": None, "rule_class": "existence",
+    }]
+    out = objection_service.run_objections(
+        text=long_contract, items=items, chat_fn=lambda s, u: _payload([]),
+        clause_index=build_clause_index(long_contract),
+    )
+    cov = out["coverage"]
+    assert cov["body_limited"] is True, "正文被截断必须明示（审计回归 5）"
+    assert cov["body_chars_sent"] < cov["body_chars_total"]
+    assert cov["clauses_sent"] < cov["clauses_total"]
+
+
+def test_truncated_clause_tail_cannot_be_evidence(monkeypatch):
+    """三轮审计回归 6（E 项端到端）：**单个** 20k 条款只发送前 16k——引用
+    未发送的后 4k 不得 accepted。手工构造单条款索引（自动索引会切碎文本，
+    测不到截断场景；小智娘门禁 P2-1 实测修正）。"""
+    _enable(monkeypatch)
+    head = "第一条 " + "常规约定内容。" * 2900  # ≈20.3k > 16k 预算
+    tail_secret = "机密尾部条款：本条末段隐藏的特别约定适用冰岛法律。"
+    huge_clause = head + tail_secret
+    items = [{
+        "id": "governing_law", "name": "适用法律", "status": "未找到", "note": "",
+        "quote": "", "hits": [], "rule_id": None, "rule_class": "existence",
+    }]
+    single_clause_index = {"clauses": [
+        {"id": "c01", "heading": "第一条", "start": 0, "end": len(huge_clause)}
+    ]}
+    out = objection_service.run_objections(
+        text=huge_clause, items=items,
+        chat_fn=lambda s, u: _payload([
+            _ok_payload(item_id="governing_law", rule_id=None, direction="omission",
+                        quote="机密尾部条款：本条末段隐藏的特别约定适用冰岛法律",
+                        legal_reasoning="合同末段已写明适用冰岛法律，属适用法律等价写法，"
+                                        "词表未覆盖该表述，构成漏报异议。"),
+        ]),
+        clause_index=single_clause_index,
+    )
+    o = out["objections"][0]
+    assert o["accepted"] is False, "未发送的尾部不得成为 accepted evidence（审计回归 6）"
+    assert "条款范围不符" in (o["reject_reason"] or "")
+    assert out["coverage"]["body_limited"] is True and out["coverage"]["clauses_sent"] == 1

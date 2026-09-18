@@ -3,7 +3,7 @@
 异议层受理分流（hardline 拒收 / existence 只收漏报 / heuristic 收误报）
 的依据是每条结果的 rule_class——本文件钉透传语义：
 - 命中规则自带 class（规则级）> 簇级 class（经 item 透传）> 默认 heuristic
-- 非法值回落 heuristic（fail-safe：多问人、不放水）
+- 非法显式值由校验链 fail-closed；运行时透传原值，消费端永不送审（三轮审计 G）
 - need_attention/pass/missing 三种档位路径都带出
 """
 from __future__ import annotations
@@ -100,8 +100,13 @@ rules:
         assert out["rule_class"] == "heuristic"
 
 
-def test_invalid_class_falls_back_to_heuristic():
-    """非法 class 值回落 heuristic（fail-safe：多问人、不放水）。"""
+def test_invalid_class_never_eligible():
+    """非法 class（三轮审计 G 语义更新）：运行时不再静默回落——非法值由
+    load_checklist 校验链 fail-closed 拦截（见 test_invalid_class_fails_closed）；
+    直调引擎的防御路径下原值透传，但消费端（异议层 _eligible_direction）
+    对非法类别一律返回 None=不送审——非法标注永不获得异议资格。"""
+    from app.services.objection import _eligible_direction
+
     out = _proc_item(
         """
 rules:
@@ -111,7 +116,8 @@ rules:
       class: maybe_soft
 """
     )
-    assert out["rule_class"] == "heuristic"
+    assert out["rule_class"] == "maybe_soft", "运行时透传原值（不再静默改写）"
+    assert _eligible_direction(out) is None, "非法类别永不送审（消费端 fail-safe）"
 
 
 def test_schema_relay_accepts_rule_class():
