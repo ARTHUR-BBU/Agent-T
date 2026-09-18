@@ -64,7 +64,6 @@ def build_system_prompt(supported_categories: list[dict[str, str]]) -> str:
 
 
 
-PROMPT_VERSION = source_version(build_system_prompt)
 
 def build_retry_system_prompt(system: str) -> str:
     return system + "\n\n【再次提醒】上一轮输出不是合法 JSON 或字段缺失。重新输出，严格只输出一个 JSON 对象，字段为：detected_type / is_supported / suggested_category / confidence / summary。"
@@ -83,3 +82,7 @@ def build_user_prompt(text: str, selected_category: str, stance: str = "neutral"
 
 {text}
 """
+
+
+PROMPT_VERSION = source_version(
+    build_system_prompt, build_retry_system_prompt)

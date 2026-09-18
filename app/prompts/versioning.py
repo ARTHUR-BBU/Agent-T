@@ -11,19 +11,21 @@ from __future__ import annotations
 
 import hashlib
 import inspect
-from typing import Callable
+from typing import Any, Callable
 
 
-def source_version(fn: Callable[..., str], *constants: str) -> str:
-    """以 prompt 构建函数源码 + 渲染用常量的 sha256 前 12 位为版本标识。
+def source_version(fn: Callable[..., str], *extras: Any) -> str:
+    """以 prompt 构建函数源码 + 关联素材的 sha256 前 12 位为版本标识。
 
-    Codex P2：只哈希函数源码时，模块级常量（如 DIRECTION_LINES/IRON_RULES）
-    的变化不会改变版本——渲染内容变了版本必须变。凡被 f-string 渲染进
-    prompt 的模块级常量都应作为附加参数传入。
+    extras 可传：模块级常量字符串（DIRECTION_LINES 等——渲染内容变了
+    版本必须变）、其他 prompt 函数（build_retry_system_prompt 等——
+    retry 指令变化同样要改版本，Codex P2：失败调用的复现恰恰依赖它）。
     """
     try:
-        src = inspect.getsource(fn)
-        blob = "\x1f".join([src, *constants])
+        parts = [inspect.getsource(fn)]
+        for e in extras:
+            parts.append(inspect.getsource(e) if callable(e) else str(e))
+        blob = "\x1f".join(parts)
     except (OSError, TypeError):
         return "v0-unknown"
     digest = hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
