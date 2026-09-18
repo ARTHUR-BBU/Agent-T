@@ -645,3 +645,36 @@ def test_truncated_clause_tail_cannot_be_evidence(monkeypatch):
     assert o["accepted"] is False, "未发送的尾部不得成为 accepted evidence（审计回归 6）"
     assert "条款范围不符" in (o["reject_reason"] or "")
     assert out["coverage"]["body_limited"] is True and out["coverage"]["clauses_sent"] == 1
+
+
+def test_accepted_objection_carries_evidence_ref(monkeypatch):
+    """宪法证据法批：受理异议带服务端票据（含稳定 evidence_id）——
+    六层里此前唯一裸字符串引用的一层补齐（审计 B1-4）。"""
+    _enable(monkeypatch)
+    out = objection_service.run_objections(
+        text=_CONTRACT, items=_ITEMS, chat_fn=lambda s, u: _payload([_ok_payload()]),
+        clause_index=build_clause_index(_CONTRACT),
+        document_version="docv-123",
+    )
+    o = out["objections"][0]
+    ev = o["evidence"]
+    assert ev is not None and o["accepted"] is True
+    assert ev["evidence_id"].startswith("ev-")
+    assert ev["parse_source"] == "objection"
+    assert ev["document_version"] == "docv-123"
+    assert ev["clause_id"] == "c03"
+    # 稳定性：同输入再次受理 → 同 evidence_id
+    out2 = objection_service.run_objections(
+        text=_CONTRACT, items=_ITEMS, chat_fn=lambda s, u: _payload([_ok_payload()]),
+        clause_index=build_clause_index(_CONTRACT),
+        document_version="docv-123",
+    )
+    assert out2["objections"][0]["evidence"]["evidence_id"] == ev["evidence_id"]
+    # 拒收条目不生成票据（未受理无证据资格）
+    out3 = objection_service.run_objections(
+        text=_CONTRACT, items=_ITEMS,
+        chat_fn=lambda s, u: _payload([_ok_payload(quote="这句话绝不在合同原文里出现")]),
+        clause_index=build_clause_index(_CONTRACT),
+        document_version="docv-123",
+    )
+    assert out3["objections"][0]["evidence"] is None

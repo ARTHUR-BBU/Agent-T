@@ -14,6 +14,7 @@ CompletionStage = Literal["rules_complete", "ai_partial", "quality_complete", "f
 class EvidenceRefInfo(BaseModel):
     """证据引用（代码名 EvidenceRef）；界面勿渲染英文学名。"""
 
+    evidence_id: str = ""  # 宪法证据法批：稳定 ID（同发现跨层一致，可引用可去重）
     document_version: str = ""
     quote: str = ""
     start: Optional[int] = None
@@ -252,6 +253,9 @@ class Objection(BaseModel):
     reject_reason: Optional[str] = None
     clause_id: Optional[str] = None
     clause_ambiguous: bool = False
+    # 宪法证据法批：受理异议的服务端票据（span 命中位置+版本+parse_source=objection）
+    # ——此前 objections 是六层里唯一裸字符串引用的一层（审计 B1-4）
+    evidence: Optional[EvidenceRefInfo] = None
     adopted: bool = False
     needs_confirm: bool = True
 

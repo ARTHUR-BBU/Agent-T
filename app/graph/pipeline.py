@@ -318,6 +318,7 @@ def node_objection(state: ReviewState) -> ReviewState:
                 stance=state.get("stance") or "neutral",
                 clause_index=state.get("clause_index"),
                 budget=state.get("budget"),
+                document_version=state.get("document_version") or "",
             )
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("Objection pass failed")
