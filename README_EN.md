@@ -12,7 +12,7 @@
 
 Procurement agreements · Lease agreements · Non-disclosure agreements (NDAs)
 
-[Try it](#try-agent-t) · [Active verification](#it-doesnt-stop-at-flagging-an-issue) · [Real-world example](#a-real-world-example-has-the-goods-actually-been-accepted) · [Product direction](#from-reviewing-one-contract-to-understanding-an-entire-project) · [Setup](docs/getting-started.md)
+[Try it](#try-agent-t) · [Governance architecture](#agent-t-20-architecture-not-several-agents-chatting-but-a-miniature-justice-system) · [Active verification](#it-doesnt-stop-at-flagging-an-issue) · [Real-world example](#a-real-world-example-has-the-goods-actually-been-accepted) · [Product direction](#from-reviewing-one-contract-to-understanding-an-entire-project) · [Setup](docs/getting-started.md)
 
 </div>
 
@@ -38,6 +38,53 @@ Agent-T gives you a structured first pass before signing. Upload a contract, rev
 | **How do I share the review?** | Exports a Word report covering checklist results, reference scores, and candidate findings; the review can also be read on mobile. |
 
 AI features require a configured model provider. The current Word export does not include the AI observations or follow-up answers shown in the web interface, so check the report scope before sharing it.
+
+## Agent-T 2.0 architecture: not “several agents chatting,” but a miniature justice system
+
+> **Rules decide. AI challenges. Evidence constrains. Procedure checks power. Humans retain final responsibility.**
+
+A useful way to understand Agent-T is not as “one LLM plus a collection of tools,” but as a miniature legal and judicial governance system. The important part is not how many agents exist; it is the **boundary of authority**: who may investigate facts, who may admit evidence, who may issue a formal result, who may only challenge it, and who may change the rules.
+
+And **not every role should be an Agent**. Some roles belong in deterministic code, some in rule configuration, some in evidence/state objects, and only some are appropriate for an LLM.
+
+| Justice-system role | Agent-T counterpart | Authority | No authority to |
+|---|---|---|---|
+| **Legislature** | Rule governance, maintainers, legal experts, PR / Review / CI | Create, amend, and retire formal rules | Let a runtime model rewrite the law |
+| **Law** | Rule packs, hard constraints, applicability conditions | Define how a class of facts should be treated | Change because of one model response |
+| **Procedural law** | LangGraph / Pipeline / state machine | Define stage order, transitions, and completion | Skip required stages because the output “looks right” |
+| **Police / investigators** | Parser, Clause Index, Retrieval, Verify, future RAG | Find facts, clauses, context, and evidence | Issue the formal risk decision |
+| **Procuratorate / admissibility gate** | Evidence Validation, Quality Gate, applicability checks | Test truth, relevance, completeness, and admissibility | Use true-but-irrelevant text to support a claim, or replace the judge |
+| **Court** | Formal decision process | Turn admissible facts and rules into traceable results | Treat model speculation as a judgment |
+| **Judge** | Rule Engine / Checklist Engine | Produce reproducible formal statuses from explicit rules | Change objective facts with temperature, wording, or stance |
+| **Counsel** | AI Objection Layer, Ask, Revision | Challenge, find exceptions, identify omissions, propose revisions | Silently overwrite the rule result |
+| **Parties** | Buyer / Seller, Tenant / Landlord, Discloser / Receiver stance | Determine whose interests and obligations are being analyzed | Change the source text or objective facts |
+| **Pleading / issue** | Candidate Issue / Finding / Review Item | Turn a vague concern into a reviewable issue | Become valid merely because it “sounds risky” |
+| **Evidence** | Contract Text, Clause, MatchEvidence, attachments, user material | Support or rebut a specific factual proposition | Float free of source, location, and scope |
+| **Case file / clerk system** | Review State, SQLite, Evidence Chain, Audit Log | Preserve process, evidence, versions, and state | Make substantive decisions for another role |
+| **Expert witness** | Legal research, calculators, specialist models, external tools | Provide specialized facts or opinions | Become the formal decision-maker merely by being specialized |
+| **Enforcement** | Export, Workflow, future Action Layer | Turn confirmed results into reports or actions | Reinterpret or expand the decision during execution |
+| **Judicial oversight** | Tests, CI, Code Review, external audit | Detect silent breakage of rules, procedure, or implementation | Treat green CI as permission to ignore unresolved high-priority review findings |
+
+Four principles follow:
+
+1. **Facts, claims, and decisions are separate objects.** “What the contract says” is not the same thing as “what it means.”
+2. **One risk match should produce one stable evidence fact.** Explanations, objections, follow-ups, and reports should reuse that Evidence instead of independently guessing.
+3. **AI may challenge a decision but must not directly rewrite it.** Repeated model discoveries should be promoted into rules, tests, or new verification workflows.
+4. **Any increase in authority requires procedure.** Changing a Rule Pack, admission standard, or AI authority is effectively a change to substantive or procedural law and must pass review, tests, and traceable change control.
+
+A simple example:
+
+**The contract says “pay 95% after delivery”** → investigators locate payment and acceptance provisions → the admissibility gate checks that the evidence is real and relevant → the Rule Engine issues the formal status → AI counsel may argue that an exception exists or an attachment was missed → a human decides whether to accept the objection, revise the contract, or investigate further.
+
+This is more important than naming a chain “Research Agent → Legal Agent → Critic Agent → Manager Agent.” Without authority boundaries, that is only several models taking turns talking. Agent-T is aiming for **Agent Governance with evidence rules, procedural rules, decision authority, objection rights, legislative change, and oversight**.
+
+The normative engineering document is:
+
+> **[Agent-T Constitution](docs/agent-t-constitution-en.md)**  
+> It defines what each layer may do, what it must never do, how conflicts are resolved, how rules may change, and what procedural gates must be satisfied before code reaches `main`.
+>
+> **[LLM Position, Authority, and Phased Development Standard](docs/llm-position-authority-phased-development.md)** *(Chinese)*
+> It audits the current code and specifies, node by node, when an LLM is called, what it may see and produce, how it is gated, and what must be delivered next.
 
 ## It doesn't stop at flagging an issue
 
@@ -196,6 +243,8 @@ Agent-T uses **FastAPI + LangGraph + SQLite** with a lightweight web interface. 
 
 | What you need | Start here |
 |---|---|
+| **Authority boundaries, evidence rules, and merge gates** | **[Agent-T Constitution](docs/agent-t-constitution-en.md)** |
+| **LLM nodes, authority, implementation status, and phased acceptance** | **[LLM development standard](docs/llm-position-authority-phased-development.md)** — Chinese |
 | Local setup, model configuration, tests, and API | [Setup and configuration](docs/getting-started.md) — Chinese |
 | Server deployment | [Deployment guide](docs/deploy-server.md) — Chinese |
 | Rule, budget, and rate-limit configuration | [Administrator guide](docs/admin-config.md) — Chinese |

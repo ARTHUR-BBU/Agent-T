@@ -135,7 +135,7 @@ NDA 红线（风险金标 / 对抗样例须为「需关注」，不得「通过�
 | `BASIC_AUTH_USERNAME` / `BASIC_AUTH_PASSWORD` | （空） | 公网部署的整站访问控制；两项**必须同时配置**（只配一半会拒绝启动），不配置则关闭。部署指引见 `docs/deploy-server.md` |
 | 追问用 LLM Key | （空） | 无 Key 时评分与补盲都跳过（`reason=no_llm_key`），清单规则仍照常 |
 
-实现位置：`app/services/model_review.py`（审查流水线在 `run_checklist` 之后**最多一次批量 LLM 调用**，同时产出评分卡与补盲候选）。候选挂在审查结果的 `blind_candidates`，**只加分不减分**，不改规则条目的 `status`。
+实现位置：`app/services/model_review.py`（审查流水线在 `run_checklist` 之后运行：短合同一次合并调用；长合同按条款 map-reduce，默认最多 4 次 map + 1 次 reduce，reduce 可因坏结构或禁语重试一次）。评分卡与补盲候选共用最终 payload；候选挂在审查结果的 `blind_candidates`，只新增待确认候选，不改规则条目的 `status`。
 
 ---
 
