@@ -113,8 +113,12 @@ def build_evidence(
         verification=ver,
         parse_source=parse_source,
     )
-    # 稳定 ID：同输入同 ID（可引用、可去重、可追溯跨层是否同一发现）
-    ref.evidence_id = evidence_id_for(ref.model_dump())
+    # 稳定 ID：同输入同 ID（可引用、可去重、可追溯跨层是否同一发现）。
+    # 第三轮审计 P1：missing（未能定位到原文）= 无证据资格，不给 ID——
+    # 「空 ID 的票据」不得通过 API 门禁冒充可引用证据。
+    ref.evidence_id = (
+        evidence_id_for(ref.model_dump()) if ver in ("verified", "ambiguous") else ""
+    )
     return ref.to_dict()
 
 
@@ -145,7 +149,8 @@ def attach_evidence_to_item(
     """就地给 item 挂 evidence（不改 status）。已有 evidence 则补全缺失字段。"""
     existing = item.get("evidence")
     if isinstance(existing, dict) and existing.get("quote") is not None:
-        # 已有票据：只补 document_version / clause_id
+        # 已有票据（含历史记录）：补全字段后**重算 evidence_id**——
+        # 第三轮审计 P1：旧票据不得永续无 ID；字段被补全后 ID 必须随之更新
         if not existing.get("document_version") and document_version:
             existing["document_version"] = document_version
         if not existing.get("clause_id"):
@@ -154,6 +159,8 @@ def attach_evidence_to_item(
             )
             if primary:
                 existing["clause_id"] = primary
+        if existing.get("verification") in ("verified", "ambiguous"):
+            existing["evidence_id"] = evidence_id_for(existing)
         item["evidence"] = existing
         return item
 
