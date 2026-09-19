@@ -113,8 +113,12 @@ def build_evidence(
         verification=ver,
         parse_source=parse_source,
     )
-    # 稳定 ID：同输入同 ID（可引用、可去重、可追溯跨层是否同一发现）
-    ref.evidence_id = evidence_id_for(ref.model_dump())
+    # 稳定 ID：同输入同 ID（可引用、可去重、可追溯跨层是否同一发现）。
+    # 第三轮审计 P1：missing（未能定位到原文）= 无证据资格，不给 ID——
+    # 「空 ID 的票据」不得通过 API 门禁冒充可引用证据。
+    ref.evidence_id = (
+        evidence_id_for(ref.model_dump()) if ver in ("verified", "ambiguous") else ""
+    )
     return ref.to_dict()
 
 
@@ -134,6 +138,29 @@ def evidence_id_for(ref: dict[str, Any]) -> str:
     return "ev-" + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 
+def normalize_evidence_ref(ref: dict[str, Any], text: str) -> dict[str, Any]:
+    """票据归一化（第三轮审计 P2）：历史票据补定位、清非资格 ID、重算合格 ID。
+
+    - verified/ambiguous 但缺坐标：用 text 重新定位（与新生成票据同锚定，
+      否则旧表示与新表示哈希不同，跨层去重失效）；
+    - missing/unverified（含历史误发的 ev-*）：清空 evidence_id——
+      无证据资格的票据不得被引用（STORE_TTL=0 时否则永续暴露）；
+    - 合格票据：按最终内容重算 ID。
+    """
+    ref = dict(ref)
+    if ref.get("verification") in ("verified", "ambiguous") and (
+        not isinstance(ref.get("start"), int) or not isinstance(ref.get("end"), int)
+    ):
+        s2, e2, loc = locate_quote_span(text or "", ref.get("quote") or "")
+        if loc in ("verified", "ambiguous"):
+            ref["start"], ref["end"], ref["verification"] = s2, e2, loc
+    if ref.get("verification") in ("verified", "ambiguous"):
+        ref["evidence_id"] = evidence_id_for(ref)
+    else:
+        ref["evidence_id"] = ""
+    return ref
+
+
 def attach_evidence_to_item(
     item: dict[str, Any],
     *,
@@ -145,7 +172,8 @@ def attach_evidence_to_item(
     """就地给 item 挂 evidence（不改 status）。已有 evidence 则补全缺失字段。"""
     existing = item.get("evidence")
     if isinstance(existing, dict) and existing.get("quote") is not None:
-        # 已有票据：只补 document_version / clause_id
+        # 已有票据（含历史记录）：统一归一化（第三轮审计 P1/P2）——
+        # 补字段、重新定位、按资格重算或清除 ID
         if not existing.get("document_version") and document_version:
             existing["document_version"] = document_version
         if not existing.get("clause_id"):
@@ -154,7 +182,7 @@ def attach_evidence_to_item(
             )
             if primary:
                 existing["clause_id"] = primary
-        item["evidence"] = existing
+        item["evidence"] = normalize_evidence_ref(existing, text)
         return item
 
     start = item.get("evidence_start")

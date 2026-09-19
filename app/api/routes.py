@@ -376,6 +376,14 @@ def get_review(review_id: str):
             stance_service.counterparty_view_notice(row.get("category") or "")
             if pc.get("stance_notice") else ""
         )}
+    # 宪法证据法批（第三轮审计 P2）：读路径归一化历史票据——
+    # 非资格清 ID / 缺坐标补定位 / 合格重算（STORE_TTL=0 时防永续暴露）
+    row_text = row.get("text") or ""
+    for it in row.get("items") or []:
+        ev = it.get("evidence") if isinstance(it, dict) else None
+        if isinstance(ev, dict):
+            from app.services.evidence import normalize_evidence_ref
+            it["evidence"] = normalize_evidence_ref(ev, row_text)
     clause_index = row.get("clause_index")
     stance = row.get("stance") or "neutral"
     quality = row.get("quality")

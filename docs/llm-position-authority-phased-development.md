@@ -123,7 +123,7 @@ LangGraph 当前是固定顺序的库内 Pipeline，不是能自行规划、增�
 | Scorecard 参考评分 | 已完成（当前范围） | 部分完成 | 短合同单轮；长合同 map-reduce；分数由代码重算、扣分、封顶。模型真实稳定性与业务校准不进 required CI。 |
 | Targeted Blind Spot 补盲 | 已完成（当前范围） | 部分完成 | 只能映射既有目标 item，必须有全文可核 quote；仍不能发现全新规则外争点。 |
 | Quality 三维观察 | 已完成（当前范围） | 部分完成 | 完整性 / 一致性 / 影响；quote、clause、禁语、条数有门禁；真实模型召回率与误报率未形成发布阈值。 |
-| EvidenceRef 与事实材料 | 已完成（当前范围） | 部分完成 | 有文档指纹、quote、span、clause、verification、source；尚无全局稳定 `evidence_id`、证据命题、支持/反驳关系与跨文档来源。 |
+| EvidenceRef 与事实材料 | 已完成（当前范围） | 部分完成 | 有文档指纹、quote、span、clause、verification、source、**全局稳定 `evidence_id`**（2026-09-19，证据法批 1：内容哈希自证、missing 不发 ID、attach 归一化历史票据）；证据命题、支持/反驳关系与跨文档来源仍缺。 |
 | A6 Bounded Verify | 已完成（有界范围） | 已完成（确定性范围） | 当前不调用 LLM；支持疑点收集、条款取证、分流、人工确认、再核和预算。语义分流仍是少量固定规则。 |
 | LLM Objection 3.1 / 3.2 | 已完成（当前范围） | 部分完成 | heuristic 误报、existence 漏报；hardline 不送审；五要件受理、adopt 标记已实现。采纳后自动形成版本化 Rule Pack PR 的通道未实现。 |
 | 阶段 3.3 对抗测试 | 已完成（mock / corpus 范围） | 部分完成 | 已有 corpus、hardline / existence / heuristic 和范围对抗测试；真实供应商、真实长合同与法律专家验收仍不是 required gate。 |
@@ -166,7 +166,7 @@ Decision / Human Decision（正式结果或人工决定）
   authority + status + rule_version + rationale + audit metadata
 ```
 
-当前 `EvidenceRef` 已覆盖第一层的基础字段，但还没有稳定 `evidence_id` 和显式 proposition。进入多轮核验、修订验证或多文档阶段前，必须先补齐，不得继续让各层复制 quote 字符串充当关联键。
+当前 `EvidenceRef` 已覆盖第一层的基础字段并具备稳定 `evidence_id`（2026-09-19）。仍缺显式 proposition 与「各层引用同一 Evidence 对象」的引用化改造——当前各层仍按各自摘句建票据（可经 evidence_id 关联去重，但尚未消除复制）。进入多轮核验、修订验证或多文档阶段前，必须完成引用化改造，不得继续让各层复制 quote 字符串充当关联键。
 
 ## 9. 当前 EvidenceRef 标准
 
@@ -564,7 +564,7 @@ Precheck 和 Ask 当前缺少这一统一对象；Objection 已在自身 coverag
 
 必须完成：
 
-- 引入稳定 `evidence_id`、`claim_id / issue_id`；
+- 引入稳定 `evidence_id`（已完成：证据法批 1）、`claim_id / issue_id`（待做）；
 - 明确支持/反驳关系、证据 scope 与模型可见范围；
 - Objection、Quality、Ask、Verify 复用同一 Evidence，而不是各自复制 quote；
 - 人工确认形成独立 `HumanDecision`，不得写回模型字段；
