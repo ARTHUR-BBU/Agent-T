@@ -167,3 +167,39 @@ def test_reset_for_tests_clears_buckets(monkeypatch):
     assert client.post("/api/upload", files=files, data={"category": "procurement"}).status_code == 429
     reset_for_tests()
     assert client.post("/api/upload", files=files, data={"category": "procurement"}).status_code == 200
+
+
+# ---------- 并发槽位排空（CI 稳定性 P2：run 35443962586 复发实证） ----------
+
+def test_drain_review_slots_waits_for_leaked_workers():
+    """占满槽位的短命 worker 未归还时，排空函数必须等到全空而非立即放行
+    （正是 CI 上「上一测未等 done、下一测撞 429」的根因场景）。"""
+    import threading
+
+    from app.api import routes
+    from tests.helpers import drain_review_slots
+
+    total = routes.MAX_CONCURRENT_REVIEWS
+    for _ in range(total):
+        assert routes._review_slots.acquire(blocking=False)
+    # 模拟后台 worker：0.3s 后归还
+    timer = threading.Timer(0.3, lambda: routes._review_slots.release(total))
+    timer.start()
+    drain_review_slots(timeout=5.0)  # 不抛 = 等到了全部归还
+
+
+def test_drain_review_slots_times_out_loudly_on_real_leak():
+    """真泄漏（槽位永不归还）必须显式 AssertionError，而非静默超时后
+    让下游测试随机撞 429（可诊断性是本次修复的验收口径）。"""
+    from app.api import routes
+    from tests.helpers import drain_review_slots
+
+    acquired = 0
+    try:
+        while routes._review_slots.acquire(blocking=False):
+            acquired += 1
+        with pytest.raises(AssertionError, match="疑似泄漏"):
+            drain_review_slots(timeout=0.3)
+    finally:
+        if acquired:
+            routes._review_slots.release(acquired)

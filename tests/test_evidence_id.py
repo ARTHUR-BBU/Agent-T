@@ -101,3 +101,195 @@ def test_read_path_normalizes_legacy_tickets():
     if len(with_ev) > 1:
         e1 = next(i for i in out_items if i["id"] == with_ev[1]["id"])["evidence"]
         assert e1["evidence_id"] == "", "非资格票据的旧误发 ID 必须清除"
+
+
+def test_verified_unlocatable_downgrades_to_missing():
+    """第三轮复核 P1-1 反例：verified 但摘句不在正文且无坐标——
+    重新定位失败必须降级 missing、清坐标、不发 ID（实测曾发 ev-*）。"""
+    item = {
+        "id": "x", "quote": "这句话绝不在合同原文之中",
+        "evidence": {
+            "document_version": "dv", "quote": "这句话绝不在合同原文之中",
+            "start": None, "end": None, "clause_id": None,
+            "verification": "verified", "parse_source": "rules",
+            "evidence_id": "ev-staleverified1",
+        },
+    }
+    from app.services.evidence import normalize_evidence_ref
+    ev = normalize_evidence_ref(item["evidence"], _TEXT)
+    assert ev["verification"] == "missing", "定位失败必须降级 missing"
+    assert ev["start"] is None and ev["end"] is None
+    assert ev["evidence_id"] == "", "降级后不得保留或新发 ID"
+
+
+def test_normalize_review_evidence_covers_all_containers():
+    """第三轮复核 P1-2：读路径归一化必须覆盖全部六个容器——
+    每个容器注入一张历史票据（verified 缺坐标），断言全部被归一化。"""
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services.store import store as store_module
+
+    client = TestClient(app)
+    sample = Path(__file__).resolve().parents[1] / "fixtures" / "procurement_sample.txt"
+    files = {"file": ("p.txt", sample.read_bytes(), "text/plain")}
+    rid = client.post("/api/upload", files=files, data={"category": "procurement"}).json()["review_id"]
+    from tests.helpers import wait_review_done
+    wait_review_done(client, rid)
+
+    row = store_module.get(rid)
+    assert row is not None
+    legacy_ev = {
+        "document_version": "dv", "quote": "违约金为总额百分之三十",
+        "start": None, "end": None, "clause_id": None,
+        "verification": "verified", "parse_source": "rules",
+        # 门禁 P1（小智娘）：必须注入非空陈旧 ID——空串会让「未归一化则 ID
+        # 应被重算」的断言被短路，变异（回滚容器覆盖）下测试不变红
+        "evidence_id": "ev-stale12345678",
+    }
+
+    def _plant(obj):
+        if isinstance(obj, dict):
+            obj["evidence"] = dict(legacy_ev)
+        elif isinstance(obj, list) and obj:
+            obj[0]["evidence"] = dict(legacy_ev)
+
+    _plant((row.get("items") or [{}])[0])
+    _plant((row.get("blind_candidates") or [{}])[0])
+    quality = row.get("quality") or {}
+    _plant((quality.get("observations") or [{}])[0])
+    _plant((quality.get("facts") or [{}])[0])
+    _plant((row.get("facts") or [{}])[0])
+    objections = row.get("objections") or {}
+    if isinstance(objections, dict) and objections.get("objections"):
+        _plant(objections["objections"][0])
+    verify = row.get("verify") or {}
+    if isinstance(verify, dict) and verify.get("questions"):
+        _plant(verify["questions"][0])
+    store_module.update(rid, items=row["items"], blind_candidates=row["blind_candidates"],
+                        quality=row["quality"], facts=row["facts"],
+                        objections=row["objections"], verify=row["verify"])
+
+    body = client.get(f"/api/review/{rid}").json()
+
+    def _ev_of(obj):
+        if isinstance(obj, dict):
+            return obj.get("evidence")
+        if isinstance(obj, list) and obj:
+            return obj[0].get("evidence")
+        return None
+
+    checked = 0
+    for container in (
+        body["items"],
+        body.get("blind_candidates") or [],
+        (body.get("quality") or {}).get("observations") or [],
+        (body.get("quality") or {}).get("facts") or [],
+        body.get("facts") or [],
+        ((body.get("objections") or {}).get("objections") or []),
+        ((body.get("verify") or {}).get("questions") or []),
+    ):
+        ev = _ev_of(container)
+        if ev is None:
+            continue
+        checked += 1
+        # 该历史票的 quote 在 fixture 文本里可能定位不到 → 必须降级 missing 且无 ID；
+        # 定位得到 → 必须补坐标并重算 ID。两种结果都不得保留「verified+无坐标+有 ID」
+        assert not (ev.get("verification") in ("verified", "ambiguous")
+                    and ev.get("start") is None and ev["evidence_id"]), \
+            "容器残留 verified+无坐标+有 ID 的票据（P1-2 漏网）"
+    assert checked >= 4, f"应至少覆盖 4 个容器，实际 {checked}"
+
+
+# ---------- PR review 三连销项（P1-a verify 子路由 / P1-b sibling 同步 / P2 版本回填） ----------
+
+def _done_row_with_verify_question(quote: str, *, dv_in_ticket: str, stale_id: str):
+    """造一条 done 记录：verify.questions[0] 挂一张「verified 缺坐标」历史票。
+
+    quote 固定用不在 fixture 文本里的句子 → 归一化必须降级 missing。
+    dv_in_ticket 控制票据自带版本（P2 用空版本验证回填）。
+    """
+    from pathlib import Path
+
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.services.store import store as store_module
+
+    client = TestClient(app)
+    sample = Path(__file__).resolve().parents[1] / "fixtures" / "procurement_sample.txt"
+    files = {"file": ("p.txt", sample.read_bytes(), "text/plain")}
+    rid = client.post("/api/upload", files=files, data={"category": "procurement"}).json()["review_id"]
+    from tests.helpers import wait_review_done
+    wait_review_done(client, rid)
+
+    row = store_module.get(rid)
+    assert row is not None
+    row["verify"] = {
+        "available": True,
+        "questions": [{
+            "id": "q1",
+            "source": "fact",
+            "status": "pending",
+            "question": "摘句是否属实？",
+            "quote": quote,
+            # P1-b 的钉子：问题级 sibling verification 也挂着「已验证」
+            "verification": "verified",
+            "evidence": {
+                "document_version": dv_in_ticket,
+                "quote": quote,
+                "start": None, "end": None, "clause_id": None,
+                "verification": "verified", "parse_source": "fact",
+                "evidence_id": stale_id,
+            },
+        }],
+    }
+    store_module.update(rid, verify=row["verify"])
+    return client, rid
+
+
+def test_verify_endpoint_normalizes_and_syncs_sibling():
+    """PR review P1-a+P1-b：verify 子路由必须归一化，且问题级 verification
+    随票据同步——票据降 missing 后 UI 的「摘句对得上」不得继续显示 verified。"""
+    client, rid = _done_row_with_verify_question(
+        "这句话绝不在合同原文之中", dv_in_ticket="dv", stale_id="ev-staleverify1",
+    )
+    body = client.get(f"/api/review/{rid}/verify").json()
+    q = body["questions"][0]
+    assert q["evidence"]["verification"] == "missing", "verify 出口必须归一化（P1-a）"
+    assert q["evidence"]["evidence_id"] == "", "陈旧 ID 不得从 verify 出口漏出"
+    assert q["verification"] == "missing", "问题级 verification 必须随票据同步（P1-b）"
+    # confirm 响应同样走归一化（P1-a 第二出口：确认后 UI 会被此响应刷写）
+    r = client.post(f"/api/review/{rid}/confirm", json={"question_id": "q1", "choice": "confirm"})
+    assert r.status_code == 200
+    q2 = r.json()["verify"]["questions"][0]
+    assert q2["evidence"]["verification"] == "missing"
+    assert q2["verification"] == "missing"
+
+
+def test_empty_document_version_backfilled_before_id():
+    """PR review P2：旧票据空 document_version 必须回填行级版本再算 ID——
+    否则不同合同的同摘句会同 ID，击穿 document 维度身份隔离。"""
+    from app.services.evidence import normalize_verify_state
+
+    # 回填后：与「用行级版本直接构造的票据」同 ID
+    row_ev = {
+        "document_version": "", "quote": "违约金为总额百分之三十",
+        "start": 4, "end": 16, "clause_id": None,
+        "verification": "verified", "parse_source": "fact", "evidence_id": "",
+    }
+    q = {"evidence": row_ev}
+    out = normalize_verify_state(
+        {"questions": [q]}, text=_TEXT, document_version="rv1:abc",
+    )
+    got = out["questions"][0]["evidence"]
+    expect = dict(row_ev, document_version="rv1:abc")
+    assert got["evidence_id"] == evidence_id_for(expect), \
+        "ID 必须按回填后的版本计算（空版本直哈希会跨合同撞车）"
+    # 对照：不同行的同摘句必须不同 ID
+    other = normalize_verify_state(
+        {"questions": [dict(q)]}, text=_TEXT, document_version="rv2:def",
+    )
+    assert other["questions"][0]["evidence"]["evidence_id"] != got["evidence_id"]
