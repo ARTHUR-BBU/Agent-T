@@ -55,3 +55,17 @@ def _rate_limit_reset():
     from app.services import rate_limit
 
     rate_limit.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def _review_slots_drained():
+    """并发槽位隔离（CI 稳定性 P2）：每个测试开始前保证审查槽全部空闲。
+
+    限频桶清理（上方 _rate_limit_off）只修频率 429；槽位 429（「审查排队
+    已满」）是另一根因——upload 测试不等 done 返回后，后台 worker 仍占
+    Semaphore(MAX_CONCURRENT_REVIEWS=4)，弱机 CI 上下一测上传即 429。
+    """
+    from tests.helpers import drain_review_slots
+
+    drain_review_slots()
+    yield
