@@ -312,6 +312,35 @@ def _clause_at(clause_index: dict[str, Any], pos: int) -> Optional[str]:
     return None
 
 
+def normalize_verify_state(
+    state: dict[str, Any], *, text: str, document_version: str
+) -> dict[str, Any]:
+    """归一化 verify.questions[].evidence 并同步问题级 verification（PR review P1）。
+
+    - 票据级：同 normalize_evidence_ref（重新定位失败降级 missing、清坐标、清 ID）
+    - 问题级 sibling verification 必须随票据同步：UI 渲染的是它（app.js
+      「摘句对得上」），票据降了 missing 而问题还挂 verified = 把无法定位的
+      摘句继续告诉用户「已验证」（PR review P1-b）
+    - document_version 回填：旧票据空版本直接哈希 = 不同合同同摘句同 ID，
+      击穿 document 维度的身份隔离（PR review P2）
+    """
+    import copy
+
+    out = copy.deepcopy(state)
+    for q in out.get("questions") or []:
+        if not isinstance(q, dict):
+            continue
+        ev = q.get("evidence")
+        if not isinstance(ev, dict):
+            continue
+        if not ev.get("document_version"):
+            ev["document_version"] = document_version
+        if ev.get("quote") is not None:
+            q["evidence"] = normalize_evidence_ref(ev, text or "")
+            q["verification"] = q["evidence"]["verification"]
+    return out
+
+
 def normalize_review_evidence(row: dict[str, Any]) -> dict[str, Any]:
     """对整条审查记录的全部 EvidenceRef 容器做读路径归一化（第三轮复核 P1-2）。
 
@@ -321,7 +350,8 @@ def normalize_review_evidence(row: dict[str, Any]) -> dict[str, Any]:
     - quality.observations[].evidence / quality.facts[].evidence
     - 顶层 facts[].evidence
     - objections.objections[].evidence
-    - verify.questions[].evidence
+    - verify.questions[].evidence（含问题级 verification 同步，见
+      normalize_verify_state）
 
     返回归一化后的深拷贝（不突变 store 行）。
     """
@@ -333,6 +363,9 @@ def normalize_review_evidence(row: dict[str, Any]) -> dict[str, Any]:
         if isinstance(item_or_obj, dict):
             ev = item_or_obj.get("evidence")
             if isinstance(ev, dict) and ev.get("quote") is not None:
+                # PR review P2：空版本回填行级 document_version，防跨合同撞 ID
+                if not ev.get("document_version"):
+                    ev["document_version"] = out.get("document_version") or ""
                 item_or_obj["evidence"] = normalize_evidence_ref(ev, out.get("text") or "")
 
     for it in out.get("items") or []:
@@ -353,6 +386,10 @@ def normalize_review_evidence(row: dict[str, Any]) -> dict[str, Any]:
             _fix(ob)
     verify = out.get("verify") or {}
     if isinstance(verify, dict):
-        for q in verify.get("questions") or []:
-            _fix(q)
+        # 问题级 verification 同步走专用函数（_fix 只管票据本身）
+        out["verify"] = normalize_verify_state(
+            verify,
+            text=out.get("text") or "",
+            document_version=out.get("document_version") or "",
+        )
     return out

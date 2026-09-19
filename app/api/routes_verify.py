@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 from app.api.deps import require_done_row
 from app.api.schemas import ConfirmRequest, ConfirmResponse, ReverifyRequest, ReverifyResponse, VerifyBudgetInfo, VerifyInfo
 from app.services import verify as verify_service
+from app.services.evidence import normalize_verify_state
 from app.services.store import store
 
 router = APIRouter()  # 前缀由聚合 router（/api）提供，勿重复
@@ -15,10 +16,21 @@ router = APIRouter()  # 前缀由聚合 router（/api）提供，勿重复
 logger = logging.getLogger(__name__)
 
 
-def pack_verify(raw: dict | None) -> VerifyInfo | None:
-    """把 store.verify 打成 API 形状（附 budget 快照）。"""
+def pack_verify(raw: dict | None, *, row: dict | None = None) -> VerifyInfo | None:
+    """把 store.verify 打成 API 形状（附 budget 快照）。
+
+    PR review P1-a：带 row 上下文时先做读路径归一化——verify 子路由此前
+    直读 store 原始行，get_review 归一化过的响应会被 confirm/reverify 的
+    未归一化响应刷回旧形态（陈旧 ID + 虚假 verified）。
+    """
     if not raw or not isinstance(raw, dict):
         return None
+    if row is not None:
+        raw = normalize_verify_state(
+            raw,
+            text=row.get("text") or "",
+            document_version=row.get("document_version") or "",
+        )
     try:
         info = verify_service.VerifyInfo.model_validate(raw)
     except Exception:  # noqa: BLE001
@@ -38,7 +50,7 @@ def get_verify(review_id: str):
     row = store.get(review_id)
     if not row:
         raise HTTPException(status_code=404, detail="审查记录不存在")
-    packed = pack_verify(row.get("verify"))
+    packed = pack_verify(row.get("verify"), row=row)
     if packed is None:
         return VerifyInfo(
             available=False,
@@ -74,7 +86,7 @@ def trigger_verify(review_id: str):
             logger.exception("trigger verify failed review_id=%s", review_id)
             raise HTTPException(status_code=500, detail="核验失败，请稍后重试")
         store.update(review_id, verify=out)
-    packed = pack_verify(out)
+    packed = pack_verify(out, row=row)
     assert packed is not None
     return packed
 
@@ -117,7 +129,7 @@ def confirm_question(review_id: str, body: ConfirmRequest):
         if after_snap != status_snap:
             logger.error("Design B violation on confirm review_id=%s", review_id)
             raise HTTPException(status_code=500, detail="内部错误：规则档位被意外改动")
-    return ConfirmResponse(ok=True, verify=pack_verify(updated))
+    return ConfirmResponse(ok=True, verify=pack_verify(updated, row=row))
 
 
 @router.post(
@@ -152,7 +164,7 @@ def reverify_question(review_id: str, body: ReverifyRequest):
                 return ReverifyResponse(
                     ok=False,
                     error="核对次数已用完",
-                    verify=pack_verify(row.get("verify")),
+                    verify=pack_verify(row.get("verify"), row=row),
                 )
             return ReverifyResponse(ok=False, error=code)
         store.update(review_id, verify=updated)
@@ -169,6 +181,6 @@ def reverify_question(review_id: str, body: ReverifyRequest):
                 raise HTTPException(status_code=500, detail="内部错误：规则档位被意外改动")
     return ReverifyResponse(
         ok=True,
-        verify=pack_verify(updated),
+        verify=pack_verify(updated, row=row),
         rule_statuses_unchanged=True,
     )

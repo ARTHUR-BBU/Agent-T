@@ -412,7 +412,7 @@ def get_review(review_id: str):
         completion=row.get("completion"),
         document_version=row.get("document_version") or "",
         facts=facts or [],
-        verify=_pack_verify(row.get("verify")),
+        verify=_pack_verify(row.get("verify"), row=row),
         export_scope_note=row.get("export_scope_note")
         or (
             "报告只含本次读到并展示的内容；未读部分不写入结论"
