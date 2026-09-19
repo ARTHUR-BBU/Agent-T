@@ -210,4 +210,8 @@ def test_evidence_id_reaches_api_client():
     obs_api = r.json()["objections"]["objections"]
     with_ev = [o for o in obs_api if o.get("evidence")]
     assert with_ev, "evidence 字段必须出现在 API 响应（静默 ignore 即失守）"
-    assert with_ev[0]["evidence"]["evidence_id"] == "ev-test12345678",         "evidence_id 必须到达客户端（Codex P1：schema 缺字段被静默剥掉）"
+    ev = with_ev[0]["evidence"]
+    assert ev["evidence_id"], "evidence_id 必须到达客户端（Codex P1：schema 缺字段被静默剥掉）"
+    # 读路径归一化会对不一致 ID 重算——断言「ID 与票据内容一致」而非等于注入值
+    from app.services.evidence import evidence_id_for
+    assert ev["evidence_id"] == evidence_id_for(ev), "ID 必须与票据内容一致"

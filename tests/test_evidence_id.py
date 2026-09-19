@@ -197,5 +197,5 @@ def test_normalize_review_evidence_covers_all_containers():
         # 定位得到 → 必须补坐标并重算 ID。两种结果都不得保留「verified+无坐标+有 ID」
         assert not (ev.get("verification") in ("verified", "ambiguous")
                     and ev.get("start") is None and ev["evidence_id"]), \
-            f"容器残留 verified+无坐标+有 ID 的票据（P1-2 漏网）"
+            "容器残留 verified+无坐标+有 ID 的票据（P1-2 漏网）"
     assert checked >= 4, f"应至少覆盖 4 个容器，实际 {checked}"
