@@ -145,7 +145,9 @@ def test_normalize_review_evidence_covers_all_containers():
         "document_version": "dv", "quote": "违约金为总额百分之三十",
         "start": None, "end": None, "clause_id": None,
         "verification": "verified", "parse_source": "rules",
-        "evidence_id": "",  # 旧票据无 ID
+        # 门禁 P1（小智娘）：必须注入非空陈旧 ID——空串会让「未归一化则 ID
+        # 应被重算」的断言被短路，变异（回滚容器覆盖）下测试不变红
+        "evidence_id": "ev-stale12345678",
     }
 
     def _plant(obj):
