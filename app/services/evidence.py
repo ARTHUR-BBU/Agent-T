@@ -154,9 +154,19 @@ def normalize_evidence_ref(ref: dict[str, Any], text: str) -> dict[str, Any]:
         s2, e2, loc = locate_quote_span(text or "", ref.get("quote") or "")
         if loc in ("verified", "ambiguous"):
             ref["start"], ref["end"], ref["verification"] = s2, e2, loc
+        else:
+            # 第三轮复核 P1-1：重新定位仍失败 = 无法证明原文存在——
+            # 强制降级 missing、清坐标，绝不带着 verified 标签发 ID
+            ref["verification"] = "missing"
+            ref["start"] = None
+            ref["end"] = None
     if ref.get("verification") in ("verified", "ambiguous"):
         ref["evidence_id"] = evidence_id_for(ref)
     else:
+        ref["verification"] = "missing" if ref.get("verification") not in (
+            "missing", "unverified") else ref.get("verification")
+        ref["start"] = None
+        ref["end"] = None
         ref["evidence_id"] = ""
     return ref
 
@@ -300,3 +310,49 @@ def _clause_at(clause_index: dict[str, Any], pos: int) -> Optional[str]:
     if result >= 0:
         return str(clauses[result].get("id") or "") or None
     return None
+
+
+def normalize_review_evidence(row: dict[str, Any]) -> dict[str, Any]:
+    """对整条审查记录的全部 EvidenceRef 容器做读路径归一化（第三轮复核 P1-2）。
+
+    覆盖容器（此前只归一化 items[].evidence，其余五处漏网）：
+    - items[].evidence
+    - blind_candidates[].evidence
+    - quality.observations[].evidence / quality.facts[].evidence
+    - 顶层 facts[].evidence
+    - objections.objections[].evidence
+    - verify.questions[].evidence
+
+    返回归一化后的深拷贝（不突变 store 行）。
+    """
+    import copy
+
+    out = copy.deepcopy(row)
+
+    def _fix(item_or_obj: Any) -> None:
+        if isinstance(item_or_obj, dict):
+            ev = item_or_obj.get("evidence")
+            if isinstance(ev, dict) and ev.get("quote") is not None:
+                item_or_obj["evidence"] = normalize_evidence_ref(ev, out.get("text") or "")
+
+    for it in out.get("items") or []:
+        _fix(it)
+    for cand in out.get("blind_candidates") or []:
+        _fix(cand)
+    quality = out.get("quality") or {}
+    if isinstance(quality, dict):
+        for obs in quality.get("observations") or []:
+            _fix(obs)
+        for f in quality.get("facts") or []:
+            _fix(f)
+    for f in out.get("facts") or []:
+        _fix(f)
+    objections = out.get("objections") or {}
+    if isinstance(objections, dict):
+        for ob in objections.get("objections") or []:
+            _fix(ob)
+    verify = out.get("verify") or {}
+    if isinstance(verify, dict):
+        for q in verify.get("questions") or []:
+            _fix(q)
+    return out
