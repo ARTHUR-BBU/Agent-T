@@ -346,10 +346,8 @@ def test_accurate_ticket_not_flagged_by_coordinate_check():
     from app.services.evidence import build_evidence, normalize_evidence_ref
 
     good = build_evidence(text=_TEXT, quote="违约金为总额百分之三十", parse_source="rules")
-    warnings: list = []
     out = normalize_evidence_ref(dict(good), _TEXT)
     assert out == good, "精确票据归一化必须零改动"
-    assert warnings == []
 
 
 def test_coordinate_check_fail_closed_on_mismatch():

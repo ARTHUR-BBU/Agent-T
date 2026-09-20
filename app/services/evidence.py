@@ -693,9 +693,10 @@ def resolve_or_build_evidence(
 def rebuild_evidence_index(row_normalized: dict[str, Any]) -> dict[str, Any]:
     """从六容器票据全量重建 span 索引（可重建缓存的「重建」半边）。
 
-    读路径专用：只产出响应副本所需的新 dict，**绝不写回 store 行**
-    （审计修订六红线）。同 span 多 ID（修复前混合数据）→ 取字典序最小
-    合法 ID 为 canonical，其余记入 duplicates 供账目可见。
+    纯读派生：产出**响应/合并副本**所需的新 dict——GET 读路径绝不写回
+    store 行（审计修订六红线）；写方锁内合并（_merge_evidence_index）
+    显式落库属 §1.6-4 授权。同 span 多 ID（canonical 收敛后理论不可达，
+    防御保留）→ 取字典序最小合法 ID 为 canonical，其余记 _duplicates。
     """
     by_span: dict[str, str] = {}
     duplicates: list[dict[str, str]] = []
@@ -744,6 +745,5 @@ def rebuild_evidence_index(row_normalized: dict[str, Any]) -> dict[str, Any]:
     if isinstance(verify, dict):
         for q in verify.get("questions") or []:
             _reg(q.get("evidence") if isinstance(q, dict) else None)
-    # 原文可证性守卫：切片无法从 text 重建的条目不进缓存（缓存契约）
     return {"version": EVIDENCE_INDEX_VERSION, "by_span": by_span,
             "_duplicates": duplicates, "_text_len": len(text)}

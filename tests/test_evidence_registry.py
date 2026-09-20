@@ -159,17 +159,12 @@ def test_registry_reaches_api_and_is_accurate():
     )
     assert reg["occurrence_total"] == expected
     assert reg["qualified_unique_total"] >= 1, "正常审查至少有一张合格票"
-    # 2b-① 坐标精确性校验上线后：引擎历史票据（坐标与摘句不符）在读取时
-    # 被 relocate 修复并产生 id_recomputed 警告——这是诚实账目，不是 broken。
-    # 断言：warning 数与样本数一致（≤20 时全量可见）且 reason 合法
-    from app.api.schemas import BrokenRefInfo  # noqa: F401  契约存在性
-    assert reg["broken_ref_count"] >= 0
-    assert len(reg["broken_refs"]) == min(reg["broken_ref_count"], 20)
-    for w in reg["broken_refs"]:
-        assert w["reason"] in (
-            "unqualified_id", "id_recomputed", "downgraded_unlocatable",
-            "unqualified_id_at_registry", "malformed_id", "quote_missing",
-        )
+    # 门禁 P2-2：pipeline 落库前已 canonical 化——正常 fixture 审查的坏账
+    # 必须为 0（此前曾因读路径迁移产生警告而弱化为 >=0 恒真，已随落库
+    # canonical 化恢复有效断言）
+    assert reg["broken_ref_count"] == 0, (
+        f"正常 fixture 不应有坏账：{reg['broken_refs']}"
+    )
 
 
 def test_registry_idempotent_across_gets():

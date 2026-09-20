@@ -153,21 +153,52 @@ def test_pipeline_persists_normalized_tickets_and_index():
     assert checked >= 1
 
 
-def test_verify_trigger_merges_index_without_loss():
-    """done 后写方（verify 再跑）锁内重建+合并索引——缓存生命周期闭环。"""
+def test_verify_trigger_merges_index_without_loss(monkeypatch):
+    """done 后写方（verify 再跑）锁内重建+合并索引——缓存生命周期闭环。
+
+    门禁 P2-1 修复：旧断言 before⊆after 在「合并被摘除」时恒真（M-d 变异
+    不可杀）。改为注入一张已知真实摘句的新问题票——合并被摘除则该 span
+    键必不在索引中（变异可杀）。
+    """
+    import json as _json
 
     sample = Path(__file__).resolve().parents[1] / "fixtures" / "procurement_sample.txt"
+    text = sample.read_text(encoding="utf-8")
     rid = client.post(
         "/api/upload",
         files={"file": ("p.txt", sample.read_bytes(), "text/plain")},
         data={"category": "procurement"},
     ).json()["review_id"]
     wait_review_done(client, rid)
-    before = store_module.get(rid)["evidence_index"]["by_span"]
+
+    # 注入一个 verify 结果：含一张真实摘句的新问题票（mock，不依赖模型）
+    from app.services.evidence import build_evidence
+    from app.services import verify as verify_service
+
+    real_quote = next(ln.strip() for ln in text.splitlines() if len(ln.strip()) >= 10)
+    ticket = build_evidence(
+        text=text, quote=real_quote, parse_source="fact",
+        document_version=verify_service.document_version_for(text),
+    )
+    fake_state = {
+        "available": True,
+        "questions": [{
+            "id": "q-injected", "source": "fact", "status": "pending",
+            "question": "注入的核验问题", "quote": real_quote,
+            "verification": ticket["verification"], "evidence": ticket,
+        }],
+    }
+    monkeypatch.setattr(
+        verify_service, "run_bounded_verify",
+        lambda **kw: _json.loads(_json.dumps(fake_state)),
+        raising=True,
+    )
     r = client.post(f"/api/review/{rid}/verify")
     assert r.status_code == 200
     after = store_module.get(rid)["evidence_index"]["by_span"]
-    assert set(before.items()) <= set(after.items()), "再核合并不得丢失既有条目"
+    assert ticket["evidence_id"] in after.values(), (
+        "新问题票的 span 必须经锁内合并进入索引——摘除合并此断言必红"
+    )
 
 
 def test_registry_detects_duplicate_span_defensively():
