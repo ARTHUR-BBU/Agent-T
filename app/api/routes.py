@@ -209,6 +209,7 @@ def _start_review(
                         completion=result.get("completion") or "fully_complete",
                         facts=result.get("facts") or [],
                         verify=result.get("verify") or {},
+                        evidence_index=result.get("evidence_index"),
                         error=None,
                     )
             except Exception:  # noqa: BLE001

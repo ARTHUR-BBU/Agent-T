@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.evidence import document_version_for
 from app.services.store import store as store_module
 from tests.helpers import wait_review_done
 
@@ -121,16 +122,26 @@ def test_old_record_without_objections_key():
 # ---------- adopt 端点（阶段 3.2） ----------
 
 def _make_done_with_objections():
-    """造一条 done 记录：规则档位 + 已受理异议，供 adopt 测试。"""
+    """造一条 done 记录：规则档位 + 已受理异议，供 adopt 测试。
+
+    2b-① 起 text 存 fixture 原文——读路径坐标校验需要原文可证（无 text 的
+    行任何 verified 票都会被 fail-closed 降级，evidence_id 到达客户端的
+    测试断言依赖真实原文）。
+    """
+    from pathlib import Path
+
     items = [
         {"id": "penalty_cap", "name": "违约金上限", "status": "需关注"},
         {"id": "delivery", "name": "交付时间", "status": "通过"},
     ]
+    text = (Path(__file__).resolve().parents[1] / "fixtures" / "procurement_sample.txt").read_text(encoding="utf-8")
     rid = store_module.create(
         filename="c.txt", category="procurement", status="done", stage="done",
         created_at="2026-09-15 10:00", items=items, scorecard={},
         blind_candidates=[], blind_skipped_messages=[], blind_skipped_reason=None,
-        blind_enabled=False, text="", policies=[], error=None,
+        blind_enabled=False, text=text,
+        document_version=document_version_for(text),
+        policies=[], error=None,
         objections=dict(SAMPLE_OBJECTIONS),
     )
     return rid
@@ -192,18 +203,26 @@ def test_adopt_rejects_unaccepted_objection():
 
 def test_evidence_id_reaches_api_client():
     """宪法证据法批（Codex P1 钉死）：API 响应的 evidence.evidence_id 必须
-    真实到达客户端——schema 缺字段时 pydantic 静默 ignore（教训背书）。"""
+    真实到达客户端——schema 缺字段时 pydantic 静默 ignore（教训背书）。
+
+    2b-① 坐标校验上线后注入票据必须用真实摘句（假票会被正确降级 missing）。
+    """
     rid = _make_done_with_objections()
-    # 注入含 evidence_id 的受理异议
     row = store_module.get(rid)
     assert row is not None
+    from pathlib import Path
+    from app.services.evidence import build_evidence
+    # fixture 原文取一句真实存在的话（夹具行 text 为空，从文件取）
+    text = (Path(__file__).resolve().parents[1] / "fixtures" / "procurement_sample.txt").read_text(encoding="utf-8")
+    real_quote = next(
+        line.strip() for line in text.splitlines()
+        if len(line.strip()) >= 10
+    )
     obs = row["objections"]["objections"]
-    obs[0]["evidence"] = {
-        "evidence_id": "ev-test12345678",
-        "document_version": "dv", "quote": "q",
-        "start": 0, "end": 1, "clause_id": None,
-        "verification": "verified", "parse_source": "objection",
-    }
+    obs[0]["evidence"] = build_evidence(
+        text=text, quote=real_quote, parse_source="objection",
+        document_version=row.get("document_version") or "",
+    )
     store_module.update(rid, objections=row["objections"])
     r = client.get(f"/api/review/{rid}")
     assert r.status_code == 200

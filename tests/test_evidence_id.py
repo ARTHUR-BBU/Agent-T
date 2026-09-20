@@ -285,11 +285,82 @@ def test_empty_document_version_backfilled_before_id():
         {"questions": [q]}, text=_TEXT, document_version="rv1:abc",
     )
     got = out["questions"][0]["evidence"]
-    expect = dict(row_ev, document_version="rv1:abc")
-    assert got["evidence_id"] == evidence_id_for(expect), \
-        "ID 必须按回填后的版本计算（空版本直哈希会跨合同撞车）"
+    # 2b-① 坐标校验：注入的 end=16 含句号（不精确），归一化会 relocate 到
+    # 真实 span——断言「ID 与回填版本后的最终内容一致」（跨版本异 ID 才是
+    # 回填生效的证明），不再假设注入坐标原样保留
+    assert got["document_version"] == "rv1:abc", "空版本必须回填"
+    assert got["evidence_id"] == evidence_id_for(got), \
+        "ID 必须与回填版本后的最终内容一致（空版本直哈希会跨合同撞车）"
     # 对照：不同行的同摘句必须不同 ID
     other = normalize_verify_state(
         {"questions": [dict(q)]}, text=_TEXT, document_version="rv2:def",
     )
     assert other["questions"][0]["evidence"]["evidence_id"] != got["evidence_id"]
+
+
+# ---------- 批 2b-①：真实坐标（终审钉 4）+ 老票据迁移回归链 ----------
+
+_COMPACT_TEXT = "第八条 甲方应于 验 收 合 格 后七日内付款,逾期按日计息。"
+
+
+def test_compressed_match_end_is_real_coordinate():
+    """钉 4 硬测试：压缩匹配的 end 必须是真实终点——
+    text[start:end] 去空白后 == 摘句，不得估算 overrun/underrun。"""
+    from app.services.evidence import locate_quote_span
+
+    quote = "验收合格后七日内付款"  # 原文里夹着空格
+    s, e, status = locate_quote_span(_COMPACT_TEXT, quote)
+    assert status == "verified"
+    slice_text = _COMPACT_TEXT[s:e]
+    import re as _re
+    assert _re.sub(r"\s+", "", slice_text) == quote, (
+        f"端点必须真实：slice={slice_text!r}（估算端点会多带或少带字符）"
+    )
+
+
+def test_legacy_estimated_end_migrated_on_normalize():
+    """审计回归链（钉 4）：老票据（估算 end）→ 读取归一化后
+    得到真实 start/end → ID 重算 → warnings 捕获。"""
+    from app.services.evidence import normalize_evidence_ref
+
+    # 构造一张「估算端点」的老票：quote 对但 end 多带了后文（overrun）
+    legacy = {
+        "document_version": "dv1", "quote": "验收合格后七日内付款",
+        "start": _COMPACT_TEXT.index("验"), "end": _COMPACT_TEXT.index("付") + 1,
+        # 真实终点应在"款"之后；这里故意在"付"截断（模拟旧估算 underrun）
+        "clause_id": None,
+        "verification": "verified", "parse_source": "rules",
+        "evidence_id": "ev-legacyestimated",
+    }
+    fixed = normalize_evidence_ref(dict(legacy), _COMPACT_TEXT)
+    assert fixed["start"] == legacy["start"]
+    assert fixed["end"] > legacy["end"], "underrun 的估算端点必须被纠正为真实终点"
+    import re as _re
+    assert _re.sub(r"\s+", "", _COMPACT_TEXT[fixed["start"]:fixed["end"]]) == legacy["quote"]
+    assert fixed["evidence_id"] != legacy["evidence_id"], "坐标变了 ID 必须重算"
+    assert fixed["evidence_id"] == evidence_id_for(fixed), "重算后 ID 与内容一致"
+
+
+def test_accurate_ticket_not_flagged_by_coordinate_check():
+    """坐标本就精确的票据（含 exact 命中）→ 归一化零改动零警告。"""
+    from app.services.evidence import build_evidence, normalize_evidence_ref
+
+    good = build_evidence(text=_TEXT, quote="违约金为总额百分之三十", parse_source="rules")
+    out = normalize_evidence_ref(dict(good), _TEXT)
+    assert out == good, "精确票据归一化必须零改动"
+
+
+def test_coordinate_check_fail_closed_on_mismatch():
+    """坐标与摘句完全对不上且重定位失败 → 降级 missing（fail-closed）。"""
+    from app.services.evidence import normalize_evidence_ref
+
+    bad = {
+        "document_version": "dv1", "quote": "这句话绝不在原文里",
+        "start": 0, "end": 5,  # 坐标指向的原文区间与摘句无关
+        "clause_id": None,
+        "verification": "verified", "parse_source": "rules",
+        "evidence_id": "ev-badcoords001",
+    }
+    out = normalize_evidence_ref(bad, _TEXT)
+    assert out["verification"] == "missing"
+    assert out["evidence_id"] == ""

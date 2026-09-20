@@ -44,6 +44,29 @@ def pack_verify(raw: dict | None, *, row: dict | None = None) -> VerifyInfo | No
 _pack_verify = pack_verify
 
 
+def _merge_evidence_index(review_id: str) -> None:
+    """锁内重建 span 索引并持久化（批 2b-①缓存生命周期）。
+
+    必须在 verify_service.lock_for(review_id) 锁内调用——调用方负责。
+    重建失败静默跳过（缓存可丢弃、可下次重建，绝不影响主流程）。
+    """
+    try:
+        from app.services.evidence import (
+            normalize_review_evidence,
+            rebuild_evidence_index,
+        )
+        fresh = store.get(review_id)
+        if not fresh:
+            return
+        index = rebuild_evidence_index(normalize_review_evidence(fresh))
+        store.update(review_id, evidence_index={
+            "version": index.get("version", 1),
+            "by_span": index.get("by_span") or {},
+        })
+    except Exception:  # noqa: BLE001
+        logger.exception("evidence_index merge failed review_id=%s", review_id)
+
+
 @router.get("/review/{review_id}/verify", response_model=VerifyInfo)
 def get_verify(review_id: str):
     """列出待确认问题 + 剩余预算（A6）。"""
@@ -86,6 +109,10 @@ def trigger_verify(review_id: str):
             logger.exception("trigger verify failed review_id=%s", review_id)
             raise HTTPException(status_code=500, detail="核验失败，请稍后重试")
         store.update(review_id, verify=out)
+        # 批 2b-①：done 后写方在锁内重建 span 索引并合并持久化——
+        # 「先读→再改→再写」的索引合并全程持锁，Ask/Verify/Objection
+        # 并发写不丢条目（审计修订六）
+        _merge_evidence_index(review_id)
     packed = pack_verify(out, row=row)
     assert packed is not None
     return packed
@@ -120,6 +147,7 @@ def confirm_question(review_id: str, body: ConfirmRequest):
             return ConfirmResponse(ok=False, error=str(exc))
         # Design B：update 只带 verify，不带 items
         store.update(review_id, verify=updated)
+        _merge_evidence_index(review_id)
         after = store.get(review_id) or {}
         after_snap = {
             str(i.get("id")): i.get("status")
@@ -168,6 +196,7 @@ def reverify_question(review_id: str, body: ReverifyRequest):
                 )
             return ReverifyResponse(ok=False, error=code)
         store.update(review_id, verify=updated)
+        _merge_evidence_index(review_id)
         after = store.get(review_id) or {}
         after_snap = [
             (i.get("id"), i.get("status"))

@@ -159,7 +159,12 @@ def test_registry_reaches_api_and_is_accurate():
     )
     assert reg["occurrence_total"] == expected
     assert reg["qualified_unique_total"] >= 1, "正常审查至少有一张合格票"
-    assert reg["broken_ref_count"] == 0
+    # 门禁 P2-2：pipeline 落库前已 canonical 化——正常 fixture 审查的坏账
+    # 必须为 0（此前曾因读路径迁移产生警告而弱化为 >=0 恒真，已随落库
+    # canonical 化恢复有效断言）
+    assert reg["broken_ref_count"] == 0, (
+        f"正常 fixture 不应有坏账：{reg['broken_refs']}"
+    )
 
 
 def test_registry_idempotent_across_gets():

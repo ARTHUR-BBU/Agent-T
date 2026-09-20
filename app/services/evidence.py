@@ -14,7 +14,9 @@ from pydantic import BaseModel
 VerificationStatus = Literal["verified", "unverified", "ambiguous", "missing"]
 ParseSource = Literal["rules", "blind", "quality", "ask", "fact", "objection"]
 
-_QUOTE_TRIM = "「」\"'“”『』…."
+# 2b-①：补中文句读——摘句尾部的句号/逗号等是引用装饰，剥离后同位
+# 置的措辞变体（带句号/不带）才能收敛到同一 span（不然 4-15 与 4-16 两张票）
+_QUOTE_TRIM = "「」\"'“”『』…。，、；！？"
 
 
 class EvidenceRef(BaseModel):
@@ -46,7 +48,13 @@ def document_version_for(text: str, review_id: str | None = None) -> str:
 
 
 def locate_quote_span(text: str, quote: str) -> tuple[Optional[int], Optional[int], str]:
-    """在原文定位摘句起止。返回 (start, end, status) status∈verified|ambiguous|missing。"""
+    """在原文定位摘句起止。返回 (start, end, status) status∈verified|ambiguous|missing。
+
+    批 2b-①（终审钉 4）：端点必须是原文**真实坐标**——精确命中 end =
+    start+len(bare) 本就精确；压缩命中 end 由压缩文本的 offset 表回推
+    （原实现按摘句长度估算， overrun/underrun 都可能）。硬测试契约：
+    text[start:end] 去空白后 == 规范化摘句。
+    """
     bare = (quote or "").strip().strip(_QUOTE_TRIM).strip()
     if not text or not bare:
         return None, None, "missing"
@@ -55,7 +63,13 @@ def locate_quote_span(text: str, quote: str) -> tuple[Optional[int], Optional[in
     if not positions:
         compact_q = re.sub(r"\s+", "", bare.replace("…", "").replace("...", ""))
         if len(compact_q) >= 6:
-            positions = _find_compressed(text, compact_q)
+            spans = _find_compressed_spans(text, compact_q)
+            if spans:
+                # 压缩命中：坐标取首处，核验标 ambiguous（位置不唯一）或
+                # verified（唯一命中）；end 由 offset 表回推真实终点
+                s, e = spans[0]
+                return s, e, ("ambiguous" if len(spans) > 1 else "verified")
+            return None, None, "missing"
     if not positions:
         return None, None, "missing"
     if len(positions) > 1:
@@ -63,12 +77,7 @@ def locate_quote_span(text: str, quote: str) -> tuple[Optional[int], Optional[in
         s = positions[0]
         return s, s + len(bare), "ambiguous"
     s = positions[0]
-    # 压缩命中时 end 按原文长度估；精确命中用 quote 长
-    end = s + len(bare)
-    if end > len(text) or text[s:end] != bare:
-        # 压缩路径：向后扫到等长非空白
-        end = min(len(text), s + max(len(bare), 1))
-    return s, end, "verified"
+    return s, s + len(bare), "verified"
 
 
 def build_evidence(
@@ -138,11 +147,19 @@ def evidence_id_for(ref: dict[str, Any]) -> str:
     return "ev-" + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 
+def _canon_for_compare(t: str) -> str:
+    """坐标校验用的规范化：去首尾装饰与全部空白（与 locate 同口径）。"""
+    return re.sub(r"\s+", "", (t or "").strip().strip(_QUOTE_TRIM).strip())
+
+
 def normalize_evidence_ref(ref: dict[str, Any], text: str) -> dict[str, Any]:
     """票据归一化（第三轮审计 P2）：历史票据补定位、清非资格 ID、重算合格 ID。
 
     - verified/ambiguous 但缺坐标：用 text 重新定位（与新生成票据同锚定，
       否则旧表示与新表示哈希不同，跨层去重失效）；
+    - verified/ambiguous 坐标不实（批 2b-① 终审钉 4 的迁移路径）：老票据
+      的压缩匹配端点曾是估算值——校验 text[start:end] 与摘句的规范化相等，
+      不实则重新定位（真实端点），ID 随坐标重算（id_recomputed 警告可见）；
     - missing/unverified（含历史误发的 ev-*）：清空 evidence_id——
       无证据资格的票据不得被引用（STORE_TTL=0 时否则永续暴露）；
     - 合格票据：按最终内容重算 ID。
@@ -160,7 +177,44 @@ def normalize_evidence_ref(ref: dict[str, Any], text: str) -> dict[str, Any]:
             ref["verification"] = "missing"
             ref["start"] = None
             ref["end"] = None
+    elif ref.get("verification") in ("verified", "ambiguous"):
+        # 批 2b-① 坐标精确性校验：老票据的估算端点在此迁移为真实端点。
+        # 只对**有坐标**的合格票做切片比对（上面的缺坐标分支已覆盖重定位）
+        s = ref.get("start")
+        e = ref.get("end")
+        assert isinstance(s, int) and isinstance(e, int)  # 首分支已排除非 int
+        t = text or ""
+        slice_ok = (
+            isinstance(s, int) and isinstance(e, int)
+            and 0 <= s < e <= len(t)
+            and _canon_for_compare(t[s:e]) == _canon_for_compare(ref.get("quote") or "")
+        )
+        if not slice_ok:
+            s2, e2, loc = locate_quote_span(t, ref.get("quote") or "")
+            if loc in ("verified", "ambiguous"):
+                ref["start"], ref["end"], ref["verification"] = s2, e2, loc
+            else:
+                # 坐标不实且重定位失败：无法证明原文存在，降级（fail-closed）
+                ref["verification"] = "missing"
+                ref["start"] = None
+                ref["end"] = None
+        else:
+            # PR review P2-b：端点归一——canon 相等可能来自尾部句读装饰
+            # （如 quote「甲方付款，」配坐标 end 多含一个逗号），须与 locate
+            # 同口径截到 bare 的精确终点，否则同引用因路径不同产生两个 ID
+            bare = (ref.get("quote") or "").strip().strip(_QUOTE_TRIM).strip()
+            if bare and t[s:s + len(bare)] == bare and e != s + len(bare):
+                ref["end"] = s + len(bare)
     if ref.get("verification") in ("verified", "ambiguous"):
+        # 2b-① canonical 化：quote 统一取原文切片——同一 span 的任何措辞
+        # 变体（多写/少写标点、截断装饰）收敛到同一 ID（哈希的 quote 项
+        # 一致），这是「span 复用」的实质机制；切片随时可从 text 重建，
+        # 缓存/索引无需保存合同原文（审计钉：缓存只存坐标和 ID）。
+        s, e = ref.get("start"), ref.get("end")
+        if isinstance(s, int) and isinstance(e, int) and 0 <= s < e <= len(text or ""):
+            canonical_quote = (text or "")[s:e][:300]
+            if canonical_quote and ref.get("quote") != canonical_quote:
+                ref["quote"] = canonical_quote
         ref["evidence_id"] = evidence_id_for(ref)
     else:
         ref["verification"] = "missing" if ref.get("verification") not in (
@@ -275,7 +329,13 @@ def _find_all(text: str, needle: str, limit: int = 20) -> list[int]:
     return positions
 
 
-def _find_compressed(text: str, needle: str, limit: int = 20) -> list[int]:
+def _find_compressed_spans(text: str, needle: str, limit: int = 20) -> list[tuple[int, int]]:
+    """压缩匹配（忽略空白）并返回原文**真实区间** [(start, end), ...]。
+
+    批 2b-①（终审钉 4）：end 由压缩文本的 offset 表回推——
+    命中区间在原文中的真实终点 = 第 len(needle)-1 个非空白字符的原文下标 + 1，
+    保证 text[start:end] 去空白后 == needle（不再按摘句长度估算）。
+    """
     if not needle:
         return []
     compressed_chars: list[str] = []
@@ -285,12 +345,14 @@ def _find_compressed(text: str, needle: str, limit: int = 20) -> list[int]:
             compressed_chars.append(ch)
             offsets.append(i)
     compressed = "".join(compressed_chars)
-    positions: list[int] = []
+    spans: list[tuple[int, int]] = []
     idx = compressed.find(needle)
-    while idx >= 0 and len(positions) < limit:
-        positions.append(offsets[idx])
+    while idx >= 0 and len(spans) < limit:
+        start = offsets[idx]
+        end = offsets[idx + len(needle) - 1] + 1
+        spans.append((start, end))
         idx = compressed.find(needle, idx + 1)
-    return positions
+    return spans
 
 
 def _clause_at(clause_index: dict[str, Any], pos: int) -> Optional[str]:
@@ -475,6 +537,7 @@ def build_evidence_registry(
     id_containers: dict[str, set[str]] = {}
     qualified_ids: set[str] = set()
     registry_broken: list[dict[str, str]] = []
+    span_ids: dict[str, set[str]] = {}  # 施工纪律 1：同 span 异 ID 检测
 
     def _count(ev: Any, container: str) -> None:
         nonlocal occurrence_total, qualified_occurrence_total, empty_id_occurrences
@@ -508,6 +571,12 @@ def build_evidence_registry(
             qualified_ids.add(eid)
         if eid:
             id_containers.setdefault(eid, set()).add(container)
+            if isinstance(ev.get("start"), int) and isinstance(ev.get("end"), int):
+                span_key = (
+                    f"{ev.get('document_version') or ''}|{ev.get('clause_id') or ''}"
+                    f"|{ev.get('start')}|{ev.get('end')}"
+                )
+                span_ids.setdefault(span_key, set()).add(eid)
         else:
             empty_id_occurrences += 1  # 空 ID 无法去重，各计一张
 
@@ -543,10 +612,138 @@ def build_evidence_registry(
         "multi_source_unique": sum(
             1 for cs in id_containers.values() if len(cs) >= 2
         ),
-        # broken 账目两个来源（PR review P2-b 后）：①归一化改写前的捕获
-        # （审计修订一——旧 ID 被清掉后只有这里能报警）②登记簿自检
-        # （归一化跳过的票据/形状非法 ID，归一化 warnings 盲区）
-        "broken_ref_count": len(warnings) + len(registry_broken),
-        "broken_refs": list((list(warnings) + registry_broken)[
-            :_BROKEN_REFS_SAMPLE_CAP]),
+        # broken 账目三个来源：①归一化改写前捕获 ②登记簿自检（盲区）
+        # ③同 span 异 ID（施工纪律 1——canonical 收敛后本不应出现，出现即
+        # 说明有绕过归一化的写入，固定收敛到字典序最小合法 ID）
+        "broken_ref_count": len(warnings) + len(registry_broken)
+        + sum(max(0, len(ids) - 1) for ids in span_ids.values()),
+        "broken_refs": (list(warnings) + registry_broken + [
+            {"where": key, "old_evidence_id": min(ids),
+             "new_evidence_id": "", "reason": "duplicate_span"}
+            for key, ids in sorted(span_ids.items()) if len(ids) > 1
+        ])[:_BROKEN_REFS_SAMPLE_CAP],
     }
+
+
+# ---------- 批 2b-①：统一发证窗口 + span 索引（可重建缓存） ----------
+
+EVIDENCE_INDEX_VERSION = 1
+
+
+def resolve_or_build_evidence(
+    *,
+    text: str,
+    quote: str,
+    parse_source: ParseSource,
+    document_version: str,
+    clause_id: Optional[str] = None,
+    start: Optional[int] = None,
+    end: Optional[int] = None,
+    clause_index: Optional[dict[str, Any]] = None,
+    index: Optional[dict[str, Any]] = None,
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """统一发证窗口（批 2b-①）：建票 → 归一化收敛 → span 索引登记。
+
+    七层产票的收口入口：票据先经 normalize_evidence_ref（canonical 化
+    quote=原文切片 + 坐标校验），同 span 必然同 ID；index（可重建缓存，
+    by_span 主键——审计第二轮钉 1）命中即复用、异 ID 记 duplicate_span
+    警告并按施工纪律固定收敛。返回 (ticket, warnings)。
+
+    index 形状（只存坐标和 ID，不保存合同原文——切片随时可从 text 重建）：
+        {"version": 1, "by_span": {"dv|clause|start|end": "ev-..."}}
+    """
+    warnings: list[dict[str, str]] = []
+    ticket = normalize_evidence_ref(
+        build_evidence(
+            text=text, quote=quote, parse_source=parse_source,
+            document_version=document_version, clause_id=clause_id,
+            start=start, end=end, clause_index=clause_index,
+        ),
+        text or "",
+    )
+    if index is None:
+        return ticket, warnings
+    index.setdefault("version", EVIDENCE_INDEX_VERSION)
+    index.setdefault("by_span", {})
+    s, e = ticket.get("start"), ticket.get("end")
+    if ticket.get("verification") in ("verified", "ambiguous") and (
+        isinstance(s, int) and isinstance(e, int)
+    ):
+        key = f"{document_version}|{ticket.get('clause_id') or ''}|{s}|{e}"
+        existing = index["by_span"].get(key)
+        if existing and existing != ticket["evidence_id"]:
+            # 施工纪律 1：同 span 异 ID（旧数据混合）——固定收敛到字典序
+            # 最小合法 ID，绝不定不出或随遍历顺序漂移
+            warnings.append({
+                "where": key,
+                "old_evidence_id": str(existing),
+                "new_evidence_id": str(ticket["evidence_id"]),
+                "reason": "duplicate_span",
+            })
+            # PR review P2-a：索引必须与返回票一致——遗留 ID 无法重建内容，
+            # 返回票以内容自洽的新 ID 为准（evidence_id == 内容哈希是更高
+            # 级不变量）；纪律 1 的字典序收敛保留在 rebuild 路径（候选都是
+            # 真实票据、个个内容自洽，见 rebuild_evidence_index）
+            index["by_span"][key] = str(ticket["evidence_id"])
+        else:
+            index["by_span"][key] = str(ticket["evidence_id"])
+    return ticket, warnings
+
+
+def rebuild_evidence_index(row_normalized: dict[str, Any]) -> dict[str, Any]:
+    """从六容器票据全量重建 span 索引（可重建缓存的「重建」半边）。
+
+    纯读派生：产出**响应/合并副本**所需的新 dict——GET 读路径绝不写回
+    store 行（审计修订六红线）；写方锁内合并（_merge_evidence_index）
+    显式落库属 §1.6-4 授权。同 span 多 ID（canonical 收敛后理论不可达，
+    防御保留）→ 取字典序最小合法 ID 为 canonical，其余记 _duplicates。
+    """
+    by_span: dict[str, str] = {}
+    duplicates: list[dict[str, str]] = []
+    text = row_normalized.get("text") or ""
+    dv = row_normalized.get("document_version") or ""
+
+    def _reg(ev: Any) -> None:
+        if not isinstance(ev, dict) or ev.get("verification") not in (
+            "verified", "ambiguous"
+        ):
+            return
+        s, e = ev.get("start"), ev.get("end")
+        eid = str(ev.get("evidence_id") or "")
+        if not (isinstance(s, int) and isinstance(e, int) and eid):
+            return
+        key = f"{dv}|{ev.get('clause_id') or ''}|{s}|{e}"
+        existing = by_span.get(key)
+        if existing is None:
+            by_span[key] = eid
+        elif existing != eid:
+            duplicates.append({
+                "where": key,
+                "old_evidence_id": existing,
+                "new_evidence_id": eid,
+                "reason": "duplicate_span",
+            })
+            by_span[key] = min(existing, eid)
+
+    for it in row_normalized.get("items") or []:
+        _reg(it.get("evidence") if isinstance(it, dict) else None)
+    for cand in row_normalized.get("blind_candidates") or []:
+        _reg(cand.get("evidence") if isinstance(cand, dict) else None)
+    quality = row_normalized.get("quality") or {}
+    if isinstance(quality, dict):
+        for obs in quality.get("observations") or []:
+            _reg(obs.get("evidence") if isinstance(obs, dict) else None)
+        for f in quality.get("facts") or []:
+            _reg(f.get("evidence") if isinstance(f, dict) else None)
+    for f in row_normalized.get("facts") or []:
+        _reg(f.get("evidence") if isinstance(f, dict) else None)
+    objections = row_normalized.get("objections") or {}
+    if isinstance(objections, dict):
+        for ob in objections.get("objections") or []:
+            _reg(ob.get("evidence") if isinstance(ob, dict) else None)
+    verify = row_normalized.get("verify") or {}
+    if isinstance(verify, dict):
+        for q in verify.get("questions") or []:
+            _reg(q.get("evidence") if isinstance(q, dict) else None)
+    return {"version": EVIDENCE_INDEX_VERSION, "by_span": by_span,
+            "_duplicates": duplicates, "_text_len": len(text)}
