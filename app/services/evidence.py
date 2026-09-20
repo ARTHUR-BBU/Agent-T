@@ -46,7 +46,13 @@ def document_version_for(text: str, review_id: str | None = None) -> str:
 
 
 def locate_quote_span(text: str, quote: str) -> tuple[Optional[int], Optional[int], str]:
-    """在原文定位摘句起止。返回 (start, end, status) status∈verified|ambiguous|missing。"""
+    """在原文定位摘句起止。返回 (start, end, status) status∈verified|ambiguous|missing。
+
+    批 2b-①（终审钉 4）：端点必须是原文**真实坐标**——精确命中 end =
+    start+len(bare) 本就精确；压缩命中 end 由压缩文本的 offset 表回推
+    （原实现按摘句长度估算， overrun/underrun 都可能）。硬测试契约：
+    text[start:end] 去空白后 == 规范化摘句。
+    """
     bare = (quote or "").strip().strip(_QUOTE_TRIM).strip()
     if not text or not bare:
         return None, None, "missing"
@@ -55,7 +61,13 @@ def locate_quote_span(text: str, quote: str) -> tuple[Optional[int], Optional[in
     if not positions:
         compact_q = re.sub(r"\s+", "", bare.replace("…", "").replace("...", ""))
         if len(compact_q) >= 6:
-            positions = _find_compressed(text, compact_q)
+            spans = _find_compressed_spans(text, compact_q)
+            if spans:
+                # 压缩命中：坐标取首处，核验标 ambiguous（位置不唯一）或
+                # verified（唯一命中）；end 由 offset 表回推真实终点
+                s, e = spans[0]
+                return s, e, ("ambiguous" if len(spans) > 1 else "verified")
+            return None, None, "missing"
     if not positions:
         return None, None, "missing"
     if len(positions) > 1:
@@ -63,12 +75,7 @@ def locate_quote_span(text: str, quote: str) -> tuple[Optional[int], Optional[in
         s = positions[0]
         return s, s + len(bare), "ambiguous"
     s = positions[0]
-    # 压缩命中时 end 按原文长度估；精确命中用 quote 长
-    end = s + len(bare)
-    if end > len(text) or text[s:end] != bare:
-        # 压缩路径：向后扫到等长非空白
-        end = min(len(text), s + max(len(bare), 1))
-    return s, end, "verified"
+    return s, s + len(bare), "verified"
 
 
 def build_evidence(
@@ -138,11 +145,19 @@ def evidence_id_for(ref: dict[str, Any]) -> str:
     return "ev-" + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
 
 
+def _canon_for_compare(t: str) -> str:
+    """坐标校验用的规范化：去首尾装饰与全部空白（与 locate 同口径）。"""
+    return re.sub(r"\s+", "", (t or "").strip().strip(_QUOTE_TRIM).strip())
+
+
 def normalize_evidence_ref(ref: dict[str, Any], text: str) -> dict[str, Any]:
     """票据归一化（第三轮审计 P2）：历史票据补定位、清非资格 ID、重算合格 ID。
 
     - verified/ambiguous 但缺坐标：用 text 重新定位（与新生成票据同锚定，
       否则旧表示与新表示哈希不同，跨层去重失效）；
+    - verified/ambiguous 坐标不实（批 2b-① 终审钉 4 的迁移路径）：老票据
+      的压缩匹配端点曾是估算值——校验 text[start:end] 与摘句的规范化相等，
+      不实则重新定位（真实端点），ID 随坐标重算（id_recomputed 警告可见）；
     - missing/unverified（含历史误发的 ev-*）：清空 evidence_id——
       无证据资格的票据不得被引用（STORE_TTL=0 时否则永续暴露）；
     - 合格票据：按最终内容重算 ID。
@@ -160,6 +175,25 @@ def normalize_evidence_ref(ref: dict[str, Any], text: str) -> dict[str, Any]:
             ref["verification"] = "missing"
             ref["start"] = None
             ref["end"] = None
+    elif ref.get("verification") in ("verified", "ambiguous"):
+        # 批 2b-① 坐标精确性校验：老票据的估算端点在此迁移为真实端点。
+        # 只对**有坐标**的合格票做切片比对（上面的缺坐标分支已覆盖重定位）
+        s, e = ref.get("start"), ref.get("end")
+        t = text or ""
+        slice_ok = (
+            isinstance(s, int) and isinstance(e, int)
+            and 0 <= s < e <= len(t)
+            and _canon_for_compare(t[s:e]) == _canon_for_compare(ref.get("quote") or "")
+        )
+        if not slice_ok:
+            s2, e2, loc = locate_quote_span(t, ref.get("quote") or "")
+            if loc in ("verified", "ambiguous"):
+                ref["start"], ref["end"], ref["verification"] = s2, e2, loc
+            else:
+                # 坐标不实且重定位失败：无法证明原文存在，降级（fail-closed）
+                ref["verification"] = "missing"
+                ref["start"] = None
+                ref["end"] = None
     if ref.get("verification") in ("verified", "ambiguous"):
         ref["evidence_id"] = evidence_id_for(ref)
     else:
@@ -275,7 +309,13 @@ def _find_all(text: str, needle: str, limit: int = 20) -> list[int]:
     return positions
 
 
-def _find_compressed(text: str, needle: str, limit: int = 20) -> list[int]:
+def _find_compressed_spans(text: str, needle: str, limit: int = 20) -> list[tuple[int, int]]:
+    """压缩匹配（忽略空白）并返回原文**真实区间** [(start, end), ...]。
+
+    批 2b-①（终审钉 4）：end 由压缩文本的 offset 表回推——
+    命中区间在原文中的真实终点 = 第 len(needle)-1 个非空白字符的原文下标 + 1，
+    保证 text[start:end] 去空白后 == needle（不再按摘句长度估算）。
+    """
     if not needle:
         return []
     compressed_chars: list[str] = []
@@ -285,12 +325,14 @@ def _find_compressed(text: str, needle: str, limit: int = 20) -> list[int]:
             compressed_chars.append(ch)
             offsets.append(i)
     compressed = "".join(compressed_chars)
-    positions: list[int] = []
+    spans: list[tuple[int, int]] = []
     idx = compressed.find(needle)
-    while idx >= 0 and len(positions) < limit:
-        positions.append(offsets[idx])
+    while idx >= 0 and len(spans) < limit:
+        start = offsets[idx]
+        end = offsets[idx + len(needle) - 1] + 1
+        spans.append((start, end))
         idx = compressed.find(needle, idx + 1)
-    return positions
+    return spans
 
 
 def _clause_at(clause_index: dict[str, Any], pos: int) -> Optional[str]:
