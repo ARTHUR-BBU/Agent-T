@@ -384,25 +384,44 @@ def run_review(
             "parsed_text": parsed_text or "",
         })
     ))
+    # 批 2b-①：落库前做一次读路径同源归一化（canonical 化：坐标校验 +
+    # quote 收敛为原文切片）——存进 store 的就是收敛后的形态，读路径零改写；
+    # span 索引（可重建缓存，by_span 主键）随行持久化，供 done 后写方
+    # （verify 再核 / 2b-③ ask）锁内查重合并。
+    from app.services.evidence import normalize_review_evidence, rebuild_evidence_index
+    _normalized = normalize_review_evidence({
+        "text": final.get("text") or "",
+        "document_version": final.get("document_version") or "",
+        "items": final.get("items") or [],
+        "blind_candidates": final.get("blind_candidates") or [],
+        "quality": final.get("quality") or {},
+        "objections": final.get("objections") or {},
+        "verify": final.get("verify") or {},
+    })
+    _index = rebuild_evidence_index(_normalized)
     return {
         "text": final.get("text") or "",
-        "items": final.get("items") or [],
+        "items": _normalized.get("items") or [],
         "policies": final.get("policies") or [],
         "category": final.get("category") or category,
         "category_label": final.get("category_label") or category,
         "error": final.get("error") or "",
         "clause_index": final.get("clause_index"),
         "scorecard": final.get("scorecard") or {},
-        "blind_candidates": final.get("blind_candidates") or [],
+        "blind_candidates": _normalized.get("blind_candidates") or [],
         "blind_skipped_messages": final.get("blind_skipped_messages") or [],
         "blind_skipped_reason": final.get("blind_skipped_reason"),
         "blind_enabled": bool(final.get("blind_enabled")),
-        "quality": final.get("quality") or {},
-        "objections": final.get("objections") or {},
+        "quality": _normalized.get("quality") or {},
+        "objections": _normalized.get("objections") or {},
         "document_version": final.get("document_version") or "",
         "completion": final.get("completion") or (
             "fully_complete" if not final.get("error") else ""
         ),
-        "facts": (final.get("quality") or {}).get("facts") or [],
-        "verify": final.get("verify") or {},
+        "facts": (_normalized.get("quality") or {}).get("facts") or [],
+        "verify": _normalized.get("verify") or {},
+        "evidence_index": {
+            "version": _index.get("version", 1),
+            "by_span": _index.get("by_span") or {},
+        },
     }

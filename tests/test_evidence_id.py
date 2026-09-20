@@ -332,7 +332,6 @@ def test_legacy_estimated_end_migrated_on_normalize():
         "verification": "verified", "parse_source": "rules",
         "evidence_id": "ev-legacyestimated",
     }
-    warnings: list = []
     fixed = normalize_evidence_ref(dict(legacy), _COMPACT_TEXT)
     assert fixed["start"] == legacy["start"]
     assert fixed["end"] > legacy["end"], "underrun 的估算端点必须被纠正为真实终点"
