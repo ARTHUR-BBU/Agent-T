@@ -180,7 +180,9 @@ def normalize_evidence_ref(ref: dict[str, Any], text: str) -> dict[str, Any]:
     elif ref.get("verification") in ("verified", "ambiguous"):
         # 批 2b-① 坐标精确性校验：老票据的估算端点在此迁移为真实端点。
         # 只对**有坐标**的合格票做切片比对（上面的缺坐标分支已覆盖重定位）
-        s, e = ref.get("start"), ref.get("end")
+        s = ref.get("start")
+        e = ref.get("end")
+        assert isinstance(s, int) and isinstance(e, int)  # 首分支已排除非 int
         t = text or ""
         slice_ok = (
             isinstance(s, int) and isinstance(e, int)
@@ -196,6 +198,13 @@ def normalize_evidence_ref(ref: dict[str, Any], text: str) -> dict[str, Any]:
                 ref["verification"] = "missing"
                 ref["start"] = None
                 ref["end"] = None
+        else:
+            # PR review P2-b：端点归一——canon 相等可能来自尾部句读装饰
+            # （如 quote「甲方付款，」配坐标 end 多含一个逗号），须与 locate
+            # 同口径截到 bare 的精确终点，否则同引用因路径不同产生两个 ID
+            bare = (ref.get("quote") or "").strip().strip(_QUOTE_TRIM).strip()
+            if bare and t[s:s + len(bare)] == bare and e != s + len(bare):
+                ref["end"] = s + len(bare)
     if ref.get("verification") in ("verified", "ambiguous"):
         # 2b-① canonical 化：quote 统一取原文切片——同一 span 的任何措辞
         # 变体（多写/少写标点、截断装饰）收敛到同一 ID（哈希的 quote 项
@@ -665,14 +674,17 @@ def resolve_or_build_evidence(
         if existing and existing != ticket["evidence_id"]:
             # 施工纪律 1：同 span 异 ID（旧数据混合）——固定收敛到字典序
             # 最小合法 ID，绝不定不出或随遍历顺序漂移
-            keep = min(existing, str(ticket["evidence_id"]))
             warnings.append({
                 "where": key,
                 "old_evidence_id": str(existing),
                 "new_evidence_id": str(ticket["evidence_id"]),
                 "reason": "duplicate_span",
             })
-            index["by_span"][key] = keep
+            # PR review P2-a：索引必须与返回票一致——遗留 ID 无法重建内容，
+            # 返回票以内容自洽的新 ID 为准（evidence_id == 内容哈希是更高
+            # 级不变量）；纪律 1 的字典序收敛保留在 rebuild 路径（候选都是
+            # 真实票据、个个内容自洽，见 rebuild_evidence_index）
+            index["by_span"][key] = str(ticket["evidence_id"])
         else:
             index["by_span"][key] = str(ticket["evidence_id"])
     return ticket, warnings

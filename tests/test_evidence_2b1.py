@@ -77,13 +77,10 @@ def test_resolve_or_build_registers_and_flags_duplicate():
         document_version=_DV, index=index,
     )
     assert w2 and w2[0]["reason"] == "duplicate_span"
-    assert index["by_span"][key] == "ev-000000000000", "必须收敛到字典序最小"
-    index["by_span"][key] = "ev-ffffffffffff"  # 字典序最大
-    t3, w3 = resolve_or_build_evidence(
-        text=_TEXT, quote="违约金为总额百分之三十", parse_source="fact",
-        document_version=_DV, index=index,
-    )
-    assert w3 and index["by_span"][key] == t3["evidence_id"], "新票更小时新票胜出"
+    # PR review P2-a：索引必须与返回票一致——新票 ID 内容自洽（evidence_id
+    # == 内容哈希），遗留 ID 无法重建内容，故写路径以新票为准（返回票与
+    # 索引绝不矛盾）；字典序收敛保留在 rebuild 路径（候选皆为真实票据）
+    assert index["by_span"][key] == w2[0]["new_evidence_id"], "索引与返回票必须一致"
 
 
 def test_rebuild_index_shape_and_direction():
@@ -187,3 +184,26 @@ def test_registry_detects_duplicate_span_defensively():
     reg = build_evidence_registry(row, [])
     dup = [w for w in reg["broken_refs"] if w["reason"] == "duplicate_span"]
     assert dup, "同 span 异 ID 必须被登记簿自检抓到"
+
+
+def test_coordinate_path_converges_with_locate_path():
+    """PR review P2-b：同一引用「带坐标」与「不带坐标」两条路径必须同 ID——
+    坐标路径的尾部句读装饰端点须归一到 locate 同口径。"""
+    text = "甲方付款，乙方开票。"
+    q = "甲方付款，"  # 尾部句读装饰
+    with_coords = normalize_review_evidence({
+        "text": text, "document_version": _DV,
+        "items": [{"id": "a", "evidence": build_evidence(
+            text=text, quote=q, parse_source="rules",
+            document_version=_DV, start=0, end=5)}],
+    })["items"][0]["evidence"]
+    without_coords = normalize_review_evidence({
+        "text": text, "document_version": _DV,
+        "items": [{"id": "a", "evidence": build_evidence(
+            text=text, quote=q, parse_source="quality", document_version=_DV)}],
+    })["items"][0]["evidence"]
+    assert with_coords["evidence_id"] == without_coords["evidence_id"], (
+        f"坐标路径({with_coords['start']},{with_coords['end']}) 与 "
+        f"locate 路径({without_coords['start']},{without_coords['end']}) 必须同 ID"
+    )
+    assert with_coords["end"] == 4, "端点归一：截到 bare 的精确终点"
