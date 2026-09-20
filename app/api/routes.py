@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, Upl
 from fastapi.concurrency import run_in_threadpool
 
 from app.api.schemas import (
+    EvidenceRegistryInfo,
     ObjectionInfo,
     AskRequest,
     AskResponse,
@@ -378,8 +379,12 @@ def get_review(review_id: str):
         )}
     # 宪法证据法批（第三轮复核 P1-2）：读路径归一化**全部** EvidenceRef
     # 容器（items/blind/quality/facts/objections/verify——此前只归一化 items）
-    from app.services.evidence import normalize_review_evidence
-    row = normalize_review_evidence(row)
+    # 证据法批 2a：warnings 在归一化改写前捕获异常（审计修订一——报警器
+    # 不能先擦掉报警记录），登记簿由归一化行 + warnings 派生（纯读视图）
+    from app.services.evidence import build_evidence_registry, normalize_review_evidence
+    warnings: list = []
+    row = normalize_review_evidence(row, warnings)
+    evidence_registry = build_evidence_registry(row, warnings)
     clause_index = row.get("clause_index")
     stance = row.get("stance") or "neutral"
     quality = row.get("quality")
@@ -412,6 +417,7 @@ def get_review(review_id: str):
         completion=row.get("completion"),
         document_version=row.get("document_version") or "",
         facts=facts or [],
+        evidence_registry=EvidenceRegistryInfo(**evidence_registry),
         verify=_pack_verify(row.get("verify"), row=row),
         export_scope_note=row.get("export_scope_note")
         or (
