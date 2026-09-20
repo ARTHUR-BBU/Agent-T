@@ -24,6 +24,35 @@ class EvidenceRefInfo(BaseModel):
     parse_source: str = "rules"  # rules|blind|quality|ask|fact
 
 
+class BrokenRefInfo(BaseModel):
+    """归一化异常记录（批 2a 审计修订一：改写前捕获，报警器不先擦报警记录）。"""
+
+    where: str  # 容器[下标].evidence，仅调试辅助，不作身份
+    old_evidence_id: str
+    new_evidence_id: str = ""
+    reason: str  # unqualified_id | id_recomputed | downgraded_unlocatable
+
+
+class EvidenceRegistryInfo(BaseModel):
+    """证据登记簿概览（批 2a）：纯读路径派生视图，每次响应即时重建。
+
+    文档作用域账目；occurrence（出现次数）与 unique（唯一张数）分开计数
+    ——同票多层各计一次出现，unique 按 evidence_id 去重（空 ID 各计一张）。
+    multi_source_unique 只统计现有 ID 的精确一致性，不宣称语义级同证据
+    合并（语义级复用是批 2b 服务端 span 规范化）。
+    """
+
+    registry_version: int = 1
+    rebuilt_at: str = ""
+    occurrence_total: int = 0
+    unique_total: int = 0
+    qualified_occurrence_total: int = 0
+    qualified_unique_total: int = 0
+    multi_source_unique: int = 0
+    broken_ref_count: int = 0
+    broken_refs: list[BrokenRefInfo] = Field(default_factory=list)
+
+
 class ChecklistItemResult(BaseModel):
     id: str
     name: str
@@ -305,6 +334,9 @@ class ReviewSummary(BaseModel):
     facts: list[FactMaterial] = Field(default_factory=list)
     # A6 有界主动核验（旧记录 None；前端「需你确认」）
     verify: Optional[VerifyInfo] = None
+    # 证据法批 2a：证据登记簿概览（纯读路径派生视图，每次响应即时重建；
+    # 旧记录/异常路径为 None，前端零感知）
+    evidence_registry: Optional[EvidenceRegistryInfo] = None
     # 导出范围说明（九哥：报告只含本次读到并展示的内容…）
     export_scope_note: str = (
         "报告只含本次读到并展示的内容；未读部分不写入结论"

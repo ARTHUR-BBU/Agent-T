@@ -313,7 +313,8 @@ def _clause_at(clause_index: dict[str, Any], pos: int) -> Optional[str]:
 
 
 def normalize_verify_state(
-    state: dict[str, Any], *, text: str, document_version: str
+    state: dict[str, Any], *, text: str, document_version: str,
+    warnings: Optional[list[dict[str, str]]] = None, base_where: str = "verify.questions",
 ) -> dict[str, Any]:
     """归一化 verify.questions[].evidence 并同步问题级 verification（PR review P1）。
 
@@ -323,25 +324,66 @@ def normalize_verify_state(
       摘句继续告诉用户「已验证」（PR review P1-b）
     - document_version 回填：旧票据空版本直接哈希 = 不同合同同摘句同 ID，
       击穿 document 维度的身份隔离（PR review P2）
+    - warnings（2a）：改写前捕获归一化异常（批 2a 审计修订一——报警器
+      不能先擦掉报警记录），调用方传 list 时追加，否则零开销
     """
     import copy
 
     out = copy.deepcopy(state)
-    for q in out.get("questions") or []:
+    for i, q in enumerate(out.get("questions") or []):
         if not isinstance(q, dict):
             continue
         ev = q.get("evidence")
         if not isinstance(ev, dict):
             continue
+        where = f"{base_where}[{i}].evidence"
+        old_ev = dict(ev)
         if not ev.get("document_version"):
             ev["document_version"] = document_version
         if ev.get("quote") is not None:
             q["evidence"] = normalize_evidence_ref(ev, text or "")
             q["verification"] = q["evidence"]["verification"]
+            if warnings is not None:
+                w = _anomaly(old_ev, q["evidence"], where)
+                if w:
+                    warnings.append(w)
     return out
 
 
-def normalize_review_evidence(row: dict[str, Any]) -> dict[str, Any]:
+def _anomaly(
+    old: dict[str, Any], new: dict[str, Any], where: str
+) -> Optional[dict[str, str]]:
+    """比对归一化前后的票据，产出异常记录（无异常返回 None）。
+
+    reason 语义（批 2a 实现稿 §2）：
+    - downgraded_unlocatable：原标 verified/ambiguous 但重新定位失败被降级
+    - id_recomputed：合格票据的 ID 与改写前不一致（补定位/补版本/陈旧 ID）
+    - unqualified_id：不合格票据曾带 ID，被清除
+    """
+    old_id = str(old.get("evidence_id") or "")
+    new_id = str(new.get("evidence_id") or "")
+    old_ver = old.get("verification")
+    new_ver = new.get("verification")
+    qualified = ("verified", "ambiguous")
+    if old_ver in qualified and new_ver not in qualified:
+        reason = "downgraded_unlocatable"
+    elif new_ver in qualified and new_id != old_id:
+        reason = "id_recomputed"
+    elif new_ver not in qualified and old_id:
+        reason = "unqualified_id"
+    else:
+        return None
+    return {
+        "where": where,
+        "old_evidence_id": old_id,
+        "new_evidence_id": new_id,
+        "reason": reason,
+    }
+
+
+def normalize_review_evidence(
+    row: dict[str, Any], warnings: Optional[list[dict[str, str]]] = None
+) -> dict[str, Any]:
     """对整条审查记录的全部 EvidenceRef 容器做读路径归一化（第三轮复核 P1-2）。
 
     覆盖容器（此前只归一化 items[].evidence，其余五处漏网）：
@@ -353,37 +395,47 @@ def normalize_review_evidence(row: dict[str, Any]) -> dict[str, Any]:
     - verify.questions[].evidence（含问题级 verification 同步，见
       normalize_verify_state）
 
+    warnings（批 2a 审计修订一）：传 list 时，归一化**改写票据前**逐条
+    捕获异常（where/old_evidence_id/new_evidence_id/reason）——归一化之后
+    旧 ID 已被清掉，「报警器不能先擦掉报警记录」。不写回数据库，仅本次
+    读取内可见，供 build_evidence_registry 生成 broken 账目。
+
     返回归一化后的深拷贝（不突变 store 行）。
     """
     import copy
 
     out = copy.deepcopy(row)
 
-    def _fix(item_or_obj: Any) -> None:
+    def _fix(item_or_obj: Any, where: str) -> None:
         if isinstance(item_or_obj, dict):
             ev = item_or_obj.get("evidence")
             if isinstance(ev, dict) and ev.get("quote") is not None:
+                old_ev = dict(ev)
                 # PR review P2：空版本回填行级 document_version，防跨合同撞 ID
                 if not ev.get("document_version"):
                     ev["document_version"] = out.get("document_version") or ""
                 item_or_obj["evidence"] = normalize_evidence_ref(ev, out.get("text") or "")
+                if warnings is not None:
+                    w = _anomaly(old_ev, item_or_obj["evidence"], where)
+                    if w:
+                        warnings.append(w)
 
-    for it in out.get("items") or []:
-        _fix(it)
-    for cand in out.get("blind_candidates") or []:
-        _fix(cand)
+    for i, it in enumerate(out.get("items") or []):
+        _fix(it, f"items[{i}].evidence")
+    for i, cand in enumerate(out.get("blind_candidates") or []):
+        _fix(cand, f"blind_candidates[{i}].evidence")
     quality = out.get("quality") or {}
     if isinstance(quality, dict):
-        for obs in quality.get("observations") or []:
-            _fix(obs)
-        for f in quality.get("facts") or []:
-            _fix(f)
-    for f in out.get("facts") or []:
-        _fix(f)
+        for i, obs in enumerate(quality.get("observations") or []):
+            _fix(obs, f"quality.observations[{i}].evidence")
+        for i, f in enumerate(quality.get("facts") or []):
+            _fix(f, f"quality.facts[{i}].evidence")
+    for i, f in enumerate(out.get("facts") or []):
+        _fix(f, f"facts[{i}].evidence")
     objections = out.get("objections") or {}
     if isinstance(objections, dict):
-        for ob in objections.get("objections") or []:
-            _fix(ob)
+        for i, ob in enumerate(objections.get("objections") or []):
+            _fix(ob, f"objections.objections[{i}].evidence")
     verify = out.get("verify") or {}
     if isinstance(verify, dict):
         # 问题级 verification 同步走专用函数（_fix 只管票据本身）
@@ -391,5 +443,84 @@ def normalize_review_evidence(row: dict[str, Any]) -> dict[str, Any]:
             verify,
             text=out.get("text") or "",
             document_version=out.get("document_version") or "",
+            warnings=warnings,
         )
     return out
+
+
+_REGISTRY_QUALIFIED = ("verified", "ambiguous")
+_BROKEN_REFS_SAMPLE_CAP = 20
+
+
+def build_evidence_registry(
+    row_normalized: dict[str, Any], warnings: list[dict[str, str]]
+) -> dict[str, Any]:
+    """证据登记簿概览（批 2a）：纯读路径派生视图，每次响应即时重建。
+
+    可重建性的最高形态是「根本不持久化」——不落 store 行、不接写路径，
+    零写失败风险、零迁移、天然不违反「归一化不突变 store 行」的保证。
+
+    语义边界（批 2a 实现稿 §4.2，防过度承诺）：evidence_id 哈希含 quote
+    本身，标点差异即不同 ID——multi_source_unique 只统计**现有 ID 的精确
+    一致性**，不宣称语义级同证据合并（后者是批 2b 服务端 span 规范化）。
+    """
+    from datetime import datetime, timezone
+
+    occurrence_total = 0
+    qualified_occurrence_total = 0
+    empty_id_occurrences = 0
+    id_containers: dict[str, set[str]] = {}
+    qualified_ids: set[str] = set()
+
+    def _count(ev: Any, container: str) -> None:
+        nonlocal occurrence_total, qualified_occurrence_total, empty_id_occurrences
+        if not isinstance(ev, dict):
+            return
+        occurrence_total += 1
+        eid = str(ev.get("evidence_id") or "")
+        if ev.get("verification") in _REGISTRY_QUALIFIED:
+            qualified_occurrence_total += 1
+            if eid:
+                qualified_ids.add(eid)
+        if eid:
+            id_containers.setdefault(eid, set()).add(container)
+        else:
+            empty_id_occurrences += 1  # 空 ID 无法去重，各计一张
+
+    items = row_normalized.get("items") or []
+    for it in items:
+        _count(it.get("evidence") if isinstance(it, dict) else None, "items")
+    for cand in row_normalized.get("blind_candidates") or []:
+        _count(cand.get("evidence") if isinstance(cand, dict) else None, "blind_candidates")
+    quality = row_normalized.get("quality") or {}
+    if isinstance(quality, dict):
+        for obs in quality.get("observations") or []:
+            _count(obs.get("evidence") if isinstance(obs, dict) else None, "quality.observations")
+        for f in quality.get("facts") or []:
+            _count(f.get("evidence") if isinstance(f, dict) else None, "quality.facts")
+    for f in row_normalized.get("facts") or []:
+        _count(f.get("evidence") if isinstance(f, dict) else None, "facts")
+    objections = row_normalized.get("objections") or {}
+    if isinstance(objections, dict):
+        for ob in objections.get("objections") or []:
+            _count(ob.get("evidence") if isinstance(ob, dict) else None, "objections.objections")
+    verify = row_normalized.get("verify") or {}
+    if isinstance(verify, dict):
+        for q in verify.get("questions") or []:
+            _count(q.get("evidence") if isinstance(q, dict) else None, "verify.questions")
+
+    return {
+        "registry_version": 1,
+        "rebuilt_at": datetime.now(timezone.utc).isoformat(),
+        "occurrence_total": occurrence_total,
+        "unique_total": len(id_containers) + empty_id_occurrences,
+        "qualified_occurrence_total": qualified_occurrence_total,
+        "qualified_unique_total": len(qualified_ids),
+        "multi_source_unique": sum(
+            1 for cs in id_containers.values() if len(cs) >= 2
+        ),
+        # broken 账目来自归一化改写前的捕获（审计修订一）——归一化之后
+        # 旧 ID 已被清掉，此处是唯一的报警记录来源
+        "broken_ref_count": len(warnings),
+        "broken_refs": list(warnings[:_BROKEN_REFS_SAMPLE_CAP]),
+    }
