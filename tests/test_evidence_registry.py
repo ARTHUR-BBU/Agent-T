@@ -242,3 +242,35 @@ def test_registry_output_keys_frozen_at_source():
         "broken_ref_count", "broken_refs",
     }, "登记簿输出键集契约冻结：新字段必须走 schema 版本演进，不得夹带明细"
     assert _QUOTE not in json.dumps(reg, ensure_ascii=False)
+
+
+def test_multi_source_requires_cross_container():
+    """门禁 P2-1 钉子：multi_source 按容器名分组——同容器内两个条目持同 ID
+    不计多源（保守口径防同层重复膨胀），跨容器才计。"""
+    ev = _ev(_QUOTE)
+    row = {
+        "document_version": "dv1",
+        "text": "第三条 违约金为总额百分之三十。",
+        "items": [{"id": "a", "evidence": dict(ev)}, {"id": "b", "evidence": dict(ev)}],
+    }
+    reg = build_evidence_registry(normalize_review_evidence(row), [])
+    assert reg["occurrence_total"] == 2
+    assert reg["unique_total"] == 1
+    assert reg["multi_source_unique"] == 0, "同容器同 ID 不算多源"
+
+
+def test_rebuilt_at_is_fresh_iso_timestamp():
+    """门禁 P3-1 钉子：rebuilt_at 必须是每次响应即时生成的合法 ISO 时间——
+    冻结为常量或读旧值都应被抓（T3 原版 pop 掉它测不到）。"""
+    from datetime import datetime, timezone
+
+    before = datetime.now(timezone.utc)
+    rid = _upload_done()
+    r1 = client.get(f"/api/review/{rid}").json()["evidence_registry"]["rebuilt_at"]
+    r2 = client.get(f"/api/review/{rid}").json()["evidence_registry"]["rebuilt_at"]
+    after = datetime.now(timezone.utc)
+    t1 = datetime.fromisoformat(r1)
+    t2 = datetime.fromisoformat(r2)
+    assert before <= t1 <= after, "rebuilt_at 必须是本次请求窗口内的即时时间"
+    assert before <= t2 <= after
+    assert r1 != r2 or (t2 - t1).total_seconds() < 1, "两次重建时间戳独立生成"

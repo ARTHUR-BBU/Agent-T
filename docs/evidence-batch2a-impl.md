@@ -74,7 +74,7 @@ items / blind_candidates / quality.observations / quality.facts / facts / object
 
 ### 4.2 multi_source_unique 判定与语义边界（审计修订二 + 限制声明）
 
-按 evidence_id 分组计数（**parse_source 不参与身份**——批 1 已定），同一 ID 出现于 ≥2 个不同容器/条目即计入。
+按 evidence_id 分组计数（**parse_source 不参与身份**——批 1 已定），同一 ID 出现于 **≥2 个不同容器**即计入多源——按容器名分组（门禁 P2-1 消歧：同容器内多个条目持同 ID 不计多源，保守口径防同层重复膨胀）。
 
 > **2a 语义边界（必须随文档/PR 声明，防过度承诺）**：evidence_id 哈希含 quote 本身，
 > 「验收合格后付款」与「验收合格后付款。」即使定位到同一正文位置也是不同 ID。
@@ -120,7 +120,7 @@ items / blind_candidates / quality.observations / quality.facts / facts / object
 ## 7. 兼容与回滚
 
 - 新字段 None 语义 = 旧记录/异常路径静默降级，前端与 docx 零感知
-- 独立 revert：单 commit 载荷（evidence.py +1 函数、routes.py +2 行、schemas.py +1 模型、tests +1 文件），revert 无耦合
+- 独立 revert：单 commit 载荷（evidence.py 新增派生/捕获逻辑、routes.py 约 8 行接线、schemas.py +2 模型、tests +1 文件），revert 无耦合
 
 ## 8. 明确不做（2a）
 

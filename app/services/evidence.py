@@ -410,13 +410,13 @@ def normalize_review_evidence(
         if isinstance(item_or_obj, dict):
             ev = item_or_obj.get("evidence")
             if isinstance(ev, dict) and ev.get("quote") is not None:
-                old_ev = dict(ev)
                 # PR review P2：空版本回填行级 document_version，防跨合同撞 ID
                 if not ev.get("document_version"):
                     ev["document_version"] = out.get("document_version") or ""
                 item_or_obj["evidence"] = normalize_evidence_ref(ev, out.get("text") or "")
                 if warnings is not None:
-                    w = _anomaly(old_ev, item_or_obj["evidence"], where)
+                    # 门禁 P3-2：改写前快照只在捕获路径付费（干净路径零开销）
+                    w = _anomaly(dict(ev), item_or_obj["evidence"], where)
                     if w:
                         warnings.append(w)
 
