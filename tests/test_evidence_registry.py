@@ -274,3 +274,54 @@ def test_rebuilt_at_is_fresh_iso_timestamp():
     assert before <= t1 <= after, "rebuilt_at 必须是本次请求窗口内的即时时间"
     assert before <= t2 <= after
     assert r1 != r2 or (t2 - t1).total_seconds() < 1, "两次重建时间戳独立生成"
+
+
+# ---------- PR review P2-b：登记簿自检（归一化盲区的票据） ----------
+
+def test_registry_catches_skipped_ticket_with_stale_id():
+    """P2-b 钉子一：quote 缺失的票据归一化会跳过（_fix 门控），它带着
+    missing+旧 ID 混进登记簿时必须被自检抓到并逐出关联账目——否则
+    broken_ref_count 恒 0，broken 账目被击穿。"""
+    row = {
+        "document_version": "dv1",
+        "text": "第三条 违约金为总额百分之三十。",
+        "items": [{
+            "id": "a",
+            "evidence": {  # quote 键缺失 → 归一化盲区
+                "document_version": "dv1",
+                "start": None, "end": None, "clause_id": None,
+                "verification": "missing", "parse_source": "rules",
+                "evidence_id": "ev-staleskip1",
+            },
+        }],
+    }
+    reg = build_evidence_registry(normalize_review_evidence(row), [])
+    assert reg["broken_ref_count"] == 1, "登记簿自检必须补上归一化 warnings 的盲区"
+    assert reg["broken_refs"][0]["reason"] == "unqualified_id_at_registry"
+    assert reg["unique_total"] == 0, "可疑 ID 必须逐出 unique 账目"
+    assert reg["multi_source_unique"] == 0
+
+
+def test_registry_rejects_malformed_id_shape():
+    """P2-b 钉子二：合格标签但 ID 形状非法（设计稿 §4.10 前缀防御）——
+    记 broken 并逐出 qualified_unique，不参与关联。
+
+    场景必须是归一化盲区（quote 缺失，_fix 跳过）：正常票据的畸形 ID 会被
+    归一化顺手重算成合法 ID（走 id_recomputed 警告），到不了登记簿。"""
+    row = {
+        "document_version": "dv1",
+        "text": "第三条 违约金为总额百分之三十。",
+        "items": [{
+            "id": "a",
+            "evidence": {  # quote 键缺失 → 归一化跳过，畸形 ID 原样存活
+                "document_version": "dv1",
+                "start": 4, "end": 16, "clause_id": None,
+                "verification": "verified", "parse_source": "rules",
+                "evidence_id": "not-an-ev-id!!",
+            },
+        }],
+    }
+    reg = build_evidence_registry(normalize_review_evidence(row), [])
+    assert reg["broken_refs"][0]["reason"] == "malformed_id"
+    assert reg["qualified_unique_total"] == 0
+    assert reg["unique_total"] == 0

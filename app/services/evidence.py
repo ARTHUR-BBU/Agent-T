@@ -450,6 +450,9 @@ def normalize_review_evidence(
 
 _REGISTRY_QUALIFIED = ("verified", "ambiguous")
 _BROKEN_REFS_SAMPLE_CAP = 20
+# 批 2a PR review P2-b：ID 形状防御（设计稿 §4.10——非 ev- 前缀或长度
+# 不符的 ID 视为 broken 引用，不参与关联账目）
+_ID_SHAPE = re.compile(r"ev-[0-9a-f]{12}")
 
 
 def build_evidence_registry(
@@ -471,6 +474,7 @@ def build_evidence_registry(
     empty_id_occurrences = 0
     id_containers: dict[str, set[str]] = {}
     qualified_ids: set[str] = set()
+    registry_broken: list[dict[str, str]] = []
 
     def _count(ev: Any, container: str) -> None:
         nonlocal occurrence_total, qualified_occurrence_total, empty_id_occurrences
@@ -478,10 +482,30 @@ def build_evidence_registry(
             return
         occurrence_total += 1
         eid = str(ev.get("evidence_id") or "")
-        if ev.get("verification") in _REGISTRY_QUALIFIED:
+        qualified = ev.get("verification") in _REGISTRY_QUALIFIED
+        if qualified:
             qualified_occurrence_total += 1
-            if eid:
-                qualified_ids.add(eid)
+        # 批 2a PR review P2-b：登记簿自检——归一化会跳过 quote 缺失的票据
+        # （_fix 的门控条件），这类票据带着可疑 ID 混进来时归一化 warnings
+        # 抓不到（broken_ref_count 恒 0）。登记簿自己验：不合格带 ID / ID
+        # 形状非法 / 缺 quote 却挂合格标签，一律记 broken 并逐出关联账目。
+        problems: list[str] = []
+        if eid and not qualified:
+            problems.append("unqualified_id_at_registry")
+        if eid and qualified and not _ID_SHAPE.fullmatch(eid):
+            problems.append("malformed_id")
+        if not (ev.get("quote") or "").strip() and (eid or qualified):
+            problems.append("quote_missing")
+        if problems:
+            registry_broken.append({
+                "where": container,
+                "old_evidence_id": eid,
+                "new_evidence_id": "",
+                "reason": problems[0],
+            })
+            return  # 逐出：不计 unique / multi_source / qualified_unique
+        if qualified and eid:
+            qualified_ids.add(eid)
         if eid:
             id_containers.setdefault(eid, set()).add(container)
         else:
@@ -519,8 +543,10 @@ def build_evidence_registry(
         "multi_source_unique": sum(
             1 for cs in id_containers.values() if len(cs) >= 2
         ),
-        # broken 账目来自归一化改写前的捕获（审计修订一）——归一化之后
-        # 旧 ID 已被清掉，此处是唯一的报警记录来源
-        "broken_ref_count": len(warnings),
-        "broken_refs": list(warnings[:_BROKEN_REFS_SAMPLE_CAP]),
+        # broken 账目两个来源（PR review P2-b 后）：①归一化改写前的捕获
+        # （审计修订一——旧 ID 被清掉后只有这里能报警）②登记簿自检
+        # （归一化跳过的票据/形状非法 ID，归一化 warnings 盲区）
+        "broken_ref_count": len(warnings) + len(registry_broken),
+        "broken_refs": list((list(warnings) + registry_broken)[
+            :_BROKEN_REFS_SAMPLE_CAP]),
     }

@@ -30,7 +30,7 @@ class BrokenRefInfo(BaseModel):
     where: str  # 容器[下标].evidence，仅调试辅助，不作身份
     old_evidence_id: str
     new_evidence_id: str = ""
-    reason: str  # unqualified_id | id_recomputed | downgraded_unlocatable
+    reason: str  # unqualified_id | id_recomputed | downgraded_unlocatable | unqualified_id_at_registry | malformed_id | quote_missing
 
 
 class EvidenceRegistryInfo(BaseModel):
