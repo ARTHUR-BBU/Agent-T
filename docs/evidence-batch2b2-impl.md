@@ -1,6 +1,6 @@
 # 证据法批 2b-② 专项实现稿：claim_id + claim_content_hash + evidence_refs
 
-> 状态：**v1.3 待复审**（2026-09-22）。v1.2 三阻塞已认可修掉；复审再补三个设计漏洞（组聚合按完整记录排序 / rebuts 字段入 schema 契约 / content_schema_version 字节格式），+ Q1 title 聚合，本版全部落实（对账表 §8 v1.3 节）。总设计契约：docs/evidence-batch2-design.md v1.1 + 批 2b 实现稿 v1.3。
+> 状态：**v1.4 待复审**（2026-09-22）。v1.3 四项已认可修掉；本轮补「身份边界」最后四块：规则包命名空间（P1）/ 单条与聚合序列化路径统一（P1）/ 控制字符可逆转义（P2）/ verify 展示完整记录字典序（对账表 §8 v1.4 节）。v1.2 三阻塞已认可修掉；复审再补三个设计漏洞（组聚合按完整记录排序 / rebuts 字段入 schema 契约 / content_schema_version 字节格式），+ Q1 title 聚合，本版全部落实（对账表 §8 v1.3 节）。总设计契约：docs/evidence-batch2-design.md v1.1 + 批 2b 实现稿 v1.3。
 > 前置：2b-① 已正式验收通过（审计 2026-09-22，main=38eb2ba，857 passed + E2E）。
 > 分隔符记法：`<US>`=U+001F 单元分隔符、`<RS>`=U+001E 记录分隔符（实现用真实控制字符，本文为可读性记名）。
 > 节奏：**只审设计、不直接开工**。本稿逐条回应审计 8 条约束 + 兑现两个「开工前再确认项」。
@@ -27,7 +27,7 @@ claim_id = "cl-" + sha256(document_version + "\x1f" + claim_type + "\x1f" + 业�
 
 | claim_type | 业务主键（全部为稳定标识，零下标/零截断/零模型顺序） |
 |---|---|
-| rule_item | **item_id + "<US>" + primary evidence_id**（v1.2 阻塞一修订：同一段原文可同时触发两条规则——只看证据会把「付款规则命中」和「验收规则命中」并成同一主张。item_id 取规则配置稳定 ID，绝不取数组位置） |
+| rule_item | **rule_pack_id + "<US>" + rule_pack_version + "<US>" + item_id + "<US>" + primary evidence_id**（v1.2：+item_id 防同段双规则并号；v1.4 阻塞一修订：+规则包命名空间——procurement/lease/nda 三包存在同名 item_id（subject/jurisdiction 等），「采购合同的 jurisdiction」≠「NDA 的 jurisdiction」。rule_pack_id=品类 ID；rule_pack_version=规则包内容哈希（checklist 定义 sha256[:12]，复用 content-hash 哲学，改词表即变版本——禁悄悄变脸与 §4.2 同源）。测试钉 T2b：同合同同证据同 item_id、不同规则包 → 必不同 claim_id |
 | blind_candidate | 库内 id + "\x1f" + primary evidence_id |
 | quality_observation | dimension + "\x1f" + primary evidence_id（同键多条观察=同一主张，合并语义与组聚合指纹见 §2-B） |
 | verify_question | source + "\x1f" + primary evidence_id（见 §2-A 再确认项） |
@@ -94,7 +94,7 @@ verify_question 主键 = source + "\x1f" + primary_evidence_id
   2. 默认展示文本 = 全部问法的**字典序最小者**（确定性、与输入顺序无关，§1.7 同哲学）
   3. `claim_content_hash` 按**合并后的主张**统一计算——question 作为列表字段，排序后 `<RS>` 连接（每条问题单独算 hash 会让「同一主张」出现多个指纹，违背主张级身份）
   4. source 白名单如上，非法值不入身份
-  5. **title 聚合（v1.3 补齐）**：title 不单独聚合——与 question 绑定为完整记录（`question=<…><US>title=<…>`）参与组排序（§2-B 聚合规则）；默认展示与 hash 同一套确定性规则
+  5. **title 聚合与展示（v1.3 补齐 + v1.4 完整化）**：title 不单独聚合——与 question 绑定为完整记录参与组排序（§2-B）；**默认展示 = 按完整记录（question+title）字典序排序后的最小完整记录**（title 跟随其所属记录，不会随机跟错问题）；hash 与展示用同一套确定性规则
 - 反例对账：同 source 不同证据 → 不同 claim；同证据不同 source → 不同 claim；`obs:{i}` 永不入键。
 
 ### B. claim_content_hash 的标准序列化（v1.2 重设计——阻塞二修订）
@@ -127,7 +127,8 @@ serialized = "schema_version=cc1<US>" + 按白名单固定顺序的 "字段名=�
 ```
 
   - 版本号**只出现一次**，固定键名 `schema_version`，固定值 `cc1`（字段清单演进 → cc2），绝不作为白名单字段重复写入
-  - 值内控制字符转义：U+001F（<US>）/ U+001E（<RS>）在合同/模型文本中属数据损坏，序列化前**统一剥除** U+0000–U+001F（不做转义保留——保留转义会让「值里带分隔符」与真分隔符歧义）
+  - **值内分隔符可逆转义（v1.4 修订——剥除会漏报内容变化）**：`\` → `\`、U+001F → ``、U+001E → ``，**其余字符一律原样保留（含换行）**——「付款
+条件」与「付款条件」hash 必不同（内容变化不得静默吞掉）；转义可逆，解码后还原原文。测试钉 T5l：两值仅差一个换行 → hash 不同；含 <US> 字面量的值解码往返一致
   - 空值表示：`字段名=`（等号后为空串），不省略字段
   - 最终统一 UTF-8 编码后取 sha256
 
@@ -145,7 +146,7 @@ serialized = "schema_version=cc1<US>" + 按白名单固定顺序的 "字段名=�
 ```
 
   - **排序单位是「整条记录」**——字段对应关系完整保留；交换两条观察的 comment → 组 hash 必变；仅交换数组顺序 → hash 不变（两条测试钉，T5g/T5h）
-  - 单条观察 = 组大小 1 特例（同一公式，records 只有一条）
+  - **单条 = 组大小 1 走同一路径（v1.4 阻塞二修订）**：单条观察的序列化**同样是** `schema_version=cc1<US>records=<一条完整记录>`——不存在「单条直算」与「聚合」两条格式路径（v1.2 曾示例单条为 `title=…<US>comment=…` 直拼，已废弃）。测试钉 T5k：单条直接计算 == 聚合函数对单成员组的输出（逐字节相等）
   - verify_question 合并组同口径：每条完整记录 = `"question=<…>title=<…>"`——**title 与 question 同记录绑定聚合**（Q1 裁决：不做 title 单独聚合），默认展示文本仍取 question 字典序最小者，hash 与展示用同一套确定性规则
 
 ## 3. API 契约与兼容
@@ -172,6 +173,9 @@ serialized = "schema_version=cc1<US>" + 按白名单固定顺序的 "字段名=�
 | T5h | 组聚合顺序无关 | 仅交换数组顺序 → 组 hash 不变 |
 | T5i | schema 回归（v1.3） | rebuts_status=missing 场景 → 两字段真实到达客户端（非被 pydantic 剥掉）；accepted=False → not_applicable |
 | T5j | schema_version 单次出现 | 序列化串中 `schema_version=` 恰好一次、位于最前 |
+| T2b | 规则包命名空间（v1.4） | 同合同同证据同 item_id、不同 rule_pack → 不同 claim_id；同包内稳定 |
+| T5k | 单条=组1 同路径（v1.4） | 单条直算 == 聚合函数单成员组输出（逐字节） |
+| T5l | 控制字符可逆（v1.4） | 仅差换行的两值 hash 不同；含 <US> 字面量值转义往返一致 |
 | T6 | 旧记录补齐 | 无 claim_id 旧行 → 读路径补齐且与写路径公式重算一致 |
 | T7 | 迁移一致性 | 老票据（估算端点）读路径修复后 claim_id 稳定到新证据 ID；两次 GET 幂等 |
 | T8 | adopt 不动索引 | adopt 后 evidence_index 逐字节不变（约束 6 的声明钉） |
@@ -192,6 +196,9 @@ serialized = "schema_version=cc1<US>" + 按白名单固定顺序的 "字段名=�
 | M8 组聚合按字段分摞排序（v1.3 漏洞回归） | T5g |
 | M9 rebuts 字段缺席 Objection schema | T5i |
 | M10 schema_version 重复/缺席 | T5j |
+| M11 claim_id 漏规则包命名空间（v1.4） | T2b |
+| M12 单条/聚合双路径分叉（v1.4） | T5k |
+| M13 值内控制字符剥除（v1.4 回归） | T5l |
 
 ## 6. 载荷与回滚
 
@@ -228,3 +235,12 @@ serialized = "schema_version=cc1<US>" + 按白名单固定顺序的 "字段名=�
 | 漏洞二 rebuts 字段未入 schema | §1 契约表 + §3 Objection 显式声明 + T5i（批 1 静默剥字同款测试） |
 | 漏洞三 content_schema_version 字节歧义 | §2-B 最终格式：schema_version=cc1<US> 前缀单次出现 + 值内控制字符剥除 + 空值表示 + UTF-8（T5j） |
 | Q1 title 聚合 | §2-A 裁决 5：与 question 绑定完整记录聚合，展示/hash 同一套规则 |
+
+### v1.3 → v1.4 对账
+
+| 复审意见 | 落实 |
+|---|---|
+| 阻塞一 rule_pack 命名空间缺失（P1） | §1 rule_item 主键 = rule_pack_id+version+item_id+evidence_id（T2b） |
+| 阻塞二 单条/聚合序列化双路径（P1） | §2-B 单条=组 1 同路径，废弃直拼示例（T5k 逐字节） |
+| 阻塞三 控制字符剥除漏报内容变化（P2） | §2-B 可逆转义（\ 与 <US>/<RS>），其余字符原样保留（T5l） |
+| 小规则 verify 展示确定性 | §2-A 裁决 5：完整记录字典序最小为展示，title 不跟错 |
