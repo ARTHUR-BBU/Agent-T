@@ -22,16 +22,26 @@
 - **业务主键（禁下标实证继承）**：v1.1 已实测废除 `source_ref=f"obs:{i}"`（verify.py:386）；本批 source_ref 全线降级为纯展示字段，任何派生路径不得引用。
 
 ```text
-claim_id = "cl-" + sha256(document_version + "\x1f" + claim_type + "\x1f" + 业务主键)[:12]
+claim_id = "cl-" + sha256(document_version + "<US>" + analysis_scope + "<US>" + claim_type + "<US>" + 业务主键)[:12]
+analysis_scope = rule_pack_id + "<US>" + rule_pack_version
+   # rule_pack_id = 品类 ID（procurement/lease/nda）
+   # rule_pack_version = 规则包内容哈希（checklist 定义 sha256[:12]，改词表即变）
+
+**rule_pack_version 的落库持久化（v1.5 P1——不保存就会「旧案卷被今天的规则悄悄改身份证」）**：
+
+- pipeline 的 node_checklist 在载入规则包时计算内容哈希，写进审查行：`row["rule_pack"] = {"id": <品类>, "version": <哈希>}`——读旧记录时用**行内保存的版本**派生 claim_id，绝不拿今天的规则重算昨天
+- 旧记录无 rule_pack 键 → 兼容路径：scope 版本以字面量 `"legacy"` 参与（同批旧行派生一致、不同新版本不串号），**同时**记迁移警告（reason=`legacy_scope`，进登记簿 broken_refs）——明确走迁移账目，不静默用当前版本
+- ReviewSummary 是否外露 rule_pack 字段：2b-② 仅行内持久化 + 测试断言；API 外露留 2c（决定记录需展示「依据哪版规则」时一并交付）
+
 ```
 
 | claim_type | 业务主键（全部为稳定标识，零下标/零截断/零模型顺序） |
 |---|---|
 | rule_item | **rule_pack_id + "<US>" + rule_pack_version + "<US>" + item_id + "<US>" + primary evidence_id**（v1.2：+item_id 防同段双规则并号；v1.4 阻塞一修订：+规则包命名空间——procurement/lease/nda 三包存在同名 item_id（subject/jurisdiction 等），「采购合同的 jurisdiction」≠「NDA 的 jurisdiction」。rule_pack_id=品类 ID；rule_pack_version=规则包内容哈希（checklist 定义 sha256[:12]，复用 content-hash 哲学，改词表即变版本——禁悄悄变脸与 §4.2 同源）。测试钉 T2b：同合同同证据同 item_id、不同规则包 → 必不同 claim_id |
-| blind_candidate | 库内 id + "\x1f" + primary evidence_id |
-| quality_observation | dimension + "\x1f" + primary evidence_id（同键多条观察=同一主张，合并语义与组聚合指纹见 §2-B） |
-| verify_question | source + "\x1f" + primary evidence_id（见 §2-A 再确认项） |
-| objection | item_id + "\x1f" + direction + "\x1f" + primary evidence_id |
+| blind_candidate | analysis_scope + "<US>" + 库内 id + "<US>" + primary evidence_id（v1.5：补盲候选归属规则体系，必须带 scope——三包同名 id 同理） |
+| quality_observation | dimension + "<US>" + primary evidence_id（**不带 analysis_scope**——AI 观察层不绑定规则包，保持文档作用域；同键多条观察=同一主张，合并与组聚合指纹见 §2-B） |
+| verify_question | analysis_scope + "<US>" + source + "<US>" + **source_subject_key** + "<US>" + primary evidence_id（v1.5 P1：仅 source+证据太粗——两个不同规则项引用同一句话会被并成一个核验主张。source_subject_key 按来源取**具体对象稳定键**：rule_attention→item_id、blind→补盲候选稳定 id、fact→事实规范化业务键（kind+value 哈希）、pending→规范化问题文本哈希；全部禁数组下标。测试钉 T2c：同 source 同证据、不同来源对象 → 必不同 claim_id） |
+| objection | analysis_scope + "<US>" + item_id + "<US>" + direction + "<US>" + primary evidence_id（v1.5：异议指向规则项，同样归属规则体系） |
 
 ### 约束 3：关系类型服务端结构派生，不信模型声明
 
@@ -74,6 +84,10 @@ claim_id = "cl-" + sha256(document_version + "\x1f" + claim_type + "\x1f" + 业�
 - **本批新增写方**：claim_id 标注发生在 pipeline 规范化之后（单线程段）与 normalize 读路径（纯读）——**均不引入新的并发面**。
 - **三路并发测试（Ask+Verify+Objection）**：唯一真正的并发源是 2b-③ 的 Ask 入库，随 2b-③ 交付（挂账显式声明，不在本批虚交）。
 
+### 2c 硬性验收条件（v1.5 登记——content_hash 必须真正用于审计）
+
+2c 决定记录（decision）结构**必须包含 `claim_content_hash`**（决定时点的主张内容指纹快照）——否则「编号没变、内容被偷换」无法被历史证明，指纹只是算出来了没用于审计。此项列为 2c 硬性验收条件，缺此不验收。
+
 ### 约束 7：2b-① 老票据迁移对 2b-② 的影响
 
 - 2b-① 的 ID 重算发生在**读路径归一化**（旧记录每次 GET 修复并记账）。claim_id 派生自**归一化后**的 primary evidence_id → 旧记录补齐的 claim_id 与重算后的证据 ID 天然一致，**无跨批漂移**。
@@ -104,7 +118,7 @@ v1.0 的 `sorted([f1, f2, ...])` 有字段互换漏洞：title 与 comment 内�
 ```text
 claim_content_hash = "cc-" + sha256(serialized.encode("utf-8"))[:12]
 
-serialized = content_schema_version + "" + 按固定字段顺序的 "字段名=值" 串
+serialized = content_schema_version + "<US>" + 按固定字段顺序的 "字段名=值" 串
   - 普通单值字段：不排序，按下方白名单的固定顺序排列
   - 真正的列表字段（仅合并主张产生）：字段内排序后以 "<RS>" 连接
   - 每个值先 strip()；schema 版本参与哈希（字段清单演进时 +1）
@@ -128,7 +142,6 @@ serialized = "schema_version=cc1<US>" + 按白名单固定顺序的 "字段名=�
 
   - 版本号**只出现一次**，固定键名 `schema_version`，固定值 `cc1`（字段清单演进 → cc2），绝不作为白名单字段重复写入
   - **值内分隔符可逆转义（v1.4 修订——剥除会漏报内容变化）**：反斜杠转义为双反斜杠，US 分隔符转义为文字序列「反斜杠+u001f」、RS 分隔符转义为「反斜杠+u001e」，**其余字符一律原样保留（含换行）**——「付款（换行）条件」与「付款条件」hash 必不同（内容变化不得静默吞掉）；转义可逆，解码后还原原文。测试钉 T5l：两值仅差一个换行 → hash 不同；含 US 字面量的值转义往返一致
-条件」与「付款条件」hash 必不同（内容变化不得静默吞掉）；转义可逆，解码后还原原文。测试钉 T5l：两值仅差一个换行 → hash 不同；含 <US> 字面量的值解码往返一致
   - 空值表示：`字段名=`（等号后为空串），不省略字段
   - 最终统一 UTF-8 编码后取 sha256
 
@@ -138,16 +151,16 @@ serialized = "schema_version=cc1<US>" + 按白名单固定顺序的 "字段名=�
 
 ```text
 第一步：每条成员记录序列化为完整行：
-    record_i = "title=<该条title>" + "comment=<该条comment>"
+    record_i = "title=<该条title><US>" + "comment=<该条comment>"
 第二步：完整记录整体排序（字典序），以 <RS> 连接：
     records = record_1<RS>record_2<RS>...
 第三步：带字段名固定顺序序列化：
-    serialized = "schema_version=cc1" + "records=" + records
+    serialized = "schema_version=cc1<US>" + "records=" + records
 ```
 
   - **排序单位是「整条记录」**——字段对应关系完整保留；交换两条观察的 comment → 组 hash 必变；仅交换数组顺序 → hash 不变（两条测试钉，T5g/T5h）
   - **单条 = 组大小 1 走同一路径（v1.4 阻塞二修订）**：单条观察的序列化**同样是** `schema_version=cc1<US>records=<一条完整记录>`——不存在「单条直算」与「聚合」两条格式路径（v1.2 曾示例单条为 `title=…<US>comment=…` 直拼，已废弃）。测试钉 T5k：单条直接计算 == 聚合函数对单成员组的输出（逐字节相等）
-  - verify_question 合并组同口径：每条完整记录 = `"question=<…>title=<…>"`——**title 与 question 同记录绑定聚合**（Q1 裁决：不做 title 单独聚合），默认展示文本仍取 question 字典序最小者，hash 与展示用同一套确定性规则
+  - verify_question 合并组同口径：每条完整记录 = `"question=<…><US>title=<…>"`——**title 与 question 同记录绑定聚合**（Q1 裁决：不做 title 单独聚合），默认展示文本仍取 question 字典序最小者，hash 与展示用同一套确定性规则
 
 ## 3. API 契约与兼容
 
@@ -173,7 +186,9 @@ serialized = "schema_version=cc1<US>" + 按白名单固定顺序的 "字段名=�
 | T5h | 组聚合顺序无关 | 仅交换数组顺序 → 组 hash 不变 |
 | T5i | schema 回归（v1.3） | rebuts_status=missing 场景 → 两字段真实到达客户端（非被 pydantic 剥掉）；accepted=False → not_applicable |
 | T5j | schema_version 单次出现 | 序列化串中 `schema_version=` 恰好一次、位于最前 |
-| T2b | 规则包命名空间（v1.4） | 同合同同证据同 item_id、不同 rule_pack → 不同 claim_id；同包内稳定 |
+| T2b | 规则包命名空间（v1.4/v1.5） | 同合同同证据同 item_id、不同 rule_pack → 不同 claim_id；scope 进入 blind/objection/verify 同验 |
+| T2c | verify 来源对象键（v1.5） | 同 source 同证据、不同来源对象（不同 item_id / 不同补盲候选）→ 不同 claim_id；同对象 → 稳定 |
+| T2d | 规则包版本落库与旧行兼容（v1.5） | 行内 rule_pack.version 参与 claim_id；旧行（无键）→ "legacy" 派生 + legacy_scope 警告 + 两次 GET 幂等（不静默用当前版本） |
 | T5k | 单条=组1 同路径（v1.4） | 单条直算 == 聚合函数单成员组输出（逐字节） |
 | T5l | 控制字符可逆（v1.4） | 仅差换行的两值 hash 不同；含 <US> 字面量值转义往返一致 |
 | T6 | 旧记录补齐 | 无 claim_id 旧行 → 读路径补齐且与写路径公式重算一致 |
@@ -199,6 +214,8 @@ serialized = "schema_version=cc1<US>" + 按白名单固定顺序的 "字段名=�
 | M11 claim_id 漏规则包命名空间（v1.4） | T2b |
 | M12 单条/聚合双路径分叉（v1.4） | T5k |
 | M13 值内控制字符剥除（v1.4 回归） | T5l |
+| M14 旧行静默用当前规则包版本（v1.5） | T2d |
+| M15 verify 丢来源对象键（v1.5） | T2c |
 
 ## 6. 载荷与回滚
 
@@ -244,3 +261,13 @@ serialized = "schema_version=cc1<US>" + 按白名单固定顺序的 "字段名=�
 | 阻塞二 单条/聚合序列化双路径（P1） | §2-B 单条=组 1 同路径，废弃直拼示例（T5k 逐字节） |
 | 阻塞三 控制字符剥除漏报内容变化（P2） | §2-B 可逆转义（\ 与 <US>/<RS>），其余字符原样保留（T5l） |
 | 小规则 verify 展示确定性 | §2-A 裁决 5：完整记录字典序最小为展示，title 不跟错 |
+
+### v1.4 → v1.5 对账
+
+| 复审意见 | 落实 |
+|---|---|
+| P1 rule_pack_version 未落库 | 公式节：row["rule_pack"] 落库 + 旧行 "legacy" 兼容 + legacy_scope 警告（T2d） |
+| P1 命名空间只加到 rule_item | 主键表统一：blind/objection/verify 全带 analysis_scope；quality 明示不带 |
+| P1 verify_question 键太粗 | +source_subject_key（按来源取具体对象稳定键；T2c） |
+| 内容 4 content_hash 入决定历史 | 「2c 硬性验收条件」：decision 必含 claim_content_hash 快照，缺此不验收 |
+| 内容 5 文档残句 | 已清理 |
