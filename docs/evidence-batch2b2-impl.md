@@ -1,0 +1,137 @@
+# 证据法批 2b-② 专项实现稿：claim_id + claim_content_hash + evidence_refs
+
+> 状态：**v1.0 待审**（2026-09-22）。总设计契约：docs/evidence-batch2-design.md v1.1（§4.2/4.3/4.5/4.7）+ 批 2b 实现稿 v1.3（§1.1/1.2/1.7/1.9）。
+> 前置：2b-① 已正式验收通过（审计 2026-09-22，main=38eb2ba，857 passed + E2E）。
+> 节奏：**只审设计、不直接开工**。本稿逐条回应审计 8 条约束 + 兑现两个「开工前再确认项」。
+
+## 0. 范围一句话与批次边界（约束 8）
+
+**本批做**：给五类主张发 `claim_id`（+ `claim_content_hash`），并挂上**带关系类型的证据引用边** `evidence_refs`（实际产生 primary / rebuts 两类）。
+**留给 2b-③**：counter_evidence 票据化（含 absent/missing 分离）、Ask 引用入库、三路并发写入测试。
+**永不属于 2b**：citation_edges（2c 与 decision_history 同批）、supports/context（枚举预留，2b 不产生——无 fact_id 关联来源，不让程序猜关系）。
+
+边界声明：本批 **不触碰** 2b-① 已交付的证据坐标/收敛/索引机制，只在「已收敛的票据」之上叠加主张侧标注。
+
+## 1. 审计八条约束逐条落实
+
+### 约束 2：claim_id 必须在证据规范化完成后生成；身份禁下标/禁展示顺序
+
+- **写路径时机**：pipeline 落库前统一规范化（2b-① 交付的 canonical 化）**之后**追加主张标注步骤——claim_id 派生自**已收敛票据**的 evidence_id，不存在「先编号后换证」。
+- **读路径补齐**：旧记录（无 claim_id）由 normalize 循环用**同一公式**派生补齐——写/读双路径同源（总设计稿 Q1 裁决），无漂移。
+- **业务主键（禁下标实证继承）**：v1.1 已实测废除 `source_ref=f"obs:{i}"`（verify.py:386）；本批 source_ref 全线降级为纯展示字段，任何派生路径不得引用。
+
+```text
+claim_id = "cl-" + sha256(document_version + "\x1f" + claim_type + "\x1f" + 业务主键)[:12]
+```
+
+| claim_type | 业务主键（全部为稳定标识，零下标/零截断/零模型顺序） |
+|---|---|
+| rule_item | primary evidence_id |
+| blind_candidate | 库内 id + "\x1f" + primary evidence_id |
+| quality_observation | dimension + "\x1f" + primary evidence_id（同键多条观察=同一主张，合并语义 §3） |
+| verify_question | source + "\x1f" + primary evidence_id（见 §2-A 再确认项） |
+| objection | item_id + "\x1f" + direction + "\x1f" + primary evidence_id |
+
+### 约束 3：关系类型服务端结构派生，不信模型声明
+
+- `relation ∈ {primary, supports, rebuts, context, counter}`；2b-② 实际产生 **primary / rebuts** 两类：
+  - **primary**：主张的内嵌合格票据（结构位置决定，服务端）
+  - **rebuts**：仅**通过五要件受理**的异议（`accepted=True`）→ 所争议规则项的主证据（Q4 裁决；口径纪律：accepted=「准许复核」，≠人工采纳≠异议成立——字段注释与文案统一）
+- 模型输出的任何关系声明字段一律忽略（与批 1 同源安全边界）；关系由代码根据「这个对象在结构里是谁」判定。
+- **evidence_refs 只收合格票**：每个元素 `{evidence_id: 非空且形状合法, relation}`；按 `(evidence_id, relation)` 去重、按 `(relation, evidence_id)` 固定排序——同一主张任意路径派生 refs 逐字节一致。
+
+### 约束 4：无有效证据的主张不发正式 claim_id
+
+- 主张无合格主证据（票据 missing/unverified/ID 空）→ `claim_id=""`、`claim_content_hash` 照常计算（内容指纹不依赖证据）、`evidence_refs=[]`。
+- 空串永不参与身份计算（防「无证据主张撞号」）；此类主张在登记簿 broken 账目可见（2a 自检覆盖）。
+
+### 约束 5：counter_evidence 语义（2b-③ 交付，本批只定契约位）
+
+- 本批 objections 对象**不新增** counter 相关字段（防范围扩大）；absent/missing 分离、`counter_evidence_ref`、`state/reason` 结构按批 2b 总稿 v1.2 §1.5 契约在 2b-③ 实施。
+
+### 约束 6：Ask/Objection/Verify 三类写入的索引合并与并发防覆盖
+
+- **Verify**：2b-① 已接线（trigger/confirm/reverify 三端点锁内 `_merge_evidence_index`）——本批不变。
+- **Objection**：pipeline 内生成（单 worker，与索引构建同阶段，无并发）；done 后唯一写方 adopt 只改 `adopted` 布尔键、不产新票不动索引——**无需合并调用**，本批显式声明此结论并有测试钉（adopt 后索引逐字节不变）。
+- **Ask**：不落库（2b-③ 才入库），本批无写方。
+- **本批新增写方**：claim_id 标注发生在 pipeline 规范化之后（单线程段）与 normalize 读路径（纯读）——**均不引入新的并发面**。
+- **三路并发测试（Ask+Verify+Objection）**：唯一真正的并发源是 2b-③ 的 Ask 入库，随 2b-③ 交付（挂账显式声明，不在本批虚交）。
+
+### 约束 7：2b-① 老票据迁移对 2b-② 的影响
+
+- 2b-① 的 ID 重算发生在**读路径归一化**（旧记录每次 GET 修复并记账）。claim_id 派生自**归一化后**的 primary evidence_id → 旧记录补齐的 claim_id 与重算后的证据 ID 天然一致，**无跨批漂移**。
+- 同一条主张两次 GET（中间无写入）→ claim_id 幂等（归一化本身幂等，2b-① T3 钉过）；一旦 2b-① 迁移使 evidence_id 变化（只发生在旧数据首次修复），claim_id 随之稳定到新值——由 `id_recomputed` 警告与 claim 变化共同记账，不做跨批映射（`supersedes_claim_id` 契约预留，批 3）。
+
+## 2. 两个「开工前再确认项」（终审点名）
+
+### A. verify_question 稳定业务主键的精确口径
+
+```text
+verify_question 主键 = source + "\x1f" + primary_evidence_id
+```
+
+- **合并语义声明**：`source + 证据` 相同的两条核验问题视为**同一主张的多个表述**（问题措辞漂移不改身份，措辞变化由 content_hash 捕捉）。理由：核验问题的实体是「针对这张证据的这个来源的疑点」，措辞是表述不是身份。
+- `source` 取值域固定（`quality_obs | blind | pending | fact | rule_attention`，verify.py:44 注释即枚举）。
+- 反例对账：同 source 不同证据 → 不同 claim；同证据不同 source → 不同 claim；`obs:{i}` 永不入键。
+
+### B. claim_content_hash 的标准序列化（精确到字节）
+
+```text
+claim_content_hash = "cc-" + sha256( "\x1f".join(sorted([f1, f2, ...])) )[:12]
+```
+
+- 各 claim_type 的 content_fields（白名单固定，均为**展示文本**字段，均先 `strip()`）：
+
+| claim_type | content_fields |
+|---|---|
+| rule_item | [note] |
+| blind_candidate | [note] |
+| quality_observation | [title, comment] |
+| verify_question | [question, title] |
+| objection | [legal_reasoning, proposal] |
+
+- 多值字段**排序后**参与拼接（与输入顺序无关，§1.7 钉 3 同哲学）；全空字段列表 → hash 照算（对空串列表的 join）——content_hash 与证据无关、只管「说明文字变没变」。
+- `counter_evidence` 字段**不进** 2b-② 的 objection content_fields（它将在 2b-③ 票据化，届时随字段增补 content_fields 并使 hash 语义版本 +1——版本演进声明写入字段注释）。
+
+## 3. API 契约与兼容
+
+- schemas 新增：`EvidenceEdgeInfo {evidence_id: str, relation: str}`；五类主张模型各增 `claim_id: str = ""` / `claim_content_hash: str = ""` / `evidence_refs: list[EvidenceEdgeInfo] = []`（只加不删，旧客户端零感知——批 1「schema 静默 ignore」教训的反向应用，先立契约）。
+- 兼容矩阵：旧记录（无新键）→ 读路径补齐，行为与今天逐字节一致（新增字段之外）；新字段 None/空语义对前端/docx 无感。
+- **铁律 3 测试钉**：claim/evidence_refs 全为主张侧标注——pipeline 落库前后 `items[].status` 逐字节对照 + Design B 既有断言照跑。
+
+## 4. 测试清单（tests/test_evidence_claims.py）
+
+| # | 测试 | 断言核心 |
+|---|---|---|
+| T1 | 稳定性三连 | 同主张两次生成同 claim_id；同批观察**仅换序** → 全部 claim_id 不变；改一个字 → content_hash 变而 claim_id 不变 |
+| T2 | verify_question 主键 | 同 source 同证据 → 同 claim；source_ref（obs:i）注入篡改 → claim_id 不变（下标不入身份） |
+| T3 | 无主证据不撞号 | 两条无合格证据的主张 → claim_id 均为空串且互不相同语义（均不参与关联） |
+| T4 | refs 去重定序 | 同主张多路径派生 → refs 逐字节一致；含不合格票 → 不进 refs |
+| T5 | rebuts 仅受理 | accepted=True 异议才有 rebuts 边；rejected 无；accepted≠采纳口径断言 |
+| T6 | 旧记录补齐 | 无 claim_id 旧行 → 读路径补齐且与写路径公式重算一致 |
+| T7 | 迁移一致性 | 老票据（估算端点）读路径修复后 claim_id 稳定到新证据 ID；两次 GET 幂等 |
+| T8 | adopt 不动索引 | adopt 后 evidence_index 逐字节不变（约束 6 的声明钉） |
+| T9 | schema 契约 | 五模型新字段齐备；旧客户端忽略不受影响 |
+| T10 | 铁律 3 | 落库前后 items[].status 逐字节不变 |
+
+## 5. 变异验证计划（红线：回滚必须变红）
+
+| 变异 | 预期红 |
+|---|---|
+| M1 claim_id 派生混入数组下标 | T1/T2 |
+| M2 无主证据仍发 claim_id（空串参与） | T3 |
+| M3 refs 收录不合格票 / 去重定序摘除 | T4 |
+| M4 rebuts 不校验 accepted | T5 |
+| M5 读路径不补齐旧记录 | T6 |
+| M6 content_hash 不排序（顺序敏感） | T1 换序场景 |
+
+## 6. 载荷与回滚
+
+- evidence.py（claim 派生函数 + normalize 接线）、pipeline.py（规范化后标注步）、schemas.py（+2 模型字段）、五类产出点轻接线、tests +1 文件——单分支 2~3 commit，可独立 revert。
+- 前端/docx 零改动（消费端 2c）。
+
+## 7. 请审计确认的三点
+
+1. **verify_question 合并语义**（§2-A）：「同 source 同证据=同一主张」是否接受？替代方案是再加 question 文本哈希入键——但那会让措辞漂移变成换号，与「身份≠表述」哲学冲突，我方不推荐。
+2. **content_fields 白名单**（§2-B）：各类型的字段清单是否齐备/有无该进没进的展示字段（进清单即参与漂移检测）？
+3. **rebuts 边的挂载位置**：挂在异议对象的 evidence_refs（我方方案）vs 同时回写规则项对象（形成双向边）？我方推荐单向挂异议侧——规则项是「被主张对象」，不该感知谁在反驳它（单向边保铁律 3 的物理隔离）。
