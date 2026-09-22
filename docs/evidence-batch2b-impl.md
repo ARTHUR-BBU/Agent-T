@@ -172,7 +172,7 @@ citation_edges = 历史上「曾经」发生过哪些引用 —— 只追加历�
 
 | 小批 | 内容 | 载荷 |
 |---|---|---|
-| **2b-①** | resolve_or_build_evidence 收口七层 + evidence_index 缓存（span 主键方向）+ **压缩定位端点真实化（§1.8）** + 并发/幂等/复用/真实坐标四组测试 | evidence.py、pipeline/verify/objection/ask 生成点接线、测试 |
+| **2b-①**（实际交付口径，审计 PR review P2 修订）| 坐标规范化（locate 真实端点 + 归一化坐标校验/端点归一）+ canonical 收敛（quote=原文切片）+ resolve_or_build_evidence / rebuild_evidence_index 机制 + evidence_index 随行持久化（pipeline 落库 + verify 端点锁内合并）+ 登记簿 duplicate 自检 + 四组测试。**七层调用点逐点换线不在本刀**（见 §1.9 范围口径）——各层现有 build 调用经读路径/落库规范化天然收敛 | evidence.py、pipeline.py（落库规范化+索引）、routes_verify.py（锁内合并）、routes.py（索引透传）、测试 |
 | **2b-②** | claim_id + claim_content_hash + evidence_refs（primary/supports/rebuts）+ API schema + 旧记录兼容 | evidence.py 派生函数、各层产出点、normalize 补齐、schemas、顺序稳定性测试 |
 | **2b-③** | counter_evidence 票据化（absent/missing 分离）+ rebuts 边（仅受理）+ Ask 引用入库 | objection.py、llm_ask.py、测试 |
 
