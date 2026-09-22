@@ -1,6 +1,6 @@
 # 证据法批 2b-② 专项实现稿：claim_id + claim_content_hash + evidence_refs
 
-> 状态：**v1.2 待复审**（2026-09-22）。v1.0 审计「方向通过，退回修订」：三个阻塞（rule_item 主键合并误伤 / content_hash 字段互换掩盖 / rebuts 目标无证据）+ Q1-Q3 裁决意见 + 非阻塞项，本版全部落实（对账表见 §8）。总设计契约：docs/evidence-batch2-design.md v1.1 + 批 2b 实现稿 v1.3。
+> 状态：**v1.3 待复审**（2026-09-22）。v1.2 三阻塞已认可修掉；复审再补三个设计漏洞（组聚合按完整记录排序 / rebuts 字段入 schema 契约 / content_schema_version 字节格式），+ Q1 title 聚合，本版全部落实（对账表 §8 v1.3 节）。总设计契约：docs/evidence-batch2-design.md v1.1 + 批 2b 实现稿 v1.3。
 > 前置：2b-① 已正式验收通过（审计 2026-09-22，main=38eb2ba，857 passed + E2E）。
 > 分隔符记法：`<US>`=U+001F 单元分隔符、`<RS>`=U+001E 记录分隔符（实现用真实控制字符，本文为可读性记名）。
 > 节奏：**只审设计、不直接开工**。本稿逐条回应审计 8 条约束 + 兑现两个「开工前再确认项」。
@@ -109,28 +109,43 @@ serialized = content_schema_version + "" + 按固定字段顺序的 "字段名=
   - 每个值先 strip()；schema 版本参与哈希（字段清单演进时 +1）
 ```
 
-**content_fields 白名单（v1.2 按审计建议扩充）与固定顺序**：
+**content_fields 白名单（v1.2 扩充；v1.3 澄清 schema_version 不在字段表内）**：
 
-| claim_type | 固定顺序白名单 | 说明 |
+| claim_type | 固定顺序字段（白名单） | 说明 |
 |---|---|---|
-| rule_item | content_schema_version, name, note | name 参与漂移检测（v1.0 漏了） |
-| blind_candidate | content_schema_version, name, note | 同上 |
-| quality_observation | content_schema_version, title, comment | — |
-| verify_question | content_schema_version, question, title | 合并主张时 question 为列表字段（排序拼接） |
-| objection | content_schema_version, legal_reasoning, proposal, stance_check | stance_check 补入（v1.0 漏了） |
+| rule_item | name, note | name 参与漂移检测 |
+| blind_candidate | name, note | — |
+| quality_observation | title, comment | 合并组按完整记录聚合（见上） |
+| verify_question | question, title | 合并组按完整记录聚合（title 与 question 同记录绑定） |
+| objection | legal_reasoning, proposal, stance_check | — |
+
+**content_schema_version 的最终字节格式（v1.3——只出现一次、作为前缀键）**：
+
+```text
+serialized = "schema_version=cc1<US>" + 按白名单固定顺序的 "字段名=值" 串（<US> 连接）
+```
+
+  - 版本号**只出现一次**，固定键名 `schema_version`，固定值 `cc1`（字段清单演进 → cc2），绝不作为白名单字段重复写入
+  - 值内控制字符转义：U+001F（<US>）/ U+001E（<RS>）在合同/模型文本中属数据损坏，序列化前**统一剥除** U+0000–U+001F（不做转义保留——保留转义会让「值里带分隔符」与真分隔符歧义）
+  - 空值表示：`字段名=`（等号后为空串），不省略字段
+  - 最终统一 UTF-8 编码后取 sha256
 
 - `quote` 不进 content_hash——它已由 evidence_id 约束（审计 Q2 确认），不重复计量。
 - **交换测试**：title/comment 互换 → hash 必变（新增钉子，杀死 v1.0 漏洞）。
-- **合并组的聚合规则（PR review 4073131818）**：`dimension + primary evidence_id` 相同的多条质量观察合并为一个主张时，其共享 content_hash 按**组聚合**计算——title 与 comment 各自作为列表字段，组内**排序**后以 `<RS>` 连接，再按固定字段顺序带字段名序列化：
+- **合并组的聚合规则（v1.3 修订：按「完整记录」排序，不是按字段分别排序）**：v1.2 的「title 一摞、comment 一摞分别排序」会丢失字段对应关系（观察 A 的 comment 换成 B 的，两摞集合都不变、hash 不变——「姓名和成绩分两摞，不知道哪个成绩属于谁」）。改为：
 
 ```text
-serialized = "cc1" + "title=<排序后组内全部 title 以<RS>连接>"
-           + "" + "comment=<排序后组内全部 comment 以<RS>连接>"
+第一步：每条成员记录序列化为完整行：
+    record_i = "title=<该条title>" + "comment=<该条comment>"
+第二步：完整记录整体排序（字典序），以 <RS> 连接：
+    records = record_1<RS>record_2<RS>...
+第三步：带字段名固定顺序序列化：
+    serialized = "schema_version=cc1" + "records=" + records
 ```
 
-  - 与输入数组顺序无关（组内排序）；任一成员的任一字段变化 → 组 hash 变
-  - 单条观察 = 组大小为 1 的特例（同一公式，无特判分支）
-  - verify_question 合并组同口径（question 列表字段，§2-A 裁决 3 一致）
+  - **排序单位是「整条记录」**——字段对应关系完整保留；交换两条观察的 comment → 组 hash 必变；仅交换数组顺序 → hash 不变（两条测试钉，T5g/T5h）
+  - 单条观察 = 组大小 1 特例（同一公式，records 只有一条）
+  - verify_question 合并组同口径：每条完整记录 = `"question=<…>title=<…>"`——**title 与 question 同记录绑定聚合**（Q1 裁决：不做 title 单独聚合），默认展示文本仍取 question 字典序最小者，hash 与展示用同一套确定性规则
 
 ## 3. API 契约与兼容
 
