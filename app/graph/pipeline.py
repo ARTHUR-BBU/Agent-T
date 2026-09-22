@@ -429,7 +429,7 @@ def run_review(
         ),
         "facts": (_normalized.get("quality") or {}).get("facts") or [],
         "verify": _normalized.get("verify") or {},
-        "rule_pack": rule_pack_versions(final.get("category") or category),
+        "rule_pack": _normalized.get("rule_pack"),
         "evidence_index": {
             "version": _index.get("version", 1),
             "by_span": _index.get("by_span") or {},

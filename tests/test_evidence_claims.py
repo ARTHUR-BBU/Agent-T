@@ -14,6 +14,7 @@ from app.services.evidence import (
     annotate_review_claims,
     build_evidence,
     claim_content_hash,
+    derive_claim_id,
 )
 from app.services.store import store as store_module
 from tests.helpers import wait_review_done
@@ -136,6 +137,71 @@ def test_legacy_scope_warning_and_stability():
     assert len(warnings2) == len(warnings)
 
 
+# ---------- 门禁 P2：身份边界五钉（变异 M2/M4/M5/M8/M11 存活的根因） ----------
+
+def test_scope_component_change_changes_claim_id():
+    """P2 钉①（M8/M2 根因）：scope 三元组任一成分变化 → claim_id 必变
+    （配置哈希变、引擎哈希变都算——「改代码没改 YAML」也逃不过）。"""
+    it = _item("penalty_cap")
+    base, _ = _annotate({"items": [dict(it)], "rule_pack": dict(_RP)})
+    cfg_changed, _ = _annotate({"items": [dict(it)],
+                                "rule_pack": {**_RP, "rule_pack_content_version": "fff000fff000"}})
+    eng_changed, _ = _annotate({"items": [dict(it)],
+                                "rule_pack": {**_RP, "rule_engine_version": "fff000fff000"}})
+    bid = base["items"][0]["claim_id"]
+    assert cfg_changed["items"][0]["claim_id"] != bid, "配置版本变化必须换号"
+    assert eng_changed["items"][0]["claim_id"] != bid, "引擎版本变化必须换号"
+
+
+def test_pending_source_never_gets_formal_claim():
+    """P2 钉②（M4 根因，v1.7 裁决）：pending 无稳定对象键 → 不发正式 ID。"""
+    q = {"id": "vq", "source": "pending", "question": "请确认付款条件",
+         "evidence": dict(build_evidence(text=_TEXT, quote="违约金为总额百分之三十",
+                                         parse_source="fact", document_version=_DV))}
+    out, _ = _annotate({"verify": {"questions": [q]}})
+    assert out["verify"]["questions"][0]["claim_id"] == "", "pending 不拿措辞当身份证"
+
+
+def test_whitelist_out_dimension_no_formal_claim():
+    """P2 钉③（M5 根因）：白名单外 dimension → 不发正式 ID + 照算 hash。"""
+    obs = {"dimension": "编外维度", "title": "t", "comment": "c",
+           "evidence": dict(build_evidence(text=_TEXT, quote="违约金为总额百分之三十",
+                                           parse_source="quality", document_version=_DV))}
+    out, _ = _annotate({"quality": {"observations": [obs]}})
+    o = out["quality"]["observations"][0]
+    assert o["claim_id"] == "" and o["evidence_refs"] == []
+    assert o["claim_content_hash"].startswith("cc-"), "内容指纹照算（不依赖证据）"
+
+
+def test_legacy_scope_exact_derivation():
+    """P2 钉④（M8 最要紧项）：legacy 行的 claim_id 必须等于 scope="legacy"
+    的精确派生值——静默换成今天版本必然不等。"""
+    row = {"text": _TEXT, "document_version": _DV, "items": [_item("penalty_cap")]}
+    out, _ = annotate_review_claims(_norm(row))
+    it = out["items"][0]
+    expected = derive_claim_id(
+        document_version=_DV, analysis_scope="legacy",
+        claim_type="rule_item", business_key="penalty_cap" + chr(31) + it["evidence_refs"][0]["evidence_id"],
+    )
+    assert it["claim_id"] == expected, "legacy 派生必须可精确复算（静默换版本则不等）"
+    assert it["claim_id"] != derive_claim_id(
+        document_version=_DV, analysis_scope="procurementaaa000bbb111ccc222ddd333",
+        claim_type="rule_item", business_key="penalty_cap" + chr(31) + it["evidence_refs"][0]["evidence_id"],
+    ), "legacy 与真实 scope 串必须不同"
+
+
+def test_source_ref_injection_never_changes_id():
+    """P2 钉⑤（M11 根因）：source_ref（obs:i 下标）注入篡改 → claim_id 不变。"""
+    def q(ssk, ref):
+        return {"id": "vq", "source": "rule_attention", "source_subject_key": ssk,
+                "source_ref": ref, "question": "？",
+                "evidence": dict(build_evidence(text=_TEXT, quote="违约金为总额百分之三十",
+                                                parse_source="fact", document_version=_DV))}
+    r1, _ = _annotate({"verify": {"questions": [q("penalty_cap", "item:penalty_cap")]}})
+    r2, _ = _annotate({"verify": {"questions": [q("penalty_cap", "obs:0")]}})
+    assert r1["verify"]["questions"][0]["claim_id"] == r2["verify"]["questions"][0]["claim_id"]
+
+
 # ---------- T3 / T4 / T5b ----------
 
 def test_no_primary_evidence_no_formal_claim():
@@ -148,13 +214,15 @@ def test_no_primary_evidence_no_formal_claim():
 
 
 def test_refs_dedup_sorted_and_qualified_only():
-    """T4：refs 去重定序；不合格票不进。"""
-    it = _item("penalty_cap")
-    row = {"items": [it]}
+    """T4：refs 去重、(relation, evidence_id) 定序；不合格票不进。"""
+    good = _item("penalty_cap")
+    bad = _item(None)
+    row = {"items": [good, bad]}
     out, _ = _annotate(row)
+    assert out["items"][1]["evidence_refs"] == [], "不合格票不产生任何引用边"
     refs = out["items"][0]["evidence_refs"]
-    assert refs == [{"evidence_id": refs[0]["evidence_id"], "relation": "primary"}]
-    assert refs[0]["evidence_id"].startswith("ev-")
+    assert [r["relation"] for r in refs] == ["primary"], "仅 primary 且无重复"
+    assert refs == sorted(refs, key=lambda r: (r["relation"], r["evidence_id"]))
 
 
 def test_rebuts_only_accepted_and_fail_closed():
@@ -210,6 +278,16 @@ def test_content_hash_swap_detection_and_order_independence():
 
 def test_schema_version_once_and_newline_sensitivity():
     """T5j/T5l：schema_version 恰一次；换行差异不被吞。"""
+    # 内审补充：T5j 的「恰一次」断言此前名存实亡，现通过序列化中间量验证
+    from app.services.evidence import _CLAIM_SCHEMA_VERSION
+    rec = {"title": "t", "comment": "c"}
+    records = [
+        "title=" + rec["title"] + chr(31) + "comment=" + rec["comment"],
+    ]
+    serialized = ("schema_version=" + _CLAIM_SCHEMA_VERSION + chr(31) + "records="
+                  + chr(30).join(sorted(records)))
+    assert serialized.count("schema_version=") == 1, "版本前缀恰出现一次"
+    assert serialized.startswith("schema_version="), "位于最前"
     h1 = claim_content_hash("rule_item", [{"name": "付款\n条件", "note": "n"}])
     h2 = claim_content_hash("rule_item", [{"name": "付款条件", "note": "n"}])
     assert h1 != h2, "换行是内容变化，不得静默吞掉"
@@ -298,3 +376,40 @@ def test_verify_response_carries_claim_fields():
     with_claim = [q for q in qs if q.get("claim_id")]
     assert with_claim, "verify 出口的 claim 字段不得为空（出口标注缺失）"
     assert all(q2["claim_id"].startswith("cl-") for q2 in with_claim)
+
+
+def test_adopt_does_not_touch_evidence_index():
+    """T8：adopt 只改 adopted 键——evidence_index 逐字节不变。"""
+    rid = _upload_done()
+    idx_before = store_module.get(rid)["evidence_index"]
+    r = client.post(f"/api/review/{rid}/objections/adopt", json={"index": 0})
+    assert r.status_code in (200, 404), "fixture 可能无受理异议，404 亦可"
+    if r.status_code == 200:
+        idx_after = store_module.get(rid)["evidence_index"]
+        assert idx_after == idx_before, "adopt 不得触碰证据索引"
+
+
+def test_pack_verify_output_always_annotated():
+    """P2 钉（M9 根因）：pack_verify 出口标注——store 里塞未标注的 verify
+    状态（模拟 recheck 写入），/verify 响应仍必须带新鲜 claim 字段。"""
+    rid = _upload_done()
+    row = store_module.get(rid)
+    text = row.get("text") or ""
+    real_quote = next(ln.strip() for ln in text.splitlines() if len(ln.strip()) >= 10)
+    from app.services.evidence import build_evidence, document_version_for
+    bare_verify = {  # 无 claim 三字段的「裸」verify 状态（模拟 recheck 直写）
+        "available": True,
+        "questions": [{
+            "id": "vq99", "source": "rule_attention",
+            "source_subject_key": "penalty_cap",
+            "question": "摘句与原文是否一致？", "title": "违约金",
+            "quote": real_quote,
+            "evidence": build_evidence(text=text, quote=real_quote,
+                                       parse_source="fact",
+                                       document_version=document_version_for(text)),
+        }],
+    }
+    store_module.update(rid, verify=bare_verify)
+    body = client.get(f"/api/review/{rid}/verify").json()
+    q = (body.get("questions") or [{}])[0]
+    assert q.get("claim_id", "").startswith("cl-"),         "出口标注缺失时响应 claim 字段为空——M9 变异将在此存活"

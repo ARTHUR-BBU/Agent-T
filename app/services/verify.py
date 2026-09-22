@@ -459,7 +459,7 @@ def _collect_suspects(
             source="fact",
             # 批 2b-②：来源对象键 = kind+value 规范化业务键哈希（禁下标/禁截断）
             source_subject_key="fact:" + hashlib.sha256(
-                (str(fact.get("kind") or "") + "" + value).encode("utf-8")
+                (str(fact.get("kind") or "") + chr(31) + value).encode("utf-8")
             ).hexdigest()[:12],
             source_ref=f"fact:{i}:{value[:20]}",
             question=f"请核对事实材料「{label}：{value}」是否与原文一致？",

@@ -1023,7 +1023,10 @@ def annotate_review_claims(
                 ob["rebuts_reason"] = ""
                 ob["evidence_refs"] = _refs(primary, [(target_ev, "rebuts")])
             else:
-                # 阻塞三：目标无合格主证据 → 不生成边（绝不伪造空 ID 假链接）
+                # 阻塞三：不生成边（绝不伪造空 ID 假链接）——区分谁缺证据
+                # （门禁 P3-2：诊断字段不得语义失真）
                 ob["rebuts_status"] = "missing"
-                ob["rebuts_reason"] = "target_no_valid_evidence"
+                ob["rebuts_reason"] = (
+                    "self_no_valid_evidence" if not primary else "target_no_valid_evidence"
+                )
     return row_normalized, warnings
