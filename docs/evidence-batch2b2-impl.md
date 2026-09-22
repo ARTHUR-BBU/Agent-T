@@ -1,6 +1,6 @@
 # 证据法批 2b-② 专项实现稿：claim_id + claim_content_hash + evidence_refs
 
-> 状态：**v1.7 待复审**（2026-09-23）。v1.6 四项接近可施工；终审再补四点，本版全落实：①迁移警告写入语义钉死（响应副本生成、绝不写 store，持久化留 2c 显式入口）②pending 无稳定对象键→不发正式 claim_id（措辞不当身份证）③analysis_scope 扩为三元组（+rule_engine_version 引擎代码哈希）④总设计稿批次拆分声明（2b=①+②+③）。对账表 §10 末节。历经 v1.0（八约束+两确认项）→ v1.1（施工顺序重排+六修订）→ v1.2（三阻塞+Q1-Q3+非阻塞）→ v1.3（组聚合完整记录 / rebuts 入 schema / schema_version 字节格式 / title 聚合）→ v1.4（身份边界四块）→ v1.5（scope 落库 / 统一命名空间 / 来源对象键 / 2c 硬验收）→ 本版 v1.6（全文一致性重写：§2-A 旧公式清理、legacy 账本与证据登记簿分账、quality scope 裁决方案 A、quality_obs 来源对象键、文档卫生）。
+> 状态：**v1.8 待复审**（2026-09-23）。v1.7 四项已认可；终审两张图对齐式总检查再补四点，本版全落实：①总设计稿 §4.2/§4.7/§4.10 与本稿统一（analysis_scope 三元组为唯一正式口径；Decision 必含 claim_content_hash）②迁移警告入 ReviewSummary 响应 schema + 三重测试（可见/store 不变/幂等）③cited_by 与 citation_edges 归属终裁（2b-② 只做 evidence_refs，两者均留 2c）④版本哈希精确到字节（哈希对象/排序/编码/注释敏感性与 legacy 语义）。对账 §10 末节。历史：v1.6 四项接近可施工；终审再补四点，本版全落实：①迁移警告写入语义钉死（响应副本生成、绝不写 store，持久化留 2c 显式入口）②pending 无稳定对象键→不发正式 claim_id（措辞不当身份证）③analysis_scope 扩为三元组（+rule_engine_version 引擎代码哈希）④总设计稿批次拆分声明（2b=①+②+③）。对账表 §10 末节。历经 v1.0（八约束+两确认项）→ v1.1（施工顺序重排+六修订）→ v1.2（三阻塞+Q1-Q3+非阻塞）→ v1.3（组聚合完整记录 / rebuts 入 schema / schema_version 字节格式 / title 聚合）→ v1.4（身份边界四块）→ v1.5（scope 落库 / 统一命名空间 / 来源对象键 / 2c 硬验收）→ 本版 v1.6（全文一致性重写：§2-A 旧公式清理、legacy 账本与证据登记簿分账、quality scope 裁决方案 A、quality_obs 来源对象键、文档卫生）。
 > 前置：2b-① 已正式验收通过（审计 2026-09-22，main=38eb2ba）。
 > 节奏：**只审设计、不直接开工**。本稿为开工放行的唯一依据，与代码冲突时以通过评审的本稿为准。
 > 分隔符记法：`<US>`=U+001F 单元分隔符、`<RS>`=U+001E 记录分隔符（实现用真实控制字符，本文为可读性记名）。
@@ -11,6 +11,7 @@
 **留给 2b-③**：counter_evidence 票据化（absent/missing 分离）、Ask 引用入库、三路并发写入测试。
 **永不属于 2b**：citation_edges（2c 与 decision_history 同批）、supports/context（枚举预留，不产生——无 fact_id 关联来源，不让程序猜关系）。
 **边界声明**：不触碰 2b-① 已交付的证据坐标/收敛/索引机制，只在已收敛票据之上叠加主张侧标注。
+**cited_by / citation_edges 终裁（v1.8）**：2b-② **只生成主张对象上的 `evidence_refs`**；不派生 cited_by 索引；citation_edges（只追加历史账）完全留到 2c——三者是三层东西（对象内当前引用 / 聚合读视图 / 历史账本），后两层随 2c 一并交付（总设计稿 §4.3 已同步）。
 
 ## 0.1 施工顺序
 
@@ -26,16 +27,23 @@
 
 ```text
 analysis_scope = rule_pack_id + <US> + rule_pack_content_version + <US> + rule_engine_version
-    # rule_pack_id = 品类 ID（procurement / lease / nda）
-    # rule_pack_content_version = 规则包配置内容哈希（checklist 定义 sha256[:12]；改词表即变）
-    # rule_engine_version = 规则执行代码内容哈希（app/services/checklist.py 的 sha256[:12]；
-    #   v1.7：规则的含义同时受配置与执行代码影响，只哈希配置会让「改了代码没改 YAML」的
-    #   行为变化逃过版本号——两者都入 scope，任何一个变了主张 ID 随之稳定更新）
 
 claim_id = "cl-" + sha256(
     document_version + <US> + analysis_scope + <US> + claim_type + <US> + 业务主键
 )[:12]
 ```
+
+**版本哈希的字节级规范（v1.8 终审——精确到字节，无解释空间）**：
+
+| 版本 | 哈希对象 | 算法 | 注释/格式敏感性 |
+|---|---|---|---|
+| rule_pack_id | 品类 ID 字符串（如 `procurement`） | —（不哈希，直接参与拼接） | — |
+| rule_pack_content_version | 该品类的 checklist YAML **文件原始字节**（UTF-8，单文件；若未来拆多文件，按路径字典序排序后字节拼接） | sha256 前 12 位十六进制 | **注释与格式变化也算**——内容哈希哲学：确定性优先，宁可信版本敏感也不做语义 diff |
+| rule_engine_version | `app/services/checklist.py` **文件原始字节**（引擎主逻辑单文件；若未来拆依赖模块，哈希文件清单按路径排序拼接，清单本身登记在本表） | sha256 前 12 位十六进制 | 同上 |
+
+- 全部以**文件原始字节**计算（UTF-8 按存储形态，不归一化换行）——审计可复算：拿到同一版文件任意一方都能重出同一哈希。
+- **legacy 语义（精确）**：整个 `analysis_scope` 位置的字符串以 `"legacy"` **整体替代**（不是三元组各填 legacy）——即旧记录的 scope 串就是 `"legacy"`；同批旧行派生一致，且必然与新版本 scope 串不同。
+- 无 `row["rule_pack"]` 的旧行 + 引擎代码版本推断：**一律不做推断**——推断就是「用今天的版本算昨天的号」，legacy 是唯一出口。
 
 - **五类主张全部带 analysis_scope**（v1.6 裁决：quality_observation 采用方案 A）——质量 Prompt 实际接收 category / 规则结果上下文，观察并非脱离规则体系，统一带 scope 最安全。若未来出现真正的「文档级主张」，须作为新 claim_type 显式定义，不做隐式豁免。
 - 作用域声明：文档 + 规则包双维度；跨合同、跨规则包、跨规则包版本的同名主张**必不同 ID**。
@@ -54,7 +62,7 @@ claim_id = "cl-" + sha256(
 
 - `analysis_scope` 统一前缀（见 1.1），不再逐类型拼写。
 - `source_ref`（如 `obs:{i}`，verify.py:386 实证下标身份）全线降级纯展示，任何派生路径不得引用。
-- **source_subject_key 按来源取具体对象稳定键**：`rule_attention`→item_id；`blind`→补盲候选稳定 id；`fact`→事实规范化业务键（kind+value 哈希）；`quality_obs`→dimension + primary_evidence_id（即质量主张自身键）；**`pending`→无稳定服务端对象键（v1.7 修订：问题措辞即其唯一标识，拿措辞哈希当身份 = 改写措辞就换号，违反「身份≠表述」原则）→ pending 来源的核验问题不发正式 claim_id（留空），内容照常展示与计算 content_hash，进 2b-③ Ask 入库时若建立稳定 pending 对象键再补发**。全部禁数组下标。
+- **source_subject_key 按来源取具体对象稳定键**：`rule_attention`→item_id；`blind`→补盲候选稳定 id；`fact`→事实规范化业务键（kind+value 哈希）；`quality_obs`→dimension + primary_evidence_id（即质量主张自身键）；**`pending`→无稳定服务端对象键（v1.7 修订：问题措辞即其唯一标识，拿措辞哈希当身份 = 改写措辞就换号，违反「身份≠表述」原则）→ pending 来源的核验问题不发正式 claim_id（留空），内容照常展示与计算 content_hash，进 2b-③ Ask 入库时若建立稳定 pending 对象键再补发**。**决定链禁令：无正式 claim_id 的主张，2c 不得为其写 Decision**——须待 2b-③ 建立稳定对象键后方可进入决定链（总设计稿 §4.8 已同步）。全部禁数组下标。
 - 同段原文触发两条规则 → 两个 rule_item 主张（item_id 区分）；三个规则包同名 item_id → 三个不同主张（analysis_scope 区分）。
 
 ### 1.3 无有效证据的主张
@@ -64,7 +72,9 @@ claim_id = "cl-" + sha256(
 ### 1.4 claim_migration_warnings：主张侧迁移账本（与证据登记簿严格分账）
 
 - 位置：row 内独立容器 `claim_migration_warnings`；元素 `{where, reason, detail}`。
-- **写入语义（v1.7 明确——消除「只追加」与「读路径只读」的冲突）**：2b-② 中迁移警告**只在响应副本中生成**（每次读取由行状态确定性重导出——旧行必然每次都报 legacy_scope，幂等可预期），**绝不写回 store**（读路径只读红线优先）。若 2c 需要迁移历史持久化，必须设计显式写入口（与 decision_history 同批、同锁纪律），不得由读路径偷偷落库。
+- **写入语义（v1.7）与交付口径（v1.8 终审二选一裁决：选「入响应 schema」）**：迁移警告**只在响应副本中生成**（每次读取由行状态确定性重导出，幂等可预期），**绝不写回 store**。既然要给人看，就必须到达客户端——`ReviewSummary` 新增 `claim_migration_warnings: list[ClaimMigrationWarningInfo] = []`（元素 `{where, reason, detail}`），随 get_review 下发。
+- **三重测试（v1.8）**：①旧行 GET 能看到 legacy_scope 警告（不被 schema 剥掉——批 1 静默剥字同款钉）②store 行逐字节不变 ③连续两次 GET 结果一致（除时间戳类字段）。
+- 若 2c 需要迁移历史**持久化**，必须设计显式写入口（与 decision_history 同批、同锁纪律），不得由读路径偷偷落库；定位声明：2b-② 的它属于「响应派生诊断信息」（可重导出），非持久账本。
 - 收录：`legacy_scope`（旧记录缺规则包版本）及后续批次的 supersedes/迁移类主张侧事件。
 - **分账边界**：`evidence_registry.broken_refs` 只记**证据票据异常**（ID/坐标/资格）；主张侧身份与迁移事件一律进本账本——「身份证版本过期」不进「快递单损坏」的账本。
 - 归一化/读路径对其只追加或校验，禁止删除改写（历史账本纪律同总设计稿 §4.1）。
@@ -136,7 +146,7 @@ claim_id 派生自归一化后的 primary evidence_id → 旧记录补齐的 cla
 
 ## 6. API 契约与兼容
 
-- schemas 新增：`EvidenceEdgeInfo {evidence_id: str, relation: Literal[...]}`（严格枚举）；五类主张模型各增 `claim_id=""` / `claim_content_hash=""` / `evidence_refs=[]`；`Objection` 增 `rebuts_status` / `rebuts_reason`。只加不删，旧客户端零感知。
+- schemas 新增：`EvidenceEdgeInfo {evidence_id: str, relation: Literal[...]}`（严格枚举）；五类主张模型各增 `claim_id=""` / `claim_content_hash=""` / `evidence_refs=[]`；`Objection` 增 `rebuts_status` / `rebuts_reason`；`ReviewSummary` 增 `claim_migration_warnings`（§1.4，响应派生诊断）。只加不删，旧客户端零感知。
 - 读路径补齐**只计算、不写回 store**（响应副本；store 行逐字节测试延续）。
 - 铁律 3：claim/evidence_refs 全为主张侧标注——落库前后 items[].status 逐字节对照 + Design B 既有断言照跑。
 
@@ -148,7 +158,7 @@ claim_id 派生自归一化后的 primary evidence_id → 旧记录补齐的 cla
 | T2 | verify 主键 | 同 scope+source+对象+证据 → 同 claim；source_ref 注入篡改 → ID 不变 |
 | T2b | 规则包命名空间 | 同合同同证据同 item_id、不同 rule_pack → 不同 claim_id |
 | T2c | verify 来源对象键 | 同 source 同证据、不同来源对象 → 不同 claim；同对象 → 稳定 |
-| T2d | 版本落库与旧行兼容 | 行内 rule_pack.version 参与 ID；旧行 → legacy + claim_migration_warnings + 幂等 |
+| T2d | 版本落库与旧行兼容 | scope 三元组（配置+引擎哈希）参与 ID；旧行 → legacy + claim_migration_warnings（响应可见）+ 幂等 + store 不变 |
 | T3 | 无主证据 | claim_id 均为空串、不进 refs、不登记为有效主张 |
 | T4 | refs 去重定序 | 多路径派生逐字节一致；不合格票不进 refs |
 | T5 | rebuts 仅受理 | accepted=True 才有 rebuts；rejected 无 |
@@ -157,6 +167,7 @@ claim_id 派生自归一化后的 primary evidence_id → 旧记录补齐的 cla
 | T5g | 组聚合记录交换 | 组内两条记录 comment 互换 → 组 hash 必变 |
 | T5h | 组聚合顺序无关 | 仅换数组顺序 → 组 hash 不变 |
 | T5i | schema 回归 | rebuts missing 场景两字段真实到达客户端；accepted=False → not_applicable |
+| T5m | 迁移警告三重钉（v1.8） | 旧行 GET 可见 legacy_scope 警告（不被剥）；store 逐字节不变；两次 GET 一致 |
 | T5j | schema_version 单次 | 序列化串中恰一次、位于最前 |
 | T5k | 单条=组1 同路径 | 单条直算 == 聚合函数单成员组输出（逐字节） |
 | T5l | 控制字符可逆 | 仅差换行的两值 hash 不同；含分隔符字面量值转义往返一致 |
@@ -182,6 +193,7 @@ claim_id 派生自归一化后的 primary evidence_id → 旧记录补齐的 cla
 | M12 单条/聚合双路径 | T5k |
 | M13 值内控制字符剥除 | T5l |
 | M14 旧行静默用当前版本 | T2d |
+| M16 迁移警告被 schema 剥掉 | T5m |
 | M15 verify 丢来源对象键 | T2c |
 
 ## 9. 载荷与回滚
@@ -205,3 +217,12 @@ evidence.py（claim 派生 + normalize 接线）、pipeline.py（规范化后标
 | 2 pending 拿措辞当身份 | §1.2 source_subject_key 映射：pending 无稳定对象键 → 不发正式 claim_id（留空），不拿措辞顶替身份证 |
 | 3 rule_pack_version 不覆盖执行代码 | §1.1 analysis_scope 扩三元组：+rule_engine_version（checklist.py 内容哈希）；row["rule_pack"] 三键落库 |
 | 4 总设计稿与专项稿批次口径差 | 总设计稿 §5-2b 增批次拆分声明（2b=①+②+③，各子批边界与交付物标注） |
+
+### v1.7 → v1.8 对账
+
+| 终审意见 | 落实 |
+|---|---|
+| 1 两张图 claim_id 公式不一致 / Decision 缺 content_hash | 总设计稿 §4.2（三元 scope 唯一口径）/ §4.7（+claim_content_hash）/ §4.10（双维作用域）/ §4.8（快照硬验收 + pending 决定链禁令）全部对齐 |
+| 2 claim_migration_warnings 谁看未闭环 | 裁决「入响应 schema」：ReviewSummary.claim_migration_warnings + 三重测试（可见/store 不变/幂等，T5m）；定位=响应派生诊断，非持久账本 |
+| 3 cited_by vs citation_edges 归属冲突 | 终裁：2b-② 只做 evidence_refs；cited_by 索引与 citation_edges 历史账均留 2c（两稿 §4.3/§0 同步） |
+| 4 版本哈希精确到字节 + legacy 语义 | §1.1 字节级规范表：哈希对象/文件排序/编码/注释敏感性/legacy=整串替代；pending 决定链禁令（§4.8 同步） |
