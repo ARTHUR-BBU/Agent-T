@@ -29,7 +29,7 @@ claim_id = "cl-" + sha256(document_version + "\x1f" + claim_type + "\x1f" + 业�
 |---|---|
 | rule_item | **item_id + "<US>" + primary evidence_id**（v1.2 阻塞一修订：同一段原文可同时触发两条规则——只看证据会把「付款规则命中」和「验收规则命中」并成同一主张。item_id 取规则配置稳定 ID，绝不取数组位置） |
 | blind_candidate | 库内 id + "\x1f" + primary evidence_id |
-| quality_observation | dimension + "\x1f" + primary evidence_id（同键多条观察=同一主张，合并语义 §3） |
+| quality_observation | dimension + "\x1f" + primary evidence_id（同键多条观察=同一主张，合并语义与组聚合指纹见 §2-B） |
 | verify_question | source + "\x1f" + primary evidence_id（见 §2-A 再确认项） |
 | objection | item_id + "\x1f" + direction + "\x1f" + primary evidence_id |
 
@@ -121,6 +121,16 @@ serialized = content_schema_version + "" + 按固定字段顺序的 "字段名=
 
 - `quote` 不进 content_hash——它已由 evidence_id 约束（审计 Q2 确认），不重复计量。
 - **交换测试**：title/comment 互换 → hash 必变（新增钉子，杀死 v1.0 漏洞）。
+- **合并组的聚合规则（PR review 4073131818）**：`dimension + primary evidence_id` 相同的多条质量观察合并为一个主张时，其共享 content_hash 按**组聚合**计算——title 与 comment 各自作为列表字段，组内**排序**后以 `<RS>` 连接，再按固定字段顺序带字段名序列化：
+
+```text
+serialized = "cc1" + "title=<排序后组内全部 title 以<RS>连接>"
+           + "" + "comment=<排序后组内全部 comment 以<RS>连接>"
+```
+
+  - 与输入数组顺序无关（组内排序）；任一成员的任一字段变化 → 组 hash 变
+  - 单条观察 = 组大小为 1 的特例（同一公式，无特判分支）
+  - verify_question 合并组同口径（question 列表字段，§2-A 裁决 3 一致）
 
 ## 3. API 契约与兼容
 
