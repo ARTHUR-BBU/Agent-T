@@ -60,7 +60,7 @@ Decision（完整结构见 §4.7）                  # 可审计的决定记录�
 | 容器 | 性质 | 重建策略 |
 |---|---|---|
 | `evidence_registry` | 当前索引（本案卷的目录） | **可重建**：读路径归一化时全量重建，字段含 `registry_version` / `rebuilt_at` / `broken_refs` |
-| `citation_edges` | 引用账目（2b 起） | **只追加**：归一化只校验不删改；票据降级产生 `broken_refs` 记录而非删边 |
+| `citation_edges` | 引用账目（**2c 起**——v1.8 终裁，与 decision_history 同批） | **只追加**：归一化只校验不删改；票据降级产生 `broken_refs` 记录而非删边 |
 | `decision_history` | 决定历史（2c 起） | **只追加不可覆盖**（见 §4.8）；归一化永不触碰 |
 
 归一化（normalize_review_evidence）的职责边界由此改写：只重建 `evidence_registry`；对 `citation_edges` / `decision_history` 最多做**校验与 broken 标记**，禁止删除或改写历史条目。
@@ -168,10 +168,10 @@ relation = Literal["primary", "supports", "rebuts", "context", "counter"]
 
 > **批次拆分声明（v1.7 同步，消除断批口径歧义）**：2b = **2b-① + 2b-② + 2b-③** 三个子批，是本设计获批后的施工切分，不是追加需求。边界：
 > - **2b-①**（✅ 已验收，PR #70）：坐标规范化、span 复用收敛、evidence_index——证据地基
-> - **2b-②**（设计见 docs/evidence-batch2b2-impl.md v1.7）：claim_id + claim_content_hash + evidence_refs（primary/rebuts）——主张编号与引用边；**不含** counter 票据化与 Ask 入库
+> - **2b-②**（设计见 docs/evidence-batch2b2-impl.md v1.8）：claim_id + claim_content_hash + evidence_refs（primary/rebuts）——主张编号与引用边；**不含** counter 票据化与 Ask 入库
 > - **2b-③**：counter_evidence 票据化（absent/missing 分离）+ Ask 引用入库（§4.9 隐私 TTL）+ 三路并发测试
 
-- claim_id 派生（§4.2）落地各主张对象；`evidence_refs`（§4.5）替代 v1 的 `evidence_ids` 裸列表；cited_by 边（§4.3）随 claim_id 同批进登记簿
+- claim_id 派生（§4.2）落地各主张对象；`evidence_refs`（§4.5）替代 v1 的 `evidence_ids` 裸列表（**cited_by 索引与 citation_edges 均留 2c**——§4.3 终裁）
 - objection.counter_evidence 票据化（`counter` 关系）+ 对规则项票据的 `rebuts` 引用（**2b-③**）
 - Ask 证据引用入库（§4.9 全套规则）（**2b-③**）
 - 服务端 span 复用判定（§4.6）接入各层生成路径（**2b-①** 已以 canonical 收敛形态交付）
