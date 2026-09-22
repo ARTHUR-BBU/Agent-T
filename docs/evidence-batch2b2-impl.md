@@ -1,6 +1,6 @@
 # 证据法批 2b-② 专项实现稿：claim_id + claim_content_hash + evidence_refs
 
-> 状态：**v1.6 待复审**（2026-09-23）。历经 v1.0（八约束+两确认项）→ v1.1（施工顺序重排+六修订）→ v1.2（三阻塞+Q1-Q3+非阻塞）→ v1.3（组聚合完整记录 / rebuts 入 schema / schema_version 字节格式 / title 聚合）→ v1.4（身份边界四块）→ v1.5（scope 落库 / 统一命名空间 / 来源对象键 / 2c 硬验收）→ 本版 v1.6（全文一致性重写：§2-A 旧公式清理、legacy 账本与证据登记簿分账、quality scope 裁决方案 A、quality_obs 来源对象键、文档卫生）。
+> 状态：**v1.7 待复审**（2026-09-23）。v1.6 四项接近可施工；终审再补四点，本版全落实：①迁移警告写入语义钉死（响应副本生成、绝不写 store，持久化留 2c 显式入口）②pending 无稳定对象键→不发正式 claim_id（措辞不当身份证）③analysis_scope 扩为三元组（+rule_engine_version 引擎代码哈希）④总设计稿批次拆分声明（2b=①+②+③）。对账表 §10 末节。历经 v1.0（八约束+两确认项）→ v1.1（施工顺序重排+六修订）→ v1.2（三阻塞+Q1-Q3+非阻塞）→ v1.3（组聚合完整记录 / rebuts 入 schema / schema_version 字节格式 / title 聚合）→ v1.4（身份边界四块）→ v1.5（scope 落库 / 统一命名空间 / 来源对象键 / 2c 硬验收）→ 本版 v1.6（全文一致性重写：§2-A 旧公式清理、legacy 账本与证据登记簿分账、quality scope 裁决方案 A、quality_obs 来源对象键、文档卫生）。
 > 前置：2b-① 已正式验收通过（审计 2026-09-22，main=38eb2ba）。
 > 节奏：**只审设计、不直接开工**。本稿为开工放行的唯一依据，与代码冲突时以通过评审的本稿为准。
 > 分隔符记法：`<US>`=U+001F 单元分隔符、`<RS>`=U+001E 记录分隔符（实现用真实控制字符，本文为可读性记名）。
@@ -25,9 +25,12 @@
 ### 1.1 公式与作用域
 
 ```text
-analysis_scope = rule_pack_id + <US> + rule_pack_version
+analysis_scope = rule_pack_id + <US> + rule_pack_content_version + <US> + rule_engine_version
     # rule_pack_id = 品类 ID（procurement / lease / nda）
-    # rule_pack_version = 规则包内容哈希（checklist 定义 sha256[:12]；改词表即变版本，禁悄悄变脸）
+    # rule_pack_content_version = 规则包配置内容哈希（checklist 定义 sha256[:12]；改词表即变）
+    # rule_engine_version = 规则执行代码内容哈希（app/services/checklist.py 的 sha256[:12]；
+    #   v1.7：规则的含义同时受配置与执行代码影响，只哈希配置会让「改了代码没改 YAML」的
+    #   行为变化逃过版本号——两者都入 scope，任何一个变了主张 ID 随之稳定更新）
 
 claim_id = "cl-" + sha256(
     document_version + <US> + analysis_scope + <US> + claim_type + <US> + 业务主键
@@ -37,7 +40,7 @@ claim_id = "cl-" + sha256(
 - **五类主张全部带 analysis_scope**（v1.6 裁决：quality_observation 采用方案 A）——质量 Prompt 实际接收 category / 规则结果上下文，观察并非脱离规则体系，统一带 scope 最安全。若未来出现真正的「文档级主张」，须作为新 claim_type 显式定义，不做隐式豁免。
 - 作用域声明：文档 + 规则包双维度；跨合同、跨规则包、跨规则包版本的同名主张**必不同 ID**。
 
-**rule_pack_version 的落库持久化**：pipeline 的 node_checklist 载入规则包时计算内容哈希，写进审查行 `row["rule_pack"] = {"id": <品类>, "version": <哈希>}`。读旧记录用**行内保存的版本**派生 claim_id，绝不拿今天的规则重算昨天。旧记录无此键 → 兼容路径：scope 版本以字面量 `"legacy"` 参与 + 记 `claim_migration_warnings`（见 1.4）——不静默使用当前版本。2b-② 仅行内持久化 + 测试断言；API 外露 rule_pack 留 2c。
+**scope 三元组的落库持久化**：pipeline 的 node_checklist 载入规则包时计算两个内容哈希，写进审查行 `row["rule_pack"] = {"id": <品类>, "content_version": <配置哈希>, "engine_version": <引擎代码哈希>}`。读旧记录用**行内保存的版本**派生 claim_id，绝不拿今天的规则重算昨天。旧记录无此键 → 兼容路径：scope 以字面量 `"legacy"` 参与 + 记 `claim_migration_warnings`（见 1.4）——不静默使用当前版本。2b-② 仅行内持久化 + 测试断言；API 外露 rule_pack 留 2c。
 
 ### 1.2 业务主键（全部稳定标识：零下标 / 零截断文本 / 零模型输出顺序）
 
@@ -51,7 +54,7 @@ claim_id = "cl-" + sha256(
 
 - `analysis_scope` 统一前缀（见 1.1），不再逐类型拼写。
 - `source_ref`（如 `obs:{i}`，verify.py:386 实证下标身份）全线降级纯展示，任何派生路径不得引用。
-- **source_subject_key 按来源取具体对象稳定键**：`rule_attention`→item_id；`blind`→补盲候选稳定 id；`fact`→事实规范化业务键（kind+value 哈希）；`pending`→规范化问题文本哈希；`quality_obs`→dimension + primary_evidence_id（即质量主张自身键）。全部禁数组下标。
+- **source_subject_key 按来源取具体对象稳定键**：`rule_attention`→item_id；`blind`→补盲候选稳定 id；`fact`→事实规范化业务键（kind+value 哈希）；`quality_obs`→dimension + primary_evidence_id（即质量主张自身键）；**`pending`→无稳定服务端对象键（v1.7 修订：问题措辞即其唯一标识，拿措辞哈希当身份 = 改写措辞就换号，违反「身份≠表述」原则）→ pending 来源的核验问题不发正式 claim_id（留空），内容照常展示与计算 content_hash，进 2b-③ Ask 入库时若建立稳定 pending 对象键再补发**。全部禁数组下标。
 - 同段原文触发两条规则 → 两个 rule_item 主张（item_id 区分）；三个规则包同名 item_id → 三个不同主张（analysis_scope 区分）。
 
 ### 1.3 无有效证据的主张
@@ -60,7 +63,8 @@ claim_id = "cl-" + sha256(
 
 ### 1.4 claim_migration_warnings：主张侧迁移账本（与证据登记簿严格分账）
 
-- 位置：row 内独立容器 `claim_migration_warnings`（只追加）；元素 `{where, reason, detail}`。
+- 位置：row 内独立容器 `claim_migration_warnings`；元素 `{where, reason, detail}`。
+- **写入语义（v1.7 明确——消除「只追加」与「读路径只读」的冲突）**：2b-② 中迁移警告**只在响应副本中生成**（每次读取由行状态确定性重导出——旧行必然每次都报 legacy_scope，幂等可预期），**绝不写回 store**（读路径只读红线优先）。若 2c 需要迁移历史持久化，必须设计显式写入口（与 decision_history 同批、同锁纪律），不得由读路径偷偷落库。
 - 收录：`legacy_scope`（旧记录缺规则包版本）及后续批次的 supersedes/迁移类主张侧事件。
 - **分账边界**：`evidence_registry.broken_refs` 只记**证据票据异常**（ID/坐标/资格）；主张侧身份与迁移事件一律进本账本——「身份证版本过期」不进「快递单损坏」的账本。
 - 归一化/读路径对其只追加或校验，禁止删除改写（历史账本纪律同总设计稿 §4.1）。
@@ -192,3 +196,12 @@ evidence.py（claim 派生 + normalize 接线）、pipeline.py（规范化后标
 - **v1.3→v1.4**：规则包命名空间（T2b）；单条=组1 同路径（T5k）；分隔符可逆转义（T5l）；verify 展示完整记录字典序
 - **v1.4→v1.5**：rule_pack_version 落库+legacy 兼容（T2d）；analysis_scope 统一进 blind/objection/verify；source_subject_key（T2c）；content_hash 列 2c 硬验收；残句清理
 - **v1.5→v1.6**：全文一致性重写——§2-A 旧公式清理与主键表统一（施工图不得两页尺寸）；legacy 账本迁出证据登记簿（claim_migration_warnings 独立分账）；quality scope 裁决方案 A（五类全带 scope）；quality_obs 的 source_subject_key 补齐；状态头/围栏/残句等文档卫生
+
+### v1.6 → v1.7 对账
+
+| 终审意见 | 落实 |
+|---|---|
+| 1 迁移警告「只追加」vs「读路径只读」冲突 | §1.4 写入语义钉死：2b-② 仅响应副本生成、绝不写 store；持久化留 2c 显式写入口 |
+| 2 pending 拿措辞当身份 | §1.2 source_subject_key 映射：pending 无稳定对象键 → 不发正式 claim_id（留空），不拿措辞顶替身份证 |
+| 3 rule_pack_version 不覆盖执行代码 | §1.1 analysis_scope 扩三元组：+rule_engine_version（checklist.py 内容哈希）；row["rule_pack"] 三键落库 |
+| 4 总设计稿与专项稿批次口径差 | 总设计稿 §5-2b 增批次拆分声明（2b=①+②+③，各子批边界与交付物标注） |
