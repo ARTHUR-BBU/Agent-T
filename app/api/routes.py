@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, Upl
 from fastapi.concurrency import run_in_threadpool
 
 from app.api.schemas import (
+    ClaimMigrationWarningInfo,
     EvidenceRegistryInfo,
     ObjectionInfo,
     AskRequest,
@@ -210,6 +211,7 @@ def _start_review(
                         facts=result.get("facts") or [],
                         verify=result.get("verify") or {},
                         evidence_index=result.get("evidence_index"),
+                        rule_pack=result.get("rule_pack"),
                         error=None,
                     )
             except Exception:  # noqa: BLE001
@@ -386,6 +388,10 @@ def get_review(review_id: str):
     warnings: list = []
     row = normalize_review_evidence(row, warnings)
     evidence_registry = build_evidence_registry(row, warnings)
+    # 批 2b-②：主张标注（读路径补齐旧记录，同写路径公式）+ 迁移警告
+    # （响应派生诊断——绝不写回 store，实现稿 §1.4 写入语义）
+    from app.services.evidence import annotate_review_claims
+    row, claim_warnings = annotate_review_claims(row)
     clause_index = row.get("clause_index")
     stance = row.get("stance") or "neutral"
     quality = row.get("quality")
@@ -419,6 +425,7 @@ def get_review(review_id: str):
         document_version=row.get("document_version") or "",
         facts=facts or [],
         evidence_registry=EvidenceRegistryInfo(**evidence_registry),
+        claim_migration_warnings=[ClaimMigrationWarningInfo(**w) for w in claim_warnings],
         verify=_pack_verify(row.get("verify"), row=row),
         export_scope_note=row.get("export_scope_note")
         or (

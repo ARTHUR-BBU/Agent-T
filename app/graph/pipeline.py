@@ -388,7 +388,12 @@ def run_review(
     # quote 收敛为原文切片）——存进 store 的就是收敛后的形态，读路径零改写；
     # span 索引（可重建缓存，by_span 主键）随行持久化，供 done 后写方
     # （verify 再核 / 2b-③ ask）锁内查重合并。
-    from app.services.evidence import normalize_review_evidence, rebuild_evidence_index
+    from app.services.evidence import (
+        annotate_review_claims,
+        normalize_review_evidence,
+        rebuild_evidence_index,
+        rule_pack_versions,
+    )
     _normalized = normalize_review_evidence({
         "text": final.get("text") or "",
         "document_version": final.get("document_version") or "",
@@ -398,6 +403,10 @@ def run_review(
         "objections": final.get("objections") or {},
         "verify": final.get("verify") or {},
     })
+    # 批 2b-②：主张标注（claim_id/content_hash/evidence_refs）——在规范化
+    # 之后执行（编号派生自已收敛票据，约束 2 顺序），scope 取 rule_pack
+    _normalized["rule_pack"] = rule_pack_versions(final.get("category") or category)
+    annotate_review_claims(_normalized)
     _index = rebuild_evidence_index(_normalized)
     return {
         "text": final.get("text") or "",
@@ -420,6 +429,7 @@ def run_review(
         ),
         "facts": (_normalized.get("quality") or {}).get("facts") or [],
         "verify": _normalized.get("verify") or {},
+        "rule_pack": rule_pack_versions(final.get("category") or category),
         "evidence_index": {
             "version": _index.get("version", 1),
             "by_span": _index.get("by_span") or {},

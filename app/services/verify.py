@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import threading
@@ -57,6 +58,9 @@ class ConfirmQuestion(BaseModel):
     recheck_count: int = 0
     last_recheck: Optional[dict[str, Any]] = None
     # 法务五条分流：仅 must_human 进入「需你确认」待办；machine_* 不打扰人
+    claim_id: str = ""  # 批 2b-②：主张编号（防 pack_verify 静默剥字）
+    claim_content_hash: str = ""
+    evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
     triage: TriageDisposition = "must_human"
     triage_reason: str = ""
     triage_rule: str = ""  # objection_short|acceptance_annex|payment_recheck|quote_unlocated|amount_cross|default
@@ -350,6 +354,7 @@ def _collect_suspects(
         quote: str = "",
         parse_source: str = "quality",
         value_for_fact: str = "",
+        source_subject_key: str = "",
     ) -> None:
         if len(out) >= max_questions:
             return
@@ -361,6 +366,8 @@ def _collect_suspects(
             {
                 "source": source,
                 "source_ref": source_ref,
+                # 批 2b-②：来源对象稳定键（入 claim 身份；source_ref 已降级纯展示）
+                "source_subject_key": source_subject_key,
                 "question": question,
                 "title": title,
                 "clause_id": clause_id,
@@ -383,6 +390,8 @@ def _collect_suspects(
             qtext = f"请确认：「{title}」——{comment[:60]}"
         _add(
             source="quality_obs",
+            # 批 2b-②：来源对象键 = dimension（证据 ID 已是独立键成分）
+            source_subject_key=str(obs.get("dimension") or ""),
             source_ref=f"obs:{i}",
             question=qtext[:120],
             title=title,
@@ -421,6 +430,7 @@ def _collect_suspects(
         )
         _add(
             source="blind",
+            source_subject_key=str(bc.get("id") or ""),
             source_ref=str(bc.get("id") or name),
             question=f"请确认候选风险「{name}」是否需要跟进？",
             title=name,
@@ -446,6 +456,10 @@ def _collect_suspects(
         quote = str((ev or {}).get("quote") or value)
         _add(
             source="fact",
+            # 批 2b-②：来源对象键 = kind+value 规范化业务键哈希（禁下标/禁截断）
+            source_subject_key="fact:" + hashlib.sha256(
+                (str(fact.get("kind") or "") + "" + value).encode("utf-8")
+            ).hexdigest()[:12],
             source_ref=f"fact:{i}:{value[:20]}",
             question=f"请核对事实材料「{label}：{value}」是否与原文一致？",
             title=label,
@@ -466,6 +480,7 @@ def _collect_suspects(
         cid = item.get("primary_clause_id") or ((item.get("clause_ids") or [None])[0])
         _add(
             source="rule_attention",
+            source_subject_key=str(item.get("id") or ""),
             source_ref=str(item.get("id") or name),
             question=f"请确认规则项「{name}」的摘句与说明是否对得上原文？",
             title=name,
@@ -633,6 +648,7 @@ def run_bounded_verify(
         q_payload = dict(
             id=qid,
             source=sus["source"],
+            source_subject_key=str(sus.get("source_subject_key") or ""),
             source_ref=sus["source_ref"],
             question=sus["question"],
             title=sus.get("title") or "",
