@@ -747,3 +747,286 @@ def rebuild_evidence_index(row_normalized: dict[str, Any]) -> dict[str, Any]:
             _reg(q.get("evidence") if isinstance(q, dict) else None)
     return {"version": EVIDENCE_INDEX_VERSION, "by_span": by_span,
             "_duplicates": duplicates, "_text_len": len(text)}
+
+
+# ---------- 批 2b-②：主张标注（claim_id / claim_content_hash / evidence_refs） ----------
+
+_CLAIM_SCHEMA_VERSION = "cc1"
+_CLAIM_PREFIX = "cl-"
+_CONTENT_PREFIX = "cc-"
+
+# verify.source 白名单（审计非阻塞项：严格白名单，非法值不入身份）
+_VERIFY_SOURCE_WHITELIST = frozenset({"quality_obs", "blind", "pending", "fact", "rule_attention"})
+# quality.dimension 白名单
+_QUALITY_DIMENSION_WHITELIST = frozenset({"completeness", "consistency", "impact"})
+
+
+def rule_pack_versions(category: str) -> dict[str, str]:
+    """规则包版本三元组的两个内容哈希（批 2b-② v1.8 字节级规范）。
+
+    - rule_pack_content_version：该品类 checklist YAML 文件原始字节哈希
+      （注释/格式变化也算——确定性优先，宁可信版本敏感）
+    - rule_engine_version：checklist.py 引擎代码文件原始字节哈希
+      （改代码没改 YAML 的行为变化同样逃不过版本号）
+    - 品类未知时回落 procurement（与 load_checklist 兜底同口径）
+    """
+    from pathlib import Path
+
+    base = Path(__file__).resolve().parents[2] / "config"
+    config_path = base / ("checklist_" + category + ".yaml")
+    if not config_path.exists():
+        config_path = base / "checklist_procurement.yaml"
+    engine_path = Path(__file__).resolve().parent / "checklist.py"
+    return {
+        "rule_pack_id": category,
+        "rule_pack_content_version": hashlib.sha256(config_path.read_bytes()).hexdigest()[:12],
+        "rule_engine_version": hashlib.sha256(engine_path.read_bytes()).hexdigest()[:12],
+    }
+
+
+def derive_claim_id(
+    *, document_version: str, analysis_scope: str, claim_type: str, business_key: str
+) -> str:
+    """主张编号（批 2b-②）：文档 + 分析范围（规则包三元组）+ 类型 + 业务键。"""
+    blob = chr(31).join([document_version, analysis_scope, claim_type, business_key])
+    return _CLAIM_PREFIX + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def _escape_content_value(v: str) -> str:
+    """值内分隔符可逆转义（v1.4）：反斜杠与 <US>/<RS> 控制字符，其余原样保留。"""
+    return (
+        (v or "").replace("\\", "\\\\")
+        .replace(chr(31), "\\u001f")
+        .replace(chr(30), "\\u001e")
+    )
+
+
+# 批 2b-② §2.2：各主张类型的固定字段顺序（审计 P2——字母序违背规范）
+_CONTENT_FIELD_ORDER: dict[str, list[str]] = {
+    "rule_item": ["name", "note"],
+    "blind_candidate": ["name", "note"],
+    "quality_observation": ["title", "comment"],
+    "verify_question": ["question", "title"],
+    "objection": ["legal_reasoning", "proposal", "stance_check"],
+}
+
+
+def claim_content_hash(claim_type: str, records: list[dict[str, str]]) -> str:
+    """主张内容指纹（批 2b-② §2）：完整记录排序聚合，字节级序列化。
+
+    - 记录内字段按白名单固定顺序、带字段名（title/comment 互换 hash 必变）
+    - 组聚合排序单位是完整记录（字段对应关系不丢）
+    - 单条主张 = 组大小 1，走同一路径（T5k 逐字节相等）
+    """
+    field_order = _CONTENT_FIELD_ORDER.get(claim_type, [])
+    serialized_records = []
+    for rec in records:
+        # 固定字段顺序（白名单优先），白名单外字段排后（防御，正常不出现）
+        ordered = [f for f in field_order if f in rec] + sorted(
+            k for k in rec.keys() if k not in field_order
+        )
+        parts = [f + "=" + _escape_content_value(rec[f] or "") for f in ordered]
+        serialized_records.append(chr(31).join(parts))
+    serialized_records.sort()
+    serialized = (
+        "schema_version=" + _CLAIM_SCHEMA_VERSION + chr(31) + "records="
+        + chr(30).join(serialized_records)
+    )
+    return _CONTENT_PREFIX + hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:12]
+
+
+def annotate_review_claims(
+    row_normalized: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, str]]]:
+    """主张标注（批 2b-② 主入口）：claim_id / claim_content_hash / evidence_refs。
+
+    纯函数——只改传入的响应副本（pipeline 传规范化副本、get_review 传深拷贝），
+    绝不写回 store。claim_id 派生自**已收敛票据**（2b-① 之后），写/读双路径同源。
+    旧记录 scope 缺失 → "legacy" + 迁移警告（返回值 warnings，由调用方决定
+    去向：get_review 放响应字段，绝不写回 store——实现稿 §1.4 写入语义）。
+    """
+    warnings: list[dict[str, str]] = []
+    rp = row_normalized.get("rule_pack")
+    if isinstance(rp, dict) and rp.get("rule_pack_id"):
+        scope = chr(31).join([
+            str(rp.get("rule_pack_id") or ""),
+            str(rp.get("rule_pack_content_version") or ""),
+            str(rp.get("rule_engine_version") or ""),
+        ])
+    else:
+        scope = "legacy"
+        warnings.append({
+            "where": "row.rule_pack",
+            "reason": "legacy_scope",
+            "detail": "旧记录缺规则包版本，claim_id 以 legacy scope 派生",
+        })
+    dv = row_normalized.get("document_version") or ""
+
+    def _valid_primary(obj: dict[str, Any]) -> Optional[str]:
+        ev = obj.get("evidence")
+        if not isinstance(ev, dict):
+            return None
+        if ev.get("verification") not in _REGISTRY_QUALIFIED:
+            return None
+        eid = str(ev.get("evidence_id") or "")
+        return eid if _ID_SHAPE.fullmatch(eid) else None
+
+    def _refs(primary: Optional[str], extra: list[tuple[str, str]]) -> list[dict[str, str]]:
+        refs: list[dict[str, str]] = []
+        if primary:
+            refs.append({"evidence_id": primary, "relation": "primary"})
+        for e, r in extra:
+            if e:
+                refs.append({"evidence_id": e, "relation": r})
+        deduped = {(_r["evidence_id"], _r["relation"]): _r for _r in refs}
+        out = list(deduped.values())
+        out.sort(key=lambda _r: (_r["relation"], _r["evidence_id"]))
+        return out
+
+    def _claim(
+        obj: dict[str, Any], claim_type: str, business_key: str,
+        content: dict[str, str], primary: Optional[str],
+        extra_refs: list[tuple[str, str]],
+    ) -> None:
+        if primary:
+            obj["claim_id"] = derive_claim_id(
+                document_version=dv, analysis_scope=scope,
+                claim_type=claim_type, business_key=business_key,
+            )
+            obj["evidence_refs"] = _refs(primary, extra_refs)
+        else:
+            # 约束 4：无合格主证据不发正式编号（空串不参与身份计算）
+            obj["claim_id"] = ""
+            obj["evidence_refs"] = []
+        obj["claim_content_hash"] = claim_content_hash(claim_type, [content])
+
+    def _key(*parts: Any) -> str:
+        return chr(31).join(str(x) for x in parts)
+
+    # --- rule_item ---
+    for it in row_normalized.get("items") or []:
+        if not isinstance(it, dict):
+            continue
+        primary = _valid_primary(it)
+        _claim(
+            it, "rule_item", _key(it.get("id"), primary),
+            {"name": str(it.get("name") or ""), "note": str(it.get("note") or "")},
+            primary, [],
+        )
+
+    # --- blind_candidate ---
+    for c in row_normalized.get("blind_candidates") or []:
+        if not isinstance(c, dict):
+            continue
+        primary = _valid_primary(c)
+        _claim(
+            c, "blind_candidate", _key(c.get("id"), primary),
+            {"name": str(c.get("name") or ""), "note": str(c.get("note") or "")},
+            primary, [],
+        )
+
+    # --- quality_observation（dimension+evidence 同键多条 = 同一主张，组聚合指纹） ---
+    quality = row_normalized.get("quality") or {}
+    if isinstance(quality, dict):
+        groups: dict[str, list[dict[str, Any]]] = {}
+        group_order: list[str] = []
+        for obs in quality.get("observations") or []:
+            if not isinstance(obs, dict):
+                continue
+            primary = _valid_primary(obs)
+            dim = str(obs.get("dimension") or "")
+            if dim not in _QUALITY_DIMENSION_WHITELIST or not primary:
+                obs["claim_id"] = ""
+                obs["evidence_refs"] = []
+                obs["claim_content_hash"] = claim_content_hash(
+                    "quality_observation",
+                    [{"title": str(obs.get("title") or ""), "comment": str(obs.get("comment") or "")}],
+                )
+                continue
+            gk = _key(dim, primary)
+            if gk not in groups:
+                groups[gk] = []
+                group_order.append(gk)
+            groups[gk].append(obs)
+        for gk in group_order:
+            members = groups[gk]
+            group_claim = derive_claim_id(
+                document_version=dv, analysis_scope=scope,
+                claim_type="quality_observation", business_key=gk,
+            )
+            group_hash = claim_content_hash(
+                "quality_observation",
+                [{"title": str(m.get("title") or ""), "comment": str(m.get("comment") or "")}
+                 for m in members],
+            )
+            for m in members:
+                m["claim_id"] = group_claim
+                m["claim_content_hash"] = group_hash
+                m["evidence_refs"] = _refs(_valid_primary(m), [])
+
+    # --- verify_question（source_subject_key；pending 无稳定对象键不发正式 ID） ---
+    verify = row_normalized.get("verify") or {}
+    if isinstance(verify, dict):
+        for q in verify.get("questions") or []:
+            if not isinstance(q, dict):
+                continue
+            source = str(q.get("source") or "")
+            primary = _valid_primary(q)
+            content = {
+                "question": str(q.get("question") or ""),
+                "title": str(q.get("title") or ""),
+            }
+            if (
+                source not in _VERIFY_SOURCE_WHITELIST
+                or source == "pending"
+                or not primary
+            ):
+                # 非法来源 / pending（无稳定对象键）/ 无合格证据：不发正式编号
+                q["claim_id"] = ""
+                q["evidence_refs"] = []
+                q["claim_content_hash"] = claim_content_hash("verify_question", [content])
+                continue
+            ssk = str(q.get("source_subject_key") or "")
+            _claim(q, "verify_question", _key(source, ssk, primary), content, primary, [])
+
+    # --- objection（含 rebuts fail-closed；content 含 stance_check） ---
+    objections = row_normalized.get("objections") or {}
+    items_by_id = {
+        str(it.get("id")): it
+        for it in (row_normalized.get("items") or [])
+        if isinstance(it, dict)
+    }
+    if isinstance(objections, dict):
+        for ob in objections.get("objections") or []:
+            if not isinstance(ob, dict):
+                continue
+            primary = _valid_primary(ob)
+            accepted = ob.get("accepted") is True
+            _claim(
+                ob, "objection",
+                _key(ob.get("item_id"), ob.get("direction"), primary),
+                {
+                    "legal_reasoning": str(ob.get("legal_reasoning") or ""),
+                    "proposal": str(ob.get("proposal") or ""),
+                    "stance_check": str(ob.get("stance_check") or ""),
+                },
+                primary, [],
+            )
+            if not accepted:
+                ob["rebuts_status"] = "not_applicable"
+                ob["rebuts_reason"] = ""
+                continue
+            target = items_by_id.get(str(ob.get("item_id") or ""))
+            target_ev = _valid_primary(target) if isinstance(target, dict) else None
+            if target_ev and ob.get("claim_id"):
+                ob["rebuts_status"] = "present"
+                ob["rebuts_reason"] = ""
+                ob["evidence_refs"] = _refs(primary, [(target_ev, "rebuts")])
+            else:
+                # 阻塞三：不生成边（绝不伪造空 ID 假链接）——区分谁缺证据
+                # （门禁 P3-2：诊断字段不得语义失真）
+                ob["rebuts_status"] = "missing"
+                ob["rebuts_reason"] = (
+                    "self_no_valid_evidence" if not primary else "target_no_valid_evidence"
+                )
+    return row_normalized, warnings

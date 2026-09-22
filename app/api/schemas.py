@@ -24,6 +24,21 @@ class EvidenceRefInfo(BaseModel):
     parse_source: str = "rules"  # rules|blind|quality|ask|fact
 
 
+class EvidenceEdgeInfo(BaseModel):
+    """主张→证据引用边（批 2b-②）：带关系类型，服务端结构派生。"""
+
+    evidence_id: str  # 非空且形状合法（不合格票不进 refs）
+    relation: Literal["primary", "supports", "rebuts", "context", "counter"]
+
+
+class ClaimMigrationWarningInfo(BaseModel):
+    """主张侧迁移警告（批 2b-②）：响应派生诊断，绝不写回 store（§1.4）。"""
+
+    where: str
+    reason: str  # legacy_scope | ...
+    detail: str = ""
+
+
 class BrokenRefInfo(BaseModel):
     """归一化异常记录（批 2a 审计修订一：改写前捕获，报警器不先擦报警记录）。"""
 
@@ -75,6 +90,9 @@ class ChecklistItemResult(BaseModel):
     # 三轮审计 G：校验链拦截非法显式值后，防御路径下原值透传仅供诊断；
     # 消费端（异议层 _eligible_direction）对非法类别永不送审
     rule_class: Optional[Literal["hardline", "existence", "heuristic"]] = None
+    claim_id: str = ""  # 批 2b-②：主张编号（无合格主证据为空，不入身份）
+    claim_content_hash: str = ""  # 内容指纹（说明文字漂移检测）
+    evidence_refs: list[EvidenceEdgeInfo] = Field(default_factory=list)
     evidence: Optional[EvidenceRefInfo] = None
 
 
@@ -90,6 +108,9 @@ class BlindCandidate(BaseModel):
     named_by_scorecard: bool = False
     clause_ids: list[str] = Field(default_factory=list)
     primary_clause_id: Optional[str] = None
+    claim_id: str = ""  # 批 2b-②：主张编号（无合格主证据为空，不入身份）
+    claim_content_hash: str = ""  # 内容指纹（说明文字漂移检测）
+    evidence_refs: list[EvidenceEdgeInfo] = Field(default_factory=list)
     evidence: Optional[EvidenceRefInfo] = None
 
 
@@ -161,6 +182,9 @@ class QualityObservation(BaseModel):
     clause_ambiguous: bool = False  # 摘句跨多条款，位置不唯一
     comment: str = ""
     needs_confirm: bool = True  # 代码强制 True（模型无权声明免确认）
+    claim_id: str = ""  # 批 2b-②：主张编号（无合格主证据为空，不入身份）
+    claim_content_hash: str = ""  # 内容指纹（说明文字漂移检测）
+    evidence_refs: list[EvidenceEdgeInfo] = Field(default_factory=list)
     evidence: Optional[EvidenceRefInfo] = None
 
 
@@ -200,6 +224,9 @@ class ConfirmQuestionInfo(BaseModel):
     title: str = ""
     clause_id: Optional[str] = None
     quote: str = ""
+    claim_id: str = ""  # 批 2b-②：主张编号（无合格主证据为空，不入身份）
+    claim_content_hash: str = ""  # 内容指纹（说明文字漂移检测）
+    evidence_refs: list[EvidenceEdgeInfo] = Field(default_factory=list)
     evidence: Optional[EvidenceRefInfo] = None
     verification: str = "unverified"
     fact_ok: Optional[bool] = None
@@ -284,7 +311,13 @@ class Objection(BaseModel):
     clause_ambiguous: bool = False
     # 宪法证据法批：受理异议的服务端票据（span 命中位置+版本+parse_source=objection）
     # ——此前 objections 是六层里唯一裸字符串引用的一层（审计 B1-4）
+    claim_id: str = ""  # 批 2b-②：主张编号（无合格主证据为空，不入身份）
+    claim_content_hash: str = ""  # 内容指纹（说明文字漂移检测）
+    evidence_refs: list[EvidenceEdgeInfo] = Field(default_factory=list)
     evidence: Optional[EvidenceRefInfo] = None
+    # 批 2b-②：rebuts fail-closed 契约（审计阻塞三——目标无合格主证据不生成边）
+    rebuts_status: Literal["present", "missing", "not_applicable"] = "not_applicable"
+    rebuts_reason: str = ""  # missing 时 = target_no_valid_evidence
     adopted: bool = False
     needs_confirm: bool = True
 
@@ -337,6 +370,8 @@ class ReviewSummary(BaseModel):
     # 证据法批 2a：证据登记簿概览（纯读路径派生视图，每次响应即时重建；
     # 旧记录/异常路径为 None，前端零感知）
     evidence_registry: Optional[EvidenceRegistryInfo] = None
+    # 批 2b-②：主张侧迁移警告（响应派生诊断——legacy_scope 等，绝不写回 store）
+    claim_migration_warnings: list[ClaimMigrationWarningInfo] = Field(default_factory=list)
     # 导出范围说明（九哥：报告只含本次读到并展示的内容…）
     export_scope_note: str = (
         "报告只含本次读到并展示的内容；未读部分不写入结论"

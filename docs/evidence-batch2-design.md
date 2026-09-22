@@ -1,6 +1,6 @@
 # 证据法批 2 设计稿：Evidence → Claim → Decision 引用化改造
 
-> 状态：**v1.1 草案待审**（2026-09-20）。v1 经审计评审「方向通过，方案暂不定稿」，本版按裁决修订：登记簿与历史记录分离、claim_id 作用域、cited_by 以 claim_id 为主键、引用关系类型、Decision 完整结构、决定历史只追加、Ask 入库隐私 TTL、服务端 span 复用规则、ID 作用域声明。
+> 状态：**v1.2**（2026-09-23，随 2b-② 专项稿 v1.8 终审同步：§4.2 三元 scope / §4.7 Decision+content_hash / §4.3 cited_by 归属 2c / §4.8 快照硬验收）。历史：v1 经审计评审「方向通过，方案暂不定稿」，本版按裁决修订：登记簿与历史记录分离、claim_id 作用域、cited_by 以 claim_id 为主键、引用关系类型、Decision 完整结构、决定历史只追加、Ask 入库隐私 TTL、服务端 span 复用规则、ID 作用域声明。
 > 前置：批 1（evidence_id 身份证）已正式签收（PR #66，main@cd372bb）。
 
 ## 一、目标（一句话）
@@ -60,7 +60,7 @@ Decision（完整结构见 §4.7）                  # 可审计的决定记录�
 | 容器 | 性质 | 重建策略 |
 |---|---|---|
 | `evidence_registry` | 当前索引（本案卷的目录） | **可重建**：读路径归一化时全量重建，字段含 `registry_version` / `rebuilt_at` / `broken_refs` |
-| `citation_edges` | 引用账目（2b 起） | **只追加**：归一化只校验不删改；票据降级产生 `broken_refs` 记录而非删边 |
+| `citation_edges` | 引用账目（**2c 起**——v1.8 终裁，与 decision_history 同批） | **只追加**：归一化只校验不删改；票据降级产生 `broken_refs` 记录而非删边 |
 | `decision_history` | 决定历史（2c 起） | **只追加不可覆盖**（见 §4.8）；归一化永不触碰 |
 
 归一化（normalize_review_evidence）的职责边界由此改写：只重建 `evidence_registry`；对 `citation_edges` / `decision_history` 最多做**校验与 broken 标记**，禁止删除或改写历史条目。
@@ -68,10 +68,15 @@ Decision（完整结构见 §4.7）                  # 可审计的决定记录�
 ### 4.2 claim_id 作用域与版本（裁决 2）
 
 ```
-claim_id = "cl-" + sha256(document_version + claim_type + 业务主键)[:12]
+analysis_scope = rule_pack_id + <US> + rule_pack_content_version + <US> + rule_engine_version
+    # v1.7 终审口径（唯一正式版本，与专项稿 evidence-batch2b2-impl.md §1.1 一致）：
+    # rule_pack_id = 品类；rule_pack_content_version = 规则配置内容哈希；
+    # rule_engine_version = 规则执行代码内容哈希——配置与代码任一变更，主张 ID 随之更新
+
+claim_id = "cl-" + sha256(document_version + <US> + analysis_scope + <US> + claim_type + <US> + 业务主键)[:12]
 ```
 
-- **作用域声明：单审查记录内唯一**（同一份合同文本同 ID；跨合同同主张不同 ID）。evidence_id 同口径——两者都是**文档作用域短 ID**，未来跨文档空间必须升级为全系统长 ID 或加作用域前缀（规范文档远期条目，本批不做）。
+- **作用域声明（v1.7 升级）：文档 + 规则包双维度**——跨合同、跨规则包、跨规则包版本的同名主张必不同 ID（三包同名 item_id 教训）。evidence_id 保持文档作用域；未来跨文档空间升级为全系统长 ID 或加作用域前缀（远期条目）。
 - 规则词表修订后：旧审查记录保留旧 claim_id，新审查生成新 claim_id，**禁止悄悄复用/变脸**；预留 `supersedes_claim_id` 字段（本批不填、只定契约），claim_revision 映射体系留给规则变更提案通道（批 3 议题）。
 
 ### 4.3 cited_by 以 claim_id 为主键（裁决 3）
@@ -81,7 +86,8 @@ claim_id = "cl-" + sha256(document_version + claim_type + 业务主键)[:12]
 ```
 
 - `claim_id` 是唯一身份关联键；`layer` 供人读；`path` 仅调试辅助，**不作为身份**。
-- **2a 的处理**（v1.1 明确）：2a 不落地 claim_id，因此 2a 的登记簿**只做票据存在性账目**（每张票被哪几层引用的层级计数），不写 cited_by 关系边——「path 冒充身份」的账目一律不做。真正的 cited_by 边随 claim_id 在 2b 同批落地。
+- **2a 的处理**（v1.1 明确）：2a 不落地 claim_id，因此 2a 的登记簿**只做票据存在性账目**（每张票被哪几层引用的层级计数），不写 cited_by 关系边——「path 冒充身份」的账目一律不做。
+- **最终规则（v1.7 消除 2b/2c 归属冲突）**：**2b-② 只生成主张对象上的 `evidence_refs`，不派生 cited_by 索引；`citation_edges`（只追加历史账）完全留到 2c**，与 decision_history 同批设计。`cited_by`（按 claim 聚合的引用索引视图）与 `citation_edges`（历史账本）是两个东西：前者是后者的派生读视图，随 2c 一并交付。
 
 ### 4.4 docx 纳入 2c，增量升级（裁决 4）
 
@@ -114,6 +120,7 @@ relation = Literal["primary", "supports", "rebuts", "context", "counter"]
   "actor": "user:<session标示> | system:rule_engine | system:recheck",
   "authority": "human | machine",
   "claim_id": "cl-...",
+  "claim_content_hash": "cc-...",   # v1.7：决定时点的主张内容指纹快照（2c 硬性验收条件——缺此不验收）
   "evidence_ids": ["ev-..."],
   "decision": {"choice": "confirm|dispute|adopted|status", "note": "...", "revised_quote": "..."},
   "decided_at": "<ISO8601>"
@@ -130,6 +137,7 @@ relation = Literal["primary", "supports", "rebuts", "context", "counter"]
 - verify 的生命周期（待确认→已确认→再核→有争议）：每次转变**追加**一条新 decision 记录，`decision_id` 各自独立；从不覆盖旧记录。
 - 当前状态字段与历史账目的一致性由读路径校验（历史末条应与当前状态吻合；不吻合标 `decision_history_divergent` 供审计，不静默改写）。
 - 异议采纳同理：`adopted: true` 之外追加 `decision_type: objection_adopt` 记录。
+- **claim_content_hash 快照（v1.7）**：每条 decision 必含决定时点的主张内容指纹——「编号没变、内容被偷换」由此可证（2c 硬性验收条件，缺此不验收）。无正式 claim_id 的主张（如 pending 来源）**不得写 Decision**——须待 2b-③ 建立稳定对象键后方可进入决定链。
 
 ### 4.9 Ask 入库的隐私与 TTL（新增规则五）
 
@@ -158,10 +166,15 @@ relation = Literal["primary", "supports", "rebuts", "context", "counter"]
 
 ### 批 2b：Claim 标识 + 带关系类型的引用边（关系层）
 
-- claim_id 派生（§4.2）落地各主张对象；`evidence_refs`（§4.5）替代 v1 的 `evidence_ids` 裸列表；cited_by 边（§4.3）随 claim_id 同批进登记簿
-- objection.counter_evidence 票据化（`counter` 关系）+ 对规则项票据的 `rebuts` 引用
-- Ask 证据引用入库（§4.9 全套规则）
-- 服务端 span 复用判定（§4.6）接入各层生成路径
+> **批次拆分声明（v1.7 同步，消除断批口径歧义）**：2b = **2b-① + 2b-② + 2b-③** 三个子批，是本设计获批后的施工切分，不是追加需求。边界：
+> - **2b-①**（✅ 已验收，PR #70）：坐标规范化、span 复用收敛、evidence_index——证据地基
+> - **2b-②**（设计见 docs/evidence-batch2b2-impl.md v1.8）：claim_id + claim_content_hash + evidence_refs（primary/rebuts）——主张编号与引用边；**不含** counter 票据化与 Ask 入库
+> - **2b-③**：counter_evidence 票据化（absent/missing 分离）+ Ask 引用入库（§4.9 隐私 TTL）+ 三路并发测试
+
+- claim_id 派生（§4.2）落地各主张对象；`evidence_refs`（§4.5）替代 v1 的 `evidence_ids` 裸列表（**cited_by 索引与 citation_edges 均留 2c**——§4.3 终裁）
+- objection.counter_evidence 票据化（`counter` 关系）+ 对规则项票据的 `rebuts` 引用（**2b-③**）
+- Ask 证据引用入库（§4.9 全套规则）（**2b-③**）
+- 服务端 span 复用判定（§4.6）接入各层生成路径（**2b-①** 已以 canonical 收敛形态交付）
 
 ### 批 2c：Decision 引用链 + 报告闭环（裁决层）
 

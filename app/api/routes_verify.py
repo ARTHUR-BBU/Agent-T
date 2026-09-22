@@ -31,6 +31,17 @@ def pack_verify(raw: dict | None, *, row: dict | None = None) -> VerifyInfo | No
             text=row.get("text") or "",
             document_version=row.get("document_version") or "",
         )
+        # 批 2b-②（审计 P1-b）：verify 出口同样做主张标注——done 后写方
+        # （trigger/confirm/reverify）的响应此前不带 claim 字段，recheck 后
+        # 还可能带陈旧标注；统一在出口对副本重标注（确定性派生）
+        from app.services.evidence import annotate_review_claims, normalize_review_evidence
+        mini = {
+            "text": row.get("text") or "",
+            "document_version": row.get("document_version") or "",
+            "rule_pack": row.get("rule_pack"),
+            "verify": raw,
+        }
+        raw = annotate_review_claims(normalize_review_evidence(mini))[0]["verify"]
     try:
         info = verify_service.VerifyInfo.model_validate(raw)
     except Exception:  # noqa: BLE001
