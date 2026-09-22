@@ -94,6 +94,7 @@ verify_question 主键 = source + "\x1f" + primary_evidence_id
   2. 默认展示文本 = 全部问法的**字典序最小者**（确定性、与输入顺序无关，§1.7 同哲学）
   3. `claim_content_hash` 按**合并后的主张**统一计算——question 作为列表字段，排序后 `<RS>` 连接（每条问题单独算 hash 会让「同一主张」出现多个指纹，违背主张级身份）
   4. source 白名单如上，非法值不入身份
+  5. **title 聚合（v1.3 补齐）**：title 不单独聚合——与 question 绑定为完整记录（`question=<…><US>title=<…>`）参与组排序（§2-B 聚合规则）；默认展示与 hash 同一套确定性规则
 - 反例对账：同 source 不同证据 → 不同 claim；同证据不同 source → 不同 claim；`obs:{i}` 永不入键。
 
 ### B. claim_content_hash 的标准序列化（v1.2 重设计——阻塞二修订）
@@ -149,7 +150,7 @@ serialized = "schema_version=cc1<US>" + 按白名单固定顺序的 "字段名=�
 
 ## 3. API 契约与兼容
 
-- schemas 新增：`EvidenceEdgeInfo {evidence_id: str, relation: Literal["primary","supports","rebuts","context","counter"]}`（严格枚举，非裸字符串）；五类主张模型各增 `claim_id: str = ""` / `claim_content_hash: str = ""` / `evidence_refs: list[EvidenceEdgeInfo] = []`（只加不删，旧客户端零感知——批 1「schema 静默 ignore」教训的反向应用，先立契约）。
+- schemas 新增：`EvidenceEdgeInfo {evidence_id: str, relation: Literal["primary","supports","rebuts","context","counter"]}`（严格枚举，非裸字符串）；`Objection` 模型增 `rebuts_status: Literal["present","missing","not_applicable"] = "not_applicable"` / `rebuts_reason: str = ""`（**显式入 schema 防静默剥字**——批 1 Codex P1 教训）；五类主张模型各增 `claim_id: str = ""` / `claim_content_hash: str = ""` / `evidence_refs: list[EvidenceEdgeInfo] = []`（只加不删，旧客户端零感知——批 1「schema 静默 ignore」教训的反向应用，先立契约）。
 - 兼容矩阵：旧记录（无新键）→ 读路径补齐，行为与今天逐字节一致（新增字段之外）；新字段 None/空语义对前端/docx 无感。**读路径补齐只计算、不写回 store**（派生值仅存在于响应副本——store 行逐字节对照测试延续 2b-① 红线）。
 - **铁律 3 测试钉**：claim/evidence_refs 全为主张侧标注——pipeline 落库前后 `items[].status` 逐字节对照 + Design B 既有断言照跑。
 
@@ -166,7 +167,11 @@ serialized = "schema_version=cc1<US>" + 按白名单固定顺序的 "字段名=�
 | T5c | 端点归一同引用同 ID | 坐标路径与 locate 路径产同 ID（2b-① 钉 4 延伸） |
 | T5d | 一主张一个 primary | refs 中 relation=primary 至多 1 条 |
 | T5e | 引用同版本 | refs 中 evidence_id 对应票据的 document_version 与主张一致 |
-| T5f | content_hash 交换测试（阻塞二） | title/comment 内容互换 → hash 必变 |
+| T5f | content_hash 交换测试（阻塞二） | 同一条观察 title/comment 内容互换 → hash 必变 |
+| T5g | 组聚合记录交换（v1.3） | 组内两条记录的 comment 互换 → 组 hash 必变（字段对应关系不丢） |
+| T5h | 组聚合顺序无关 | 仅交换数组顺序 → 组 hash 不变 |
+| T5i | schema 回归（v1.3） | rebuts_status=missing 场景 → 两字段真实到达客户端（非被 pydantic 剥掉）；accepted=False → not_applicable |
+| T5j | schema_version 单次出现 | 序列化串中 `schema_version=` 恰好一次、位于最前 |
 | T6 | 旧记录补齐 | 无 claim_id 旧行 → 读路径补齐且与写路径公式重算一致 |
 | T7 | 迁移一致性 | 老票据（估算端点）读路径修复后 claim_id 稳定到新证据 ID；两次 GET 幂等 |
 | T8 | adopt 不动索引 | adopt 后 evidence_index 逐字节不变（约束 6 的声明钉） |
@@ -184,6 +189,9 @@ serialized = "schema_version=cc1<US>" + 按白名单固定顺序的 "字段名=�
 | M5 读路径不补齐旧记录 | T6 |
 | M6 content_hash 字段名缺失（互换掩盖回归） | T5f 交换测试 |
 | M7 rebuts 目标无证据仍生成边 | T5b |
+| M8 组聚合按字段分摞排序（v1.3 漏洞回归） | T5g |
+| M9 rebuts 字段缺席 Objection schema | T5i |
+| M10 schema_version 重复/缺席 | T5j |
 
 ## 6. 载荷与回滚
 
@@ -211,3 +219,12 @@ serialized = "schema_version=cc1<US>" + 按白名单固定顺序的 "字段名=�
 | 非阻塞：refs 禁空 ID / 单 primary / 同版本 | §1（不变式三条 + T5d/T5e） |
 | 非阻塞：读路径只计算不写回 | §3（声明 + store 逐字节测试延续） |
 | 非阻塞：并发/旧数据/无目标证据测试 | T5b/T6/T7 + 三路并发随 2b-③（约束 6 已声明） |
+
+### v1.2 → v1.3 对账
+
+| 复审意见 | 落实 |
+|---|---|
+| 漏洞一 组聚合字段分摞丢对应关系 | §2-B 完整记录排序（T5g/T5h 双钉） |
+| 漏洞二 rebuts 字段未入 schema | §1 契约表 + §3 Objection 显式声明 + T5i（批 1 静默剥字同款测试） |
+| 漏洞三 content_schema_version 字节歧义 | §2-B 最终格式：schema_version=cc1<US> 前缀单次出现 + 值内控制字符剥除 + 空值表示 + UTF-8（T5j） |
+| Q1 title 聚合 | §2-A 裁决 5：与 question 绑定完整记录聚合，展示/hash 同一套规则 |
