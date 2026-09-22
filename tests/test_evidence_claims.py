@@ -272,3 +272,29 @@ def test_old_record_gets_claims_via_read_path():
     assert item["claim_id"].startswith("cl-"), "旧记录读路径补齐 claim_id"
     assert any(w["reason"] == "legacy_scope" for w in body["claim_migration_warnings"]), \
         "缺规则包版本必须出现在迁移警告（且到达客户端不被剥）"
+
+
+def test_source_subject_key_survives_verify_roundtrip():
+    """审计 P1-a 钉子：source_subject_key 必须在 ConfirmQuestion 模型往返后
+    存活——模型缺字段时 pydantic 静默剥掉，标注拿到空键退回粗粒度。"""
+    from app.services.verify import ConfirmQuestion, VerifyInfo
+
+    q = ConfirmQuestion(
+        id="vq01", source="rule_attention", source_subject_key="penalty_cap",
+        question="？", quote="违约金为总额百分之三十",
+    )
+    info = VerifyInfo(questions=[q])
+    dumped = info.model_dump()["questions"][0]
+    assert dumped["source_subject_key"] == "penalty_cap", "模型缺字段=静默剥掉（批 1 教训）"
+
+
+def test_verify_response_carries_claim_fields():
+    """审计 P1-b 钉子：verify 出口（pack_verify）必须带主张标注——
+    done 后写方的响应不得空白/陈旧。"""
+    rid = _upload_done()
+    body = client.get(f"/api/review/{rid}/verify").json()
+    qs = body.get("questions") or []
+    assert qs, "fixture 应产生核验问题"
+    with_claim = [q for q in qs if q.get("claim_id")]
+    assert with_claim, "verify 出口的 claim 字段不得为空（出口标注缺失）"
+    assert all(q2["claim_id"].startswith("cl-") for q2 in with_claim)

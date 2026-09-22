@@ -58,6 +58,7 @@ class ConfirmQuestion(BaseModel):
     recheck_count: int = 0
     last_recheck: Optional[dict[str, Any]] = None
     # 法务五条分流：仅 must_human 进入「需你确认」待办；machine_* 不打扰人
+    source_subject_key: str = ""  # 批 2b-②：来源对象稳定键（入 claim 身份，防静默剥字——审计 P1）
     claim_id: str = ""  # 批 2b-②：主张编号（防 pack_verify 静默剥字）
     claim_content_hash: str = ""
     evidence_refs: list[dict[str, Any]] = Field(default_factory=list)

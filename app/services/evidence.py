@@ -801,6 +801,16 @@ def _escape_content_value(v: str) -> str:
     )
 
 
+# 批 2b-② §2.2：各主张类型的固定字段顺序（审计 P2——字母序违背规范）
+_CONTENT_FIELD_ORDER: dict[str, list[str]] = {
+    "rule_item": ["name", "note"],
+    "blind_candidate": ["name", "note"],
+    "quality_observation": ["title", "comment"],
+    "verify_question": ["question", "title"],
+    "objection": ["legal_reasoning", "proposal", "stance_check"],
+}
+
+
 def claim_content_hash(claim_type: str, records: list[dict[str, str]]) -> str:
     """主张内容指纹（批 2b-② §2）：完整记录排序聚合，字节级序列化。
 
@@ -808,11 +818,14 @@ def claim_content_hash(claim_type: str, records: list[dict[str, str]]) -> str:
     - 组聚合排序单位是完整记录（字段对应关系不丢）
     - 单条主张 = 组大小 1，走同一路径（T5k 逐字节相等）
     """
+    field_order = _CONTENT_FIELD_ORDER.get(claim_type, [])
     serialized_records = []
     for rec in records:
-        parts = []
-        for field_name in sorted(rec.keys()):
-            parts.append(field_name + "=" + _escape_content_value(rec[field_name] or ""))
+        # 固定字段顺序（白名单优先），白名单外字段排后（防御，正常不出现）
+        ordered = [f for f in field_order if f in rec] + sorted(
+            k for k in rec.keys() if k not in field_order
+        )
+        parts = [f + "=" + _escape_content_value(rec[f] or "") for f in ordered]
         serialized_records.append(chr(31).join(parts))
     serialized_records.sort()
     serialized = (
