@@ -1,7 +1,8 @@
 # 证据法批 2b-② 专项实现稿：claim_id + claim_content_hash + evidence_refs
 
-> 状态：**v1.0 待审**（2026-09-22）。总设计契约：docs/evidence-batch2-design.md v1.1（§4.2/4.3/4.5/4.7）+ 批 2b 实现稿 v1.3（§1.1/1.2/1.7/1.9）。
+> 状态：**v1.2 待复审**（2026-09-22）。v1.0 审计「方向通过，退回修订」：三个阻塞（rule_item 主键合并误伤 / content_hash 字段互换掩盖 / rebuts 目标无证据）+ Q1-Q3 裁决意见 + 非阻塞项，本版全部落实（对账表见 §8）。总设计契约：docs/evidence-batch2-design.md v1.1 + 批 2b 实现稿 v1.3。
 > 前置：2b-① 已正式验收通过（审计 2026-09-22，main=38eb2ba，857 passed + E2E）。
+> 分隔符记法：`<US>`=U+001F 单元分隔符、`<RS>`=U+001E 记录分隔符（实现用真实控制字符，本文为可读性记名）。
 > 节奏：**只审设计、不直接开工**。本稿逐条回应审计 8 条约束 + 兑现两个「开工前再确认项」。
 
 ## 0. 范围一句话与批次边界（约束 8）
@@ -26,7 +27,7 @@ claim_id = "cl-" + sha256(document_version + "\x1f" + claim_type + "\x1f" + 业�
 
 | claim_type | 业务主键（全部为稳定标识，零下标/零截断/零模型顺序） |
 |---|---|
-| rule_item | primary evidence_id |
+| rule_item | **item_id + "<US>" + primary evidence_id**（v1.2 阻塞一修订：同一段原文可同时触发两条规则——只看证据会把「付款规则命中」和「验收规则命中」并成同一主张。item_id 取规则配置稳定 ID，绝不取数组位置） |
 | blind_candidate | 库内 id + "\x1f" + primary evidence_id |
 | quality_observation | dimension + "\x1f" + primary evidence_id（同键多条观察=同一主张，合并语义 §3） |
 | verify_question | source + "\x1f" + primary evidence_id（见 §2-A 再确认项） |
@@ -39,6 +40,22 @@ claim_id = "cl-" + sha256(document_version + "\x1f" + claim_type + "\x1f" + 业�
   - **rebuts**：仅**通过五要件受理**的异议（`accepted=True`）→ 所争议规则项的主证据（Q4 裁决；口径纪律：accepted=「准许复核」，≠人工采纳≠异议成立——字段注释与文案统一）
 - 模型输出的任何关系声明字段一律忽略（与批 1 同源安全边界）；关系由代码根据「这个对象在结构里是谁」判定。
 - **evidence_refs 只收合格票**：每个元素 `{evidence_id: 非空且形状合法, relation}`；按 `(evidence_id, relation)` 去重、按 `(relation, evidence_id)` 固定排序——同一主张任意路径派生 refs 逐字节一致。
+- **一主张至多一个 primary**（不变式，测试钉）；所有 refs 引用必须与主张属**同一 document_version**（跨版本引用=身份错乱，校验 + 测试钉）。
+- **relation 严格枚举**：`relation = Literal["primary","supports","rebuts","context","counter"]`，Pydantic 层面约束（非裸字符串）；`verify.source` 白名单 = `quality_obs|blind|pending|fact|rule_attention`，`quality.dimension` 白名单 = `completeness|consistency|impact`——非法值**不进入身份计算**（claim_id 留空 + 登记簿 broken 账目）。
+
+### rebuts 的 fail-closed（v1.2 阻塞三修订——目标无证据怎么办）
+
+被异议规则项「未找到」或主证据不合格时（漏报型异议的常见场景）：
+
+```text
+目标规则项无合格主证据
+  → 不生成 rebuts 边（绝不伪造空 ID 指向不存在的证据——「假链接」防线）
+  → 异议对象记录：rebuts_status="missing"、rebuts_reason="target_no_valid_evidence"
+  → 异议自己的有效证据照常生成 primary 边（漏报异议的立身之本）
+```
+
+- rebuts_missing 账目进登记簿 broken_refs（reason 枚举扩充，随本批登记）。
+- 裁决记录（审计 Q3）：**单向边**获赞成——rebuts 只挂异议侧，被反驳的规则项不感知（铁律 3 物理隔离）；fail-closed 规则如上。
 
 ### 约束 4：无有效证据的主张不发正式 claim_id
 
@@ -71,32 +88,44 @@ verify_question 主键 = source + "\x1f" + primary_evidence_id
 ```
 
 - **合并语义声明**：`source + 证据` 相同的两条核验问题视为**同一主张的多个表述**（问题措辞漂移不改身份，措辞变化由 content_hash 捕捉）。理由：核验问题的实体是「针对这张证据的这个来源的疑点」，措辞是表述不是身份。
-- `source` 取值域固定（`quality_obs | blind | pending | fact | rule_attention`，verify.py:44 注释即枚举）。
+- `source` 取值域固定（`quality_obs | blind | pending | fact | rule_attention`，verify.py:44 注释即枚举）；**严格白名单**——非法 source 的主张不发 claim_id、进 broken 账目（不静默入身份）。
+- **Q1 裁决落实（合并主张的四个细则）**：
+  1. 多条不同问法**全部保留**（展示不删除）
+  2. 默认展示文本 = 全部问法的**字典序最小者**（确定性、与输入顺序无关，§1.7 同哲学）
+  3. `claim_content_hash` 按**合并后的主张**统一计算——question 作为列表字段，排序后 `<RS>` 连接（每条问题单独算 hash 会让「同一主张」出现多个指纹，违背主张级身份）
+  4. source 白名单如上，非法值不入身份
 - 反例对账：同 source 不同证据 → 不同 claim；同证据不同 source → 不同 claim；`obs:{i}` 永不入键。
 
-### B. claim_content_hash 的标准序列化（精确到字节）
+### B. claim_content_hash 的标准序列化（v1.2 重设计——阻塞二修订）
+
+v1.0 的 `sorted([f1, f2, ...])` 有字段互换漏洞：title 与 comment 内容互换后 hash 不变——「有哪些文字」被当成了「文字没变」。v1.2 改为**带字段名、固定字段顺序**的序列化：
 
 ```text
-claim_content_hash = "cc-" + sha256( "\x1f".join(sorted([f1, f2, ...])) )[:12]
+claim_content_hash = "cc-" + sha256(serialized.encode("utf-8"))[:12]
+
+serialized = content_schema_version + "" + 按固定字段顺序的 "字段名=值" 串
+  - 普通单值字段：不排序，按下方白名单的固定顺序排列
+  - 真正的列表字段（仅合并主张产生）：字段内排序后以 "<RS>" 连接
+  - 每个值先 strip()；schema 版本参与哈希（字段清单演进时 +1）
 ```
 
-- 各 claim_type 的 content_fields（白名单固定，均为**展示文本**字段，均先 `strip()`）：
+**content_fields 白名单（v1.2 按审计建议扩充）与固定顺序**：
 
-| claim_type | content_fields |
-|---|---|
-| rule_item | [note] |
-| blind_candidate | [note] |
-| quality_observation | [title, comment] |
-| verify_question | [question, title] |
-| objection | [legal_reasoning, proposal] |
+| claim_type | 固定顺序白名单 | 说明 |
+|---|---|---|
+| rule_item | content_schema_version, name, note | name 参与漂移检测（v1.0 漏了） |
+| blind_candidate | content_schema_version, name, note | 同上 |
+| quality_observation | content_schema_version, title, comment | — |
+| verify_question | content_schema_version, question, title | 合并主张时 question 为列表字段（排序拼接） |
+| objection | content_schema_version, legal_reasoning, proposal, stance_check | stance_check 补入（v1.0 漏了） |
 
-- 多值字段**排序后**参与拼接（与输入顺序无关，§1.7 钉 3 同哲学）；全空字段列表 → hash 照算（对空串列表的 join）——content_hash 与证据无关、只管「说明文字变没变」。
-- `counter_evidence` 字段**不进** 2b-② 的 objection content_fields（它将在 2b-③ 票据化，届时随字段增补 content_fields 并使 hash 语义版本 +1——版本演进声明写入字段注释）。
+- `quote` 不进 content_hash——它已由 evidence_id 约束（审计 Q2 确认），不重复计量。
+- **交换测试**：title/comment 互换 → hash 必变（新增钉子，杀死 v1.0 漏洞）。
 
 ## 3. API 契约与兼容
 
-- schemas 新增：`EvidenceEdgeInfo {evidence_id: str, relation: str}`；五类主张模型各增 `claim_id: str = ""` / `claim_content_hash: str = ""` / `evidence_refs: list[EvidenceEdgeInfo] = []`（只加不删，旧客户端零感知——批 1「schema 静默 ignore」教训的反向应用，先立契约）。
-- 兼容矩阵：旧记录（无新键）→ 读路径补齐，行为与今天逐字节一致（新增字段之外）；新字段 None/空语义对前端/docx 无感。
+- schemas 新增：`EvidenceEdgeInfo {evidence_id: str, relation: Literal["primary","supports","rebuts","context","counter"]}`（严格枚举，非裸字符串）；五类主张模型各增 `claim_id: str = ""` / `claim_content_hash: str = ""` / `evidence_refs: list[EvidenceEdgeInfo] = []`（只加不删，旧客户端零感知——批 1「schema 静默 ignore」教训的反向应用，先立契约）。
+- 兼容矩阵：旧记录（无新键）→ 读路径补齐，行为与今天逐字节一致（新增字段之外）；新字段 None/空语义对前端/docx 无感。**读路径补齐只计算、不写回 store**（派生值仅存在于响应副本——store 行逐字节对照测试延续 2b-① 红线）。
 - **铁律 3 测试钉**：claim/evidence_refs 全为主张侧标注——pipeline 落库前后 `items[].status` 逐字节对照 + Design B 既有断言照跑。
 
 ## 4. 测试清单（tests/test_evidence_claims.py）
@@ -105,9 +134,14 @@ claim_content_hash = "cc-" + sha256( "\x1f".join(sorted([f1, f2, ...])) )[:12]
 |---|---|---|
 | T1 | 稳定性三连 | 同主张两次生成同 claim_id；同批观察**仅换序** → 全部 claim_id 不变；改一个字 → content_hash 变而 claim_id 不变 |
 | T2 | verify_question 主键 | 同 source 同证据 → 同 claim；source_ref（obs:i）注入篡改 → claim_id 不变（下标不入身份） |
-| T3 | 无主证据不撞号 | 两条无合格证据的主张 → claim_id 均为空串且互不相同语义（均不参与关联） |
+| T3 | 无主证据不发正式编号 | 两条无合格证据的主张 → claim_id 均为空串（**不要求空值互异**）、不进任何 evidence_refs、不登记为有效主张；broken 账目可见 |
 | T4 | refs 去重定序 | 同主张多路径派生 → refs 逐字节一致；含不合格票 → 不进 refs |
 | T5 | rebuts 仅受理 | accepted=True 异议才有 rebuts 边；rejected 无；accepted≠采纳口径断言 |
+| T5b | rebuts 目标无证据（阻塞三） | 目标规则项「未找到」→ 无 rebuts 边 + rebuts_status=missing + reason=target_no_valid_evidence + 异议自身 primary 照常 |
+| T5c | 端点归一同引用同 ID | 坐标路径与 locate 路径产同 ID（2b-① 钉 4 延伸） |
+| T5d | 一主张一个 primary | refs 中 relation=primary 至多 1 条 |
+| T5e | 引用同版本 | refs 中 evidence_id 对应票据的 document_version 与主张一致 |
+| T5f | content_hash 交换测试（阻塞二） | title/comment 内容互换 → hash 必变 |
 | T6 | 旧记录补齐 | 无 claim_id 旧行 → 读路径补齐且与写路径公式重算一致 |
 | T7 | 迁移一致性 | 老票据（估算端点）读路径修复后 claim_id 稳定到新证据 ID；两次 GET 幂等 |
 | T8 | adopt 不动索引 | adopt 后 evidence_index 逐字节不变（约束 6 的声明钉） |
@@ -123,7 +157,8 @@ claim_content_hash = "cc-" + sha256( "\x1f".join(sorted([f1, f2, ...])) )[:12]
 | M3 refs 收录不合格票 / 去重定序摘除 | T4 |
 | M4 rebuts 不校验 accepted | T5 |
 | M5 读路径不补齐旧记录 | T6 |
-| M6 content_hash 不排序（顺序敏感） | T1 换序场景 |
+| M6 content_hash 字段名缺失（互换掩盖回归） | T5f 交换测试 |
+| M7 rebuts 目标无证据仍生成边 | T5b |
 
 ## 6. 载荷与回滚
 
@@ -135,3 +170,19 @@ claim_content_hash = "cc-" + sha256( "\x1f".join(sorted([f1, f2, ...])) )[:12]
 1. **verify_question 合并语义**（§2-A）：「同 source 同证据=同一主张」是否接受？替代方案是再加 question 文本哈希入键——但那会让措辞漂移变成换号，与「身份≠表述」哲学冲突，我方不推荐。
 2. **content_fields 白名单**（§2-B）：各类型的字段清单是否齐备/有无该进没进的展示字段（进清单即参与漂移检测）？
 3. **rebuts 边的挂载位置**：挂在异议对象的 evidence_refs（我方方案）vs 同时回写规则项对象（形成双向边）？我方推荐单向挂异议侧——规则项是「被主张对象」，不该感知谁在反驳它（单向边保铁律 3 的物理隔离）。
+
+## 8. v1.0 → v1.2 修订对账表
+
+| 审计意见 | 落实 |
+|---|---|
+| 阻塞一 rule_item 主键合并误伤（P1） | §1 业务主键表：item_id + primary evidence_id（规则配置稳定 ID） |
+| 阻塞二 content_hash 字段互换掩盖（P1） | §2-B 带字段名固定顺序序列化 + content_schema_version + 交换测试（T5f） |
+| 阻塞三 rebuts 目标无证据未定义（P1） | §1 rebuts fail-closed：不生成边 + rebuts_missing 记录 + 自身 primary 照常（T5b） |
+| Q1 verify_question 合并四细则 | §2-A：全保留/字典序展示/主张级统一 hash/source 严格白名单 |
+| Q2 白名单扩充 + T3 表述 | §2-B 白名单表（name/stance_check 补入，quote 明确排除）；T3 改「不发正式编号」口径 |
+| Q3 单向边赞成 | §1 rebuts 节裁决记录 |
+| 非阻塞：relation 严格枚举 | §1 + §3（Pydantic Literal） |
+| 非阻塞：source/dimension 白名单 | §1（非法值不入身份 + broken 账目） |
+| 非阻塞：refs 禁空 ID / 单 primary / 同版本 | §1（不变式三条 + T5d/T5e） |
+| 非阻塞：读路径只计算不写回 | §3（声明 + store 逐字节测试延续） |
+| 非阻塞：并发/旧数据/无目标证据测试 | T5b/T6/T7 + 三路并发随 2b-③（约束 6 已声明） |
