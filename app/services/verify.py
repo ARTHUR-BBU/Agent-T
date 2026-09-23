@@ -23,7 +23,12 @@ from pydantic import BaseModel, Field
 
 from app.services.reason_codes import Reason
 from app.services.blind_spot import MAX_QUOTE_CHARS, quote_supported
-from app.services.evidence import build_evidence, document_version_for, locate_quote_span
+from app.services.evidence import (
+    build_evidence,
+    document_version_for,
+    locate_quote_span,
+    normalize_evidence_ref,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -333,6 +338,20 @@ def classify_triage(
     return "must_human", "default", "默认进人审（含价值判断或证据未闭合）"
 
 
+def _canonical_evidence_id(ev: Any, text: str) -> str:
+    """取票据的**规范化后** evidence_id（Codex P1，2b-② 签收修正补丁）。
+
+    流水线归一化会把措辞变体票据收敛为原文切片并重算 ID；来源对象键里的
+    证据成分若嵌归一化前 ID，重跑核验（从已归一化观察重建问题）就会给
+    同一问题换编号。normalize_evidence_ref 是确定性函数，先规范化再取 ID
+    即与读路径收敛结果逐字节一致。无票据/无 ID 返回空串。
+    """
+    if not isinstance(ev, dict):
+        return ""
+    canon = normalize_evidence_ref(ev, text or "")
+    return str(canon.get("evidence_id") or "")
+
+
 def _collect_suspects(
     *,
     items: list[dict[str, Any]],
@@ -340,6 +359,7 @@ def _collect_suspects(
     blind_candidates: list[dict[str, Any]],
     facts: list[dict[str, Any]],
     max_questions: int,
+    text: str = "",
 ) -> list[dict[str, Any]]:
     """从审查产物收集疑点（封顶；不改动入参）。"""
     out: list[dict[str, Any]] = []
@@ -392,10 +412,11 @@ def _collect_suspects(
         _add(
             source="quality_obs",
             # 批 2b-② 验收修正：规范 = dimension + primary_evidence_id（<US> 连接）。
-            # dimension 单独做键会把同维度不同观察认成同一对象——证据 ID 必须进键
+            # dimension 单独做键会把同维度不同观察认成同一对象——证据 ID 必须进键。
+            # 证据成分取规范化后 ID（_canonical_evidence_id，见其 docstring）
             source_subject_key=chr(31).join([
                 str(obs.get("dimension") or ""),
-                str((obs.get("evidence") or {}).get("evidence_id") or ""),
+                _canonical_evidence_id(obs.get("evidence"), text),
             ]),
             source_ref=f"obs:{i}",
             question=qtext[:120],
@@ -554,6 +575,7 @@ def run_bounded_verify(
         blind_candidates=blind_candidates or [],
         facts=facts_list,
         max_questions=lim["max_questions"],
+        text=text or "",
     )
 
     questions: list[ConfirmQuestion] = list(retained)

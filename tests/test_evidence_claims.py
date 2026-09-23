@@ -461,7 +461,7 @@ def test_quality_obs_subject_key_includes_evidence_id():
     ev = build_evidence(text=_TEXT, quote="违约金为总额百分之三十",
                         parse_source="quality", document_version=_DV)
     qs = _collect_suspects(
-        items=[], facts=[], blind_candidates=[], max_questions=10,
+        items=[], facts=[], blind_candidates=[], max_questions=10, text=_TEXT,
         quality={"observations": [{
             "dimension": "completeness", "title": "甲条款",
             "comment": "缺少验收条款", "quote": "违约金为总额百分之三十",
@@ -504,3 +504,29 @@ def test_t5m_old_row_triple_pin():
         "legacy 警告到达客户端（三重之一：可见）"
     assert json.dumps(store_module.get(rid), sort_keys=True, ensure_ascii=False) == snapshot, \
         "读路径不写 store（三重之二：store 不变）"
+
+
+def test_quality_obs_subject_key_uses_canonical_evidence_id():
+    """Codex P1（签收修正补丁）：source_subject_key 的证据成分必须取**规范化后**
+    ID——流水线归一化会把措辞变体票据收敛为原文切片并重算 ID；键里若嵌归一化
+    前 ID，重跑核验（从已归一化观察重建问题）就会给同一问题换 claim_id。
+
+    变异验证：回滚 _canonical_evidence_id 为裸 evidence_id，本测试必红。"""
+    from app.services.evidence import normalize_evidence_ref
+    from app.services.verify import _collect_suspects
+    raw_ev = build_evidence(text=_TEXT, quote="违约金为总额百分之三十。",
+                            parse_source="quality", document_version=_DV)
+    norm_ev = normalize_evidence_ref(raw_ev, _TEXT)
+    assert raw_ev["evidence_id"] != norm_ev["evidence_id"], \
+        "前置：句号措辞变体场景下两 ID 必须不同（否则本测试无咬合力）"
+    qs = _collect_suspects(
+        items=[], facts=[], blind_candidates=[], max_questions=10, text=_TEXT,
+        quality={"observations": [{
+            "dimension": "completeness", "title": "甲条款",
+            "comment": "缺少验收条款", "quote": "违约金为总额百分之三十。",
+            "evidence": dict(raw_ev),
+        }]},
+    )
+    q = next(x for x in qs if x["source"] == "quality_obs")
+    assert q["source_subject_key"] == "completeness" + chr(31) + norm_ev["evidence_id"], \
+        "对象键证据成分必须与归一化收敛结果一致（重跑核验不换号）"
