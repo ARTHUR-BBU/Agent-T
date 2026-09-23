@@ -391,8 +391,12 @@ def _collect_suspects(
             qtext = f"请确认：「{title}」——{comment[:60]}"
         _add(
             source="quality_obs",
-            # 批 2b-②：来源对象键 = dimension（证据 ID 已是独立键成分）
-            source_subject_key=str(obs.get("dimension") or ""),
+            # 批 2b-② 验收修正：规范 = dimension + primary_evidence_id（<US> 连接）。
+            # dimension 单独做键会把同维度不同观察认成同一对象——证据 ID 必须进键
+            source_subject_key=chr(31).join([
+                str(obs.get("dimension") or ""),
+                str((obs.get("evidence") or {}).get("evidence_id") or ""),
+            ]),
             source_ref=f"obs:{i}",
             question=qtext[:120],
             title=title,
