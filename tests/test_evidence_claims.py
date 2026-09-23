@@ -413,3 +413,120 @@ def test_pack_verify_output_always_annotated():
     body = client.get(f"/api/review/{rid}/verify").json()
     q = (body.get("questions") or [{}])[0]
     assert q.get("claim_id", "").startswith("cl-"),         "出口标注缺失时响应 claim 字段为空——M9 变异将在此存活"
+
+
+# ---------- 独立验收签收修正（2026-09-23：主流程过、身份边界未签收） ----------
+
+def test_cross_document_evidence_never_gets_claim():
+    """签收 P1：票据 document_version 与行不一致（跨合同混入）→ 不发号、不开 primary。
+
+    变异验证：回滚 _valid_primary 的 document_version 校验，本测试必红。"""
+    out, _ = _annotate({"items": [_item("penalty_cap")]})
+    assert out["items"][0]["claim_id"].startswith("cl-"), "前置：同版本证据应正常发号"
+    foreign = {"items": [_item("penalty_cap")]}
+    foreign["items"][0]["evidence"]["document_version"] = "dv-another-contract"
+    out2, _ = _annotate(foreign)
+    it2 = out2["items"][0]
+    assert it2["claim_id"] == "", "跨合同票据必须拒发 claim_id（fail-closed）"
+    assert it2["evidence_refs"] == [], "跨合同票据不得产生 primary 引用"
+    assert it2["claim_content_hash"].startswith("cc-"), "内容指纹照常（指纹与发号解耦）"
+
+
+def test_content_hash_excludes_non_whitelist_fields():
+    """签收 P2：白名单外字段不得参与内容指纹——指纹覆盖面=规范声明字段集。
+
+    变异验证：回滚为「白名单外字段排后参与序列化」，本测试必红。"""
+    base = claim_content_hash("rule_item", [{"name": "a", "note": "b"}])
+    smuggled = claim_content_hash("rule_item", [{"name": "a", "note": "b", "smuggled": "x"}])
+    assert base == smuggled, "白名单外字段混入不得改变指纹"
+
+
+def test_rule_pack_versions_fallback_id_matches_pack():
+    """签收 P2：未知品类回落 procurement 时 rule_pack_id 必须与配置哈希同包。
+
+    变异验证：回滚 resolved_category（id 恒写请求品类），本测试必红。"""
+    from app.services.evidence import rule_pack_versions
+    v = rule_pack_versions("no_such_category")
+    ref = rule_pack_versions("procurement")
+    assert v["rule_pack_id"] == "procurement", "回落时 id 必须写实际使用的包"
+    assert v["rule_pack_content_version"] == ref["rule_pack_content_version"]
+    assert v["rule_engine_version"] == ref["rule_engine_version"]
+
+
+def test_quality_obs_subject_key_includes_evidence_id():
+    """签收 P1：quality_obs 来源对象键 = dimension + primary_evidence_id（§1.2 规范）。
+
+    变异验证：回滚为裸 dimension，本测试必红。"""
+    from app.services.verify import _collect_suspects
+    ev = build_evidence(text=_TEXT, quote="违约金为总额百分之三十",
+                        parse_source="quality", document_version=_DV)
+    qs = _collect_suspects(
+        items=[], facts=[], blind_candidates=[], max_questions=10, text=_TEXT,
+        quality={"observations": [{
+            "dimension": "completeness", "title": "甲条款",
+            "comment": "缺少验收条款", "quote": "违约金为总额百分之三十",
+            "evidence": dict(ev),
+        }]},
+    )
+    q = next(x for x in qs if x["source"] == "quality_obs")
+    assert q["source_subject_key"] == "completeness" + chr(31) + ev["evidence_id"], \
+        "对象键必须含证据 ID（裸 dimension 会把同维度不同观察认成同一对象）"
+
+
+def test_t5m_old_row_triple_pin():
+    """T5m 三重钉补全（签收 P2）：旧行迁移警告可见 + store 逐字节不变 +
+    连续两次 GET 一致（除登记簿重建时间戳）。"""
+    from app.services.evidence import document_version_for
+    text = (Path(__file__).resolve().parents[1] / "fixtures" / "procurement_sample.txt").read_text(encoding="utf-8")
+    real_quote = next(ln.strip() for ln in text.splitlines() if len(ln.strip()) >= 10)
+    rid = store_module.create(
+        filename="old.txt", category="procurement", status="done", stage="done",
+        created_at="2026-09-20 10:00",
+        items=[{"id": "penalty_cap", "name": "违约金上限", "status": "需关注", "note": "比例偏高",
+                "quote": real_quote,
+                "evidence": build_evidence(text=text, quote=real_quote,
+                                           parse_source="rules",
+                                           document_version=document_version_for(text))}],
+        scorecard={}, blind_candidates=[], blind_skipped_messages=[],
+        blind_skipped_reason=None, blind_enabled=False, text=text,
+        document_version=document_version_for(text),
+        policies=[], error=None,
+    )
+    snapshot = json.dumps(store_module.get(rid), sort_keys=True, ensure_ascii=False)
+    b1 = client.get(f"/api/review/{rid}").json()
+    b2 = client.get(f"/api/review/{rid}").json()
+    reg1 = b1.get("evidence_registry") or {}
+    assert reg1.get("rebuilt_at"), "登记簿 rebuilt_at 存在（弹除前确认）"
+    for b in (b1, b2):
+        (b.get("evidence_registry") or {}).pop("rebuilt_at", None)
+    assert b1 == b2, "连续两次 GET 必须一致（除 rebuilt_at）"
+    assert any(w["reason"] == "legacy_scope" for w in b1["claim_migration_warnings"]), \
+        "legacy 警告到达客户端（三重之一：可见）"
+    assert json.dumps(store_module.get(rid), sort_keys=True, ensure_ascii=False) == snapshot, \
+        "读路径不写 store（三重之二：store 不变）"
+
+
+def test_quality_obs_subject_key_uses_canonical_evidence_id():
+    """Codex P1（签收修正补丁）：source_subject_key 的证据成分必须取**规范化后**
+    ID——流水线归一化会把措辞变体票据收敛为原文切片并重算 ID；键里若嵌归一化
+    前 ID，重跑核验（从已归一化观察重建问题）就会给同一问题换 claim_id。
+
+    变异验证：回滚 _canonical_evidence_id 为裸 evidence_id，本测试必红。"""
+    from app.services.evidence import normalize_evidence_ref
+    from app.services.verify import _collect_suspects
+    raw_ev = build_evidence(text=_TEXT, quote="违约金为总额百分之三十。",
+                            parse_source="quality", document_version=_DV)
+    norm_ev = normalize_evidence_ref(raw_ev, _TEXT)
+    assert raw_ev["evidence_id"] != norm_ev["evidence_id"], \
+        "前置：句号措辞变体场景下两 ID 必须不同（否则本测试无咬合力）"
+    qs = _collect_suspects(
+        items=[], facts=[], blind_candidates=[], max_questions=10, text=_TEXT,
+        quality={"observations": [{
+            "dimension": "completeness", "title": "甲条款",
+            "comment": "缺少验收条款", "quote": "违约金为总额百分之三十。",
+            "evidence": dict(raw_ev),
+        }]},
+    )
+    q = next(x for x in qs if x["source"] == "quality_obs")
+    assert q["source_subject_key"] == "completeness" + chr(31) + norm_ev["evidence_id"], \
+        "对象键证据成分必须与归一化收敛结果一致（重跑核验不换号）"

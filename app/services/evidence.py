@@ -768,17 +768,21 @@ def rule_pack_versions(category: str) -> dict[str, str]:
       （注释/格式变化也算——确定性优先，宁可信版本敏感）
     - rule_engine_version：checklist.py 引擎代码文件原始字节哈希
       （改代码没改 YAML 的行为变化同样逃不过版本号）
-    - 品类未知时回落 procurement（与 load_checklist 兜底同口径）
+    - 品类未知时回落 procurement（与 load_checklist 兜底同口径）；回落时
+      rule_pack_id 一并对齐为实际使用的包——id 与配置哈希必须描述同一个
+      规则包（独立验收 P2：未知品类回落时 id 与哈希不得各说各话）
     """
     from pathlib import Path
 
     base = Path(__file__).resolve().parents[2] / "config"
     config_path = base / ("checklist_" + category + ".yaml")
+    resolved_category = category
     if not config_path.exists():
         config_path = base / "checklist_procurement.yaml"
+        resolved_category = "procurement"
     engine_path = Path(__file__).resolve().parent / "checklist.py"
     return {
-        "rule_pack_id": category,
+        "rule_pack_id": resolved_category,
         "rule_pack_content_version": hashlib.sha256(config_path.read_bytes()).hexdigest()[:12],
         "rule_engine_version": hashlib.sha256(engine_path.read_bytes()).hexdigest()[:12],
     }
@@ -821,10 +825,9 @@ def claim_content_hash(claim_type: str, records: list[dict[str, str]]) -> str:
     field_order = _CONTENT_FIELD_ORDER.get(claim_type, [])
     serialized_records = []
     for rec in records:
-        # 固定字段顺序（白名单优先），白名单外字段排后（防御，正常不出现）
-        ordered = [f for f in field_order if f in rec] + sorted(
-            k for k in rec.keys() if k not in field_order
-        )
+        # 只序列化白名单字段（独立验收 P2）：白名单外字段一律不参与指纹——
+        # 指纹覆盖面 = 规范声明的字段集，多传字段不改变身份（防御注入）
+        ordered = [f for f in field_order if f in rec]
         parts = [f + "=" + _escape_content_value(rec[f] or "") for f in ordered]
         serialized_records.append(chr(31).join(parts))
     serialized_records.sort()
@@ -867,6 +870,10 @@ def annotate_review_claims(
         if not isinstance(ev, dict):
             return None
         if ev.get("verification") not in _REGISTRY_QUALIFIED:
+            return None
+        # 独立验收 P1：证据必须属于当前审查的文档版本——跨合同票据（无论怎么混入）
+        # 一律拒绝发号，绝不给外来证据开 primary 引用（fail-closed）
+        if str(ev.get("document_version") or "") != dv:
             return None
         eid = str(ev.get("evidence_id") or "")
         return eid if _ID_SHAPE.fullmatch(eid) else None

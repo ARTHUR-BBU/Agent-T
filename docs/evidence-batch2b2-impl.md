@@ -1,6 +1,6 @@
 # 证据法批 2b-② 专项实现稿：claim_id + claim_content_hash + evidence_refs
 
-> 状态：**v1.8 待复审**（2026-09-23）。v1.7 四项已认可；终审两张图对齐式总检查再补四点，本版全落实：①总设计稿 §4.2/§4.7/§4.10 与本稿统一（analysis_scope 三元组为唯一正式口径；Decision 必含 claim_content_hash）②迁移警告入 ReviewSummary 响应 schema + 三重测试（可见/store 不变/幂等）③cited_by 与 citation_edges 归属终裁（2b-② 只做 evidence_refs，两者均留 2c）④版本哈希精确到字节（哈希对象/排序/编码/注释敏感性与 legacy 语义）。对账 §10 末节。历史：v1.6 四项接近可施工；终审再补四点，本版全落实：①迁移警告写入语义钉死（响应副本生成、绝不写 store，持久化留 2c 显式入口）②pending 无稳定对象键→不发正式 claim_id（措辞不当身份证）③analysis_scope 扩为三元组（+rule_engine_version 引擎代码哈希）④总设计稿批次拆分声明（2b=①+②+③）。对账表 §10 末节。历经 v1.0（八约束+两确认项）→ v1.1（施工顺序重排+六修订）→ v1.2（三阻塞+Q1-Q3+非阻塞）→ v1.3（组聚合完整记录 / rebuts 入 schema / schema_version 字节格式 / title 聚合）→ v1.4（身份边界四块）→ v1.5（scope 落库 / 统一命名空间 / 来源对象键 / 2c 硬验收）→ 本版 v1.6（全文一致性重写：§2-A 旧公式清理、legacy 账本与证据登记簿分账、quality scope 裁决方案 A、quality_obs 来源对象键、文档卫生）。
+> 状态：**v1.9 验收签收修正**（2026-09-23，独立验收「主流程通过、身份边界未签收」三轮修正落稿，对账 §10 表末行 5）。历史：**v1.8 待复审**（2026-09-23）。v1.7 四项已认可；终审两张图对齐式总检查再补四点，本版全落实：①总设计稿 §4.2/§4.7/§4.10 与本稿统一（analysis_scope 三元组为唯一正式口径；Decision 必含 claim_content_hash）②迁移警告入 ReviewSummary 响应 schema + 三重测试（可见/store 不变/幂等）③cited_by 与 citation_edges 归属终裁（2b-② 只做 evidence_refs，两者均留 2c）④版本哈希精确到字节（哈希对象/排序/编码/注释敏感性与 legacy 语义）。对账 §10 末节。历史：v1.6 四项接近可施工；终审再补四点，本版全落实：①迁移警告写入语义钉死（响应副本生成、绝不写 store，持久化留 2c 显式入口）②pending 无稳定对象键→不发正式 claim_id（措辞不当身份证）③analysis_scope 扩为三元组（+rule_engine_version 引擎代码哈希）④总设计稿批次拆分声明（2b=①+②+③）。对账表 §10 末节。历经 v1.0（八约束+两确认项）→ v1.1（施工顺序重排+六修订）→ v1.2（三阻塞+Q1-Q3+非阻塞）→ v1.3（组聚合完整记录 / rebuts 入 schema / schema_version 字节格式 / title 聚合）→ v1.4（身份边界四块）→ v1.5（scope 落库 / 统一命名空间 / 来源对象键 / 2c 硬验收）→ 本版 v1.6（全文一致性重写：§2-A 旧公式清理、legacy 账本与证据登记簿分账、quality scope 裁决方案 A、quality_obs 来源对象键、文档卫生）。
 > 前置：2b-① 已正式验收通过（审计 2026-09-22，main=38eb2ba）。
 > 节奏：**只审设计、不直接开工**。本稿为开工放行的唯一依据，与代码冲突时以通过评审的本稿为准。
 > 分隔符记法：`<US>`=U+001F 单元分隔符、`<RS>`=U+001E 记录分隔符（实现用真实控制字符，本文为可读性记名）。
@@ -48,7 +48,7 @@ claim_id = "cl-" + sha256(
 - **五类主张全部带 analysis_scope**（v1.6 裁决：quality_observation 采用方案 A）——质量 Prompt 实际接收 category / 规则结果上下文，观察并非脱离规则体系，统一带 scope 最安全。若未来出现真正的「文档级主张」，须作为新 claim_type 显式定义，不做隐式豁免。
 - 作用域声明：文档 + 规则包双维度；跨合同、跨规则包、跨规则包版本的同名主张**必不同 ID**。
 
-**scope 三元组的落库持久化**：pipeline 的 node_checklist 载入规则包时计算两个内容哈希，写进审查行 `row["rule_pack"] = {"id": <品类>, "content_version": <配置哈希>, "engine_version": <引擎代码哈希>}`。读旧记录用**行内保存的版本**派生 claim_id，绝不拿今天的规则重算昨天。旧记录无此键 → 兼容路径：scope 以字面量 `"legacy"` 参与 + 记 `claim_migration_warnings`（见 1.4）——不静默使用当前版本。2b-② 仅行内持久化 + 测试断言；API 外露 rule_pack 留 2c。
+**scope 三元组的落库持久化**：pipeline 的 node_checklist 载入规则包时计算两个内容哈希，写进审查行 `row["rule_pack"] = {"rule_pack_id": <品类>, "rule_pack_content_version": <配置哈希>, "rule_engine_version": <引擎代码哈希>}`（**v1.9 验收修正：键名以代码实际三键为准——本稿 v1.8 曾误写 `id/content_version/engine_version` 简写，照抄会与新记录判读冲突**）。品类未知回落 procurement 时 `rule_pack_id` 一并写 `"procurement"`——id 与配置哈希必须描述同一个规则包。读旧记录用**行内保存的版本**派生 claim_id，绝不拿今天的规则重算昨天。旧记录无此键 → 兼容路径：scope 以字面量 `"legacy"` 参与 + 记 `claim_migration_warnings`（见 1.4）——不静默使用当前版本。2b-② 仅行内持久化 + 测试断言；API 外露 rule_pack 留 2c。
 
 ### 1.2 业务主键（全部稳定标识：零下标 / 零截断文本 / 零模型输出顺序）
 
@@ -226,3 +226,4 @@ evidence.py（claim 派生 + normalize 接线）、pipeline.py（规范化后标
 | 2 claim_migration_warnings 谁看未闭环 | 裁决「入响应 schema」：ReviewSummary.claim_migration_warnings + 三重测试（可见/store 不变/幂等，T5m）；定位=响应派生诊断，非持久账本 |
 | 3 cited_by vs citation_edges 归属冲突 | 终裁：2b-② 只做 evidence_refs；cited_by 索引与 citation_edges 历史账均留 2c（两稿 §4.3/§0 同步） |
 | 4 版本哈希精确到字节 + legacy 语义 | §1.1 字节级规范表：哈希对象/文件排序/编码/注释敏感性/legacy=整串替代；pending 决定链禁令（§4.8 同步） |
+| 5（v1.9 验收签收）主流程过、身份边界未签收 | ①证据跨合同边界：_valid_primary 增 document_version 严格相等校验（fail-closed，跨合同票据不发号不开 primary）②quality_obs 来源对象键按 §1.2 规范补 primary_evidence_id（dimension 单键不合规）③claim_content_hash 只序列化白名单字段（白名单外不参与指纹）④回落品类 rule_pack_id 对齐实际包 ⑤本稿 L51 键名修正（见 §1.1）⑥T5m 三重测试补全（旧行 store 不变 + 连续两次 GET 一致） |

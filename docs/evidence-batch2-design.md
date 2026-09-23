@@ -1,6 +1,6 @@
 # 证据法批 2 设计稿：Evidence → Claim → Decision 引用化改造
 
-> 状态：**v1.2**（2026-09-23，随 2b-② 专项稿 v1.8 终审同步：§4.2 三元 scope / §4.7 Decision+content_hash / §4.3 cited_by 归属 2c / §4.8 快照硬验收）。历史：v1 经审计评审「方向通过，方案暂不定稿」，本版按裁决修订：登记簿与历史记录分离、claim_id 作用域、cited_by 以 claim_id 为主键、引用关系类型、Decision 完整结构、决定历史只追加、Ask 入库隐私 TTL、服务端 span 复用规则、ID 作用域声明。
+> 状态：**v1.2**（2026-09-23，随 2b-② 专项稿 v1.8 终审同步：§4.2 三元 scope / §4.7 Decision+content_hash / §4.3 cited_by 归属 2c / §4.8 快照硬验收；v1.9 验收签收同步 §9 裁决 3 措辞）。历史：v1 经审计评审「方向通过，方案暂不定稿」，本版按裁决修订：登记簿与历史记录分离、claim_id 作用域、cited_by 以 claim_id 为主键、引用关系类型、Decision 完整结构、决定历史只追加、Ask 入库隐私 TTL、服务端 span 复用规则、ID 作用域声明。
 > 前置：批 1（evidence_id 身份证）已正式签收（PR #66，main@cd372bb）。
 
 ## 一、目标（一句话）
@@ -214,7 +214,7 @@ relation = Literal["primary", "supports", "rebuts", "context", "counter"]
 |---|---|
 | 裁决 1 登记簿/历史分离 | §4.1（含 registry_version/rebuilt_at/broken_refs；归一化禁触历史） |
 | 裁决 2 claim_id 作用域 | §4.2（document_version+type+业务键；supersedes 契约；禁变脸） |
-| 裁决 3 cited_by 用 claim_id | §4.3（2a 不做 path 冒充身份的账目，边随 2b 落地） |
+| 裁决 3 cited_by 用 claim_id | §4.3（2a 不做 path 冒充身份的账目；**citation_edges 只追加历史账随 2c 落地**——§4.3 终裁，v1.9 同步修订） |
 | 裁决 4 docx 入 2c | §4.4（增量升级 + 四件配套 + 「未定位≠已核实」红线） |
 | 裁决 5 验收证据三层 | §七 |
 | 新增规则一 关系类型 | §4.5（五类 relation；counter_evidence 必标 counter） |
