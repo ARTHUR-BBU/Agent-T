@@ -1,6 +1,6 @@
 # 证据法批 2 设计稿：Evidence → Claim → Decision 引用化改造
 
-> 状态：**v1.2**（2026-09-23，随 2b-② 专项稿 v1.8 终审同步：§4.2 三元 scope / §4.7 Decision+content_hash / §4.3 cited_by 归属 2c / §4.8 快照硬验收；v1.9 验收签收同步 §9 裁决 3 措辞）。历史：v1 经审计评审「方向通过，方案暂不定稿」，本版按裁决修订：登记簿与历史记录分离、claim_id 作用域、cited_by 以 claim_id 为主键、引用关系类型、Decision 完整结构、决定历史只追加、Ask 入库隐私 TTL、服务端 span 复用规则、ID 作用域声明。
+> 状态：**v1.3**（2026-09-25，战略调整同步：2c 收缩为**轻量版**，`citation_edges` / `decision_history` / `cited_by` 全量历史账**后置冻结**（roadmap 6.1.8 远期登记）——Codex PR #79 P2 指出的「施工图与设计稿两套互斥范围」由此消解，见 §十）。v1.2（2026-09-23，随 2b-② 专项稿 v1.8 终审同步：§4.2 三元 scope / §4.7 Decision+content_hash / §4.3 cited_by 归属 2c / §4.8 快照硬验收；v1.9 验收签收同步 §9 裁决 3 措辞）。历史：v1 经审计评审「方向通过，方案暂不定稿」，本版按裁决修订：登记簿与历史记录分离、claim_id 作用域、cited_by 以 claim_id 为主键、引用关系类型、Decision 完整结构、决定历史只追加、Ask 入库隐私 TTL、服务端 span 复用规则、ID 作用域声明。
 > 前置：批 1（evidence_id 身份证）已正式签收（PR #66，main@cd372bb）。
 
 ## 一、目标（一句话）
@@ -60,8 +60,8 @@ Decision（完整结构见 §4.7）                  # 可审计的决定记录�
 | 容器 | 性质 | 重建策略 |
 |---|---|---|
 | `evidence_registry` | 当前索引（本案卷的目录） | **可重建**：读路径归一化时全量重建，字段含 `registry_version` / `rebuilt_at` / `broken_refs` |
-| `citation_edges` | 引用账目（**2c 起**——v1.8 终裁，与 decision_history 同批） | **只追加**：归一化只校验不删改；票据降级产生 `broken_refs` 记录而非删边 |
-| `decision_history` | 决定历史（2c 起） | **只追加不可覆盖**（见 §4.8）；归一化永不触碰 |
+| `citation_edges` | 引用账目（**后置冻结**——v1.3 战略调整，原「2c 起」作废；登记 roadmap 6.1.8 远期） | 全量账设计保留备用；解冻前任何批次不得施工——归一化不建、不写、不读 |
+| `decision_history` | 决定历史（**后置冻结**——v1.3 战略调整；2c 轻量版只落对象上的当前状态决定，见 §4.7/§4.8） | 全量账设计保留备用；解冻前任何批次不得施工 |
 
 归一化（normalize_review_evidence）的职责边界由此改写：只重建 `evidence_registry`；对 `citation_edges` / `decision_history` 最多做**校验与 broken 标记**，禁止删除或改写历史条目。
 
@@ -87,7 +87,7 @@ claim_id = "cl-" + sha256(document_version + <US> + analysis_scope + <US> + clai
 
 - `claim_id` 是唯一身份关联键；`layer` 供人读；`path` 仅调试辅助，**不作为身份**。
 - **2a 的处理**（v1.1 明确）：2a 不落地 claim_id，因此 2a 的登记簿**只做票据存在性账目**（每张票被哪几层引用的层级计数），不写 cited_by 关系边——「path 冒充身份」的账目一律不做。
-- **最终规则（v1.7 消除 2b/2c 归属冲突）**：**2b-② 只生成主张对象上的 `evidence_refs`，不派生 cited_by 索引；`citation_edges`（只追加历史账）完全留到 2c**，与 decision_history 同批设计。`cited_by`（按 claim 聚合的引用索引视图）与 `citation_edges`（历史账本）是两个东西：前者是后者的派生读视图，随 2c 一并交付。
+- **最终规则（v1.3 随战略调整修订）**：**2b-② 只生成主张对象上的 `evidence_refs`，不派生 cited_by 索引；`citation_edges` 与 `decision_history` 全量历史账后置冻结（roadmap 6.1.8）**。`cited_by`（按 claim 聚合的引用索引视图）原为历史账的派生读视图，随冻结一并后置——2c 轻量版的报告可追溯走「决定直接引用 claim_id / evidence_id」，不建聚合索引。
 
 ### 4.4 docx 纳入 2c，增量升级（裁决 4）
 
@@ -133,11 +133,14 @@ relation = Literal["primary", "supports", "rebuts", "context", "counter"]
 ### 4.8 决定历史只追加（新增规则四）
 
 > 当前状态可以更新，决定历史必须追加。
+>
+> **v1.3 后置冻结**：本节全量只追加账随 2026-09-25 战略调整移入远期（roadmap 6.1.8）；2c 轻量版只落当前状态决定（§4.7 v1.3 修订）。设计保留备用，解冻前不得施工。
 
 - verify 的生命周期（待确认→已确认→再核→有争议）：每次转变**追加**一条新 decision 记录，`decision_id` 各自独立；从不覆盖旧记录。
 - 当前状态字段与历史账目的一致性由读路径校验（历史末条应与当前状态吻合；不吻合标 `decision_history_divergent` 供审计，不静默改写）。
 - 异议采纳同理：`adopted: true` 之外追加 `decision_type: objection_adopt` 记录。
-- **claim_content_hash 快照（v1.7）**：每条 decision 必含决定时点的主张内容指纹——「编号没变、内容被偷换」由此可证（2c 硬性验收条件，缺此不验收）。无正式 claim_id 的主张（如 pending 来源）**不得写 Decision**——须待 2b-③ 建立稳定对象键后方可进入决定链。
+- **claim_content_hash 快照（v1.7）**：每条 decision 必含决定时点的主张内容指纹——「编号没变、内容被偷换」由此可证（**2c 轻量版仍是硬性验收条件**，缺此不验收——底线加固不收缩）。无正式 claim_id 的主张（如 pending 来源）**不得写 Decision**——须待 2b-③ 建立稳定对象键后方可进入决定链。
+- **v1.3 存放形态修订**：轻量版把 decision 作为承载对象上的**当前状态记录**——同一对象的新决定替换旧决定；完整只追加历史账（§4.8）随战略调整后置冻结。
 
 ### 4.9 Ask 入库的隐私与 TTL（新增规则五）
 
@@ -176,11 +179,14 @@ relation = Literal["primary", "supports", "rebuts", "context", "counter"]
 - Ask 证据引用入库（§4.9 全套规则）（**2b-③**）
 - 服务端 span 复用判定（§4.6）接入各层生成路径（**2b-①** 已以 canonical 收敛形态交付）
 
-### 批 2c：Decision 引用链 + 报告闭环（裁决层）
+### 批 2c：Decision 引用链 + 报告闭环（裁决层）——**轻量版（v1.3 战略调整）**
 
-- decision 完整结构（§4.7）+ 只追加历史（§4.8）：verify confirm/dispute/recheck、objection adopt
-- docx 增量升级（§4.4）+ 前端「同证据多源」展示（evidence_id 不裸露给用户）
+> 2026-09-25 定调：宪法保留，复杂度收缩；底线不降，扩展后置。2c 只做最小裁决闭环；完整治理历史档案系统（citation_edges / decision_history 全量账）后置冻结，登记 roadmap 6.1.8 远期。
+
+- decision 当前状态记录（§4.7，含 claim_content_hash 快照）：人工确认/争议基于哪条主张（claim_id）、引用哪条证据（evidence_ids）
+- docx 增量升级（§4.4）+ 报告可追溯可读：结论能追到主张、主张能追到原文证据；证据无法定位时明确提示，不把「未定位」写成「已核实」；前端「同证据多源」展示（evidence_id 不裸露给用户）
 - 铁律 3 测试钉：所有 decision 写入路径断言 items 档位逐字节不变（照 Design B 先例）
+- **不做**：citation_edges 历史账、decision_history 只追加账、cited_by 聚合索引视图（全部后置冻结）
 
 ## 六、验收标准（每批通用）
 
@@ -188,7 +194,7 @@ relation = Literal["primary", "supports", "rebuts", "context", "counter"]
 2. 旧记录回归：无引用边的旧行（含 STORE_TTL=0）读路径行为与今天逐字节一致
 3. 对抗场景：同一 quote 规则/质量/核验三层命中 → 登记簿一张票、三层计数；反证票据带 `counter` 关系可追溯到规则层原始票
 4. fail-closed：引用不存在的 evidence_id → broken_refs 记录 + 降级，不抛裸异常、不删历史
-5. **历史不可覆写**：变异验证——把「覆盖 decided_on」的旧实现回滚注入，测试必须抓住历史丢失
+5. **历史不可覆写**（v1.3：随 decision_history 冻结移入远期登记；轻量版对应验收——决定记录必含 `claim_content_hash` 快照，且决定引用的 evidence_id 必须能在登记簿命中，引用不存在即 broken_refs + 降级，不静默通过）
 6. 每批独立 revert；归一化幂等性测试防重复登记
 
 ## 七、验收证据口径（裁决 5）
@@ -223,3 +229,9 @@ relation = Literal["primary", "supports", "rebuts", "context", "counter"]
 | 新增规则四 历史只追加 | §4.8 |
 | 新增规则五 Ask 隐私 TTL | §4.9（只存引用账目不存回答；TTL=0 不登记） |
 | 新增规则六 ID 作用域 | §4.10 |
+
+## 十、v1.2 → v1.3 修订记录（战略调整同步，Codex PR #79 P2）
+
+| 意见 | 落实 |
+|---|---|
+| Codex P2：施工图改「2c 轻量版」但本设计稿 §2.1/§4.3/§五/§六 仍要求 2c 交付 citation_edges + 只追加 decision_history 并按历史不可覆写验收——同一批次两套互斥范围 | 全文同步为单一连贯版本：§4.1 两容器标「后置冻结」、§4.3 cited_by 随冻结后置、§4.7 增存放形态修订（当前状态记录）、§4.8 标冻结、§五批 2c 重写为轻量版范围、§六验收 5 改轻量版对应条款；`claim_content_hash` 快照保留为轻量版硬性验收（底线加固不收缩）；冻结项登记 roadmap 6.1.8 远期，不伪装成已完成能力 |
