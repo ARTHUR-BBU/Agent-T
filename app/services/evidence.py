@@ -468,17 +468,17 @@ def normalize_review_evidence(
 
     out = copy.deepcopy(row)
 
-    def _fix(item_or_obj: Any, where: str) -> None:
+    def _fix(item_or_obj: Any, where: str, key: str = "evidence") -> None:
         if isinstance(item_or_obj, dict):
-            ev = item_or_obj.get("evidence")
+            ev = item_or_obj.get(key)
             if isinstance(ev, dict) and ev.get("quote") is not None:
                 # PR review P2：空版本回填行级 document_version，防跨合同撞 ID
                 if not ev.get("document_version"):
                     ev["document_version"] = out.get("document_version") or ""
-                item_or_obj["evidence"] = normalize_evidence_ref(ev, out.get("text") or "")
+                item_or_obj[key] = normalize_evidence_ref(ev, out.get("text") or "")
                 if warnings is not None:
                     # 门禁 P3-2：改写前快照只在捕获路径付费（干净路径零开销）
-                    w = _anomaly(dict(ev), item_or_obj["evidence"], where)
+                    w = _anomaly(dict(ev), item_or_obj[key], where)
                     if w:
                         warnings.append(w)
 
@@ -498,6 +498,10 @@ def normalize_review_evidence(
     if isinstance(objections, dict):
         for i, ob in enumerate(objections.get("objections") or []):
             _fix(ob, f"objections.objections[{i}].evidence")
+            # 2b-③：反证票据与主票同一归一化（缺坐标补定位/不实重定位/
+            # 不合格清 ID，fail-closed）——旧记录无该键时零改动
+            _fix(ob, f"objections.objections[{i}].counter_evidence_ref",
+                 key="counter_evidence_ref")
     verify = out.get("verify") or {}
     if isinstance(verify, dict):
         # 问题级 verification 同步走专用函数（_fix 只管票据本身）
@@ -552,12 +556,14 @@ def build_evidence_registry(
         # （_fix 的门控条件），这类票据带着可疑 ID 混进来时归一化 warnings
         # 抓不到（broken_ref_count 恒 0）。登记簿自己验：不合格带 ID / ID
         # 形状非法 / 缺 quote 却挂合格标签，一律记 broken 并逐出关联账目。
+        # 2b-③（§4.1）：`ask` 来源票**不存 quote 是设计决定不是票据损坏**
+        # （隐私边界），quote 自检按容器标签豁免；其余自检照常适用。
         problems: list[str] = []
         if eid and not qualified:
             problems.append("unqualified_id_at_registry")
         if eid and qualified and not _ID_SHAPE.fullmatch(eid):
             problems.append("malformed_id")
-        if not (ev.get("quote") or "").strip() and (eid or qualified):
+        if container != "ask" and not (ev.get("quote") or "").strip() and (eid or qualified):
             problems.append("quote_missing")
         if problems:
             registry_broken.append({
@@ -597,10 +603,20 @@ def build_evidence_registry(
     if isinstance(objections, dict):
         for ob in objections.get("objections") or []:
             _count(ob.get("evidence") if isinstance(ob, dict) else None, "objections.objections")
+            # 2b-③（§4.1）：反证票据入登记簿——「有箭头有票据」的档案位置
+            _count(
+                ob.get("counter_evidence_ref") if isinstance(ob, dict) else None,
+                "objection_counter",
+            )
     verify = row_normalized.get("verify") or {}
     if isinstance(verify, dict):
         for q in verify.get("questions") or []:
             _count(q.get("evidence") if isinstance(q, dict) else None, "verify.questions")
+    # 2b-③（§4.1）：Ask 账本入登记簿——票进了账本必须查得到；七键白名单
+    # 不存 quote（§3.2），quote 自检按容器标签豁免（见 _count）
+    for entry in row_normalized.get("ask_evidence") or []:
+        if isinstance(entry, dict):
+            _count(entry.get("evidence") if isinstance(entry.get("evidence"), dict) else None, "ask")
 
     return {
         "registry_version": 1,
@@ -741,10 +757,17 @@ def rebuild_evidence_index(row_normalized: dict[str, Any]) -> dict[str, Any]:
     if isinstance(objections, dict):
         for ob in objections.get("objections") or []:
             _reg(ob.get("evidence") if isinstance(ob, dict) else None)
+            # 2b-③（§4.2）：反证票据进 span 索引；坏票照旧跳过（失效降级，
+            # 登记簿 broken_refs 可见——索引与登记簿对坏票说法一致）
+            _reg(ob.get("counter_evidence_ref") if isinstance(ob, dict) else None)
     verify = row_normalized.get("verify") or {}
     if isinstance(verify, dict):
         for q in verify.get("questions") or []:
             _reg(q.get("evidence") if isinstance(q, dict) else None)
+    # 2b-③（§4.2）：Ask 账本票进索引（写入时已规范化为终态，直接按存量派生）
+    for entry in row_normalized.get("ask_evidence") or []:
+        if isinstance(entry, dict):
+            _reg(entry.get("evidence") if isinstance(entry.get("evidence"), dict) else None)
     return {"version": EVIDENCE_INDEX_VERSION, "by_span": by_span,
             "_duplicates": duplicates, "_text_len": len(text)}
 
@@ -865,18 +888,20 @@ def annotate_review_claims(
         })
     dv = row_normalized.get("document_version") or ""
 
-    def _valid_primary(obj: dict[str, Any]) -> Optional[str]:
-        ev = obj.get("evidence")
+    def _valid_ev(ev: Any) -> Optional[str]:
         if not isinstance(ev, dict):
             return None
         if ev.get("verification") not in _REGISTRY_QUALIFIED:
             return None
         # 独立验收 P1：证据必须属于当前审查的文档版本——跨合同票据（无论怎么混入）
-        # 一律拒绝发号，绝不给外来证据开 primary 引用（fail-closed）
+        # 一律拒绝发号，绝不给外来证据开引用（fail-closed）
         if str(ev.get("document_version") or "") != dv:
             return None
         eid = str(ev.get("evidence_id") or "")
         return eid if _ID_SHAPE.fullmatch(eid) else None
+
+    def _valid_primary(obj: dict[str, Any]) -> Optional[str]:
+        return _valid_ev(obj.get("evidence"))
 
     def _refs(primary: Optional[str], extra: list[tuple[str, str]]) -> list[dict[str, str]]:
         refs: list[dict[str, str]] = []
@@ -1009,6 +1034,10 @@ def annotate_review_claims(
                 continue
             primary = _valid_primary(ob)
             accepted = ob.get("accepted") is True
+            # 2b-③（§2.3）：反证引用边与 primary 同一套资格校验（verified/
+            # ambiguous + ID 形状 + document_version 严格相等）——不过则无边，
+            # status 不改写（写路径事实保留；坏票在登记簿 broken_refs 可见）
+            counter_ev = _valid_ev(ob.get("counter_evidence_ref"))
             _claim(
                 ob, "objection",
                 _key(ob.get("item_id"), ob.get("direction"), primary),
@@ -1017,7 +1046,8 @@ def annotate_review_claims(
                     "proposal": str(ob.get("proposal") or ""),
                     "stance_check": str(ob.get("stance_check") or ""),
                 },
-                primary, [],
+                primary,
+                [(counter_ev, "counter")] if counter_ev else [],
             )
             if not accepted:
                 ob["rebuts_status"] = "not_applicable"
@@ -1028,7 +1058,11 @@ def annotate_review_claims(
             if target_ev and ob.get("claim_id"):
                 ob["rebuts_status"] = "present"
                 ob["rebuts_reason"] = ""
-                ob["evidence_refs"] = _refs(primary, [(target_ev, "rebuts")])
+                ob["evidence_refs"] = _refs(
+                    primary,
+                    ([(target_ev, "rebuts")] if target_ev else [])
+                    + ([(counter_ev, "counter")] if counter_ev else []),
+                )
             else:
                 # 阻塞三：不生成边（绝不伪造空 ID 假链接）——区分谁缺证据
                 # （门禁 P3-2：诊断字段不得语义失真）
