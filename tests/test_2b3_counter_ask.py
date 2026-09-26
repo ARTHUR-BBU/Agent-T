@@ -689,3 +689,25 @@ def test_present_counter_downgrades_when_normalize_fails(monkeypatch):
     assert ob["accepted"] is True
     assert ob["counter_evidence_status"] == "missing"
     assert ob["counter_evidence_ref"] is None
+
+
+def test_ledger_failure_never_aborts_ask(monkeypatch):
+    """Codex P2：账本写失败（如 store.update 瞬时异常）不得把已成功的
+    Ask 变 500——账本是观测设施，主流程照常返回回答。"""
+    monkeypatch.setattr(llm_ask_service, "ask_about_item",
+                        lambda **kw: _ask_ok_result())
+    rid = _mk_done_row()
+    real_update = store_module.update
+
+    def boom_update(review_id, **kwargs):
+        if "ask_evidence" in kwargs:
+            raise RuntimeError("simulated transient sqlite error")
+        return real_update(review_id, **kwargs)
+
+    monkeypatch.setattr(store_module, "update", boom_update)
+    r = client.post("/api/ask", json={"review_id": rid, "item_id": "sublet",
+                                      "question": "账本坏了也要答"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["ok"] is True and body["answer"], "回答被账本失败吞掉"
+    assert store_module.get(rid).get("ask_evidence") is None, "失败写入不得留半账"

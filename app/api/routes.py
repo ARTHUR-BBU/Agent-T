@@ -487,6 +487,22 @@ def _record_ask_evidence(
     同一把锁（与 verify 三端点同锁，并发写互不覆盖）。入库失败静默跳过——
     账本是观测设施，绝不影响 Ask 主流程（§3.3 原话）。
     """
+    try:
+        _record_ask_evidence_locked(review_id=review_id, row=row, item=item, body=body, result=result)
+    except Exception:  # noqa: BLE001
+        # 账本是观测设施（§3.3）：入库任何失败（SQLite 瞬时错误/账本数据
+        # 异常等）只留日志——已成功且已付费的 Ask 绝不因可选路径变 500
+        logger.exception("ask evidence ledger write failed review_id=%s", review_id)
+
+
+def _record_ask_evidence_locked(
+    *,
+    review_id: str,
+    row: dict,
+    item: dict,
+    body: AskRequest,
+    result: dict,
+) -> None:
     # §3.5 规则四：TTL=0（永不过期）时不登记——宁缺毋滥
     if store.ttl_seconds <= 0:
         return
