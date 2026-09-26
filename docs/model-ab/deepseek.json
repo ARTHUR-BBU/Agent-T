@@ -1,0 +1,150 @@
+{
+  "profile": "deepseek",
+  "contracts": [
+    {
+      "file": "procurement_four_risk.txt",
+      "category": "procurement",
+      "seconds": 64.6,
+      "status": "done",
+      "error": "",
+      "items_total": 12,
+      "attention_items": 6,
+      "scorecard_available": true,
+      "scorecard_total": 16,
+      "blind_available": true,
+      "blind_candidates": 0,
+      "quality_available": true,
+      "quality_reason": null,
+      "quality_observations": 10,
+      "facts": 9,
+      "objections_available": true,
+      "objections_sent": 7,
+      "objections_accepted": 2,
+      "objections_rejected": 0,
+      "counter_states": [
+        "absent",
+        "present"
+      ]
+    },
+    {
+      "file": "lease_four_risk.txt",
+      "category": "lease",
+      "seconds": 175.1,
+      "status": "done",
+      "error": "",
+      "items_total": 14,
+      "attention_items": 6,
+      "scorecard_available": true,
+      "scorecard_total": 64,
+      "blind_available": true,
+      "blind_candidates": 0,
+      "quality_available": true,
+      "quality_reason": null,
+      "quality_observations": 11,
+      "facts": 12,
+      "objections_available": true,
+      "objections_sent": 2,
+      "objections_accepted": 0,
+      "objections_rejected": 0,
+      "counter_states": []
+    },
+    {
+      "file": "nda_gold_risks.txt",
+      "category": "nda",
+      "seconds": 82.0,
+      "status": "done",
+      "error": "",
+      "items_total": 12,
+      "attention_items": 7,
+      "scorecard_available": true,
+      "scorecard_total": 53,
+      "blind_available": true,
+      "blind_candidates": 0,
+      "quality_available": true,
+      "quality_reason": null,
+      "quality_observations": 9,
+      "facts": 9,
+      "objections_available": true,
+      "objections_sent": 2,
+      "objections_accepted": 0,
+      "objections_rejected": 0,
+      "counter_states": []
+    }
+  ],
+  "asks": [
+    {
+      "file": "procurement_four_risk.txt",
+      "item_id": "subject",
+      "seconds": 26.9,
+      "ok": true,
+      "parse_ok": true,
+      "fields_filled": 4,
+      "quote_verified": false,
+      "evidence_verification": "unverified",
+      "honest_decline": true
+    },
+    {
+      "file": "procurement_four_risk.txt",
+      "item_id": "payment",
+      "seconds": 51.1,
+      "ok": true,
+      "parse_ok": true,
+      "fields_filled": 4,
+      "quote_verified": false,
+      "evidence_verification": "unverified",
+      "honest_decline": true
+    },
+    {
+      "file": "lease_four_risk.txt",
+      "item_id": "rent_payment",
+      "seconds": 32.7,
+      "ok": true,
+      "parse_ok": true,
+      "fields_filled": 4,
+      "quote_verified": false,
+      "evidence_verification": "unverified",
+      "honest_decline": true
+    },
+    {
+      "file": "lease_four_risk.txt",
+      "item_id": "deposit",
+      "seconds": 21.6,
+      "ok": true,
+      "parse_ok": true,
+      "fields_filled": 4,
+      "quote_verified": false,
+      "evidence_verification": "unverified",
+      "honest_decline": true
+    },
+    {
+      "file": "nda_gold_risks.txt",
+      "item_id": "subject",
+      "seconds": 17.6,
+      "ok": true,
+      "parse_ok": true,
+      "fields_filled": 4,
+      "quote_verified": false,
+      "evidence_verification": "unverified",
+      "honest_decline": true
+    },
+    {
+      "file": "nda_gold_risks.txt",
+      "item_id": "confidentiality_duration",
+      "seconds": 19.7,
+      "ok": true,
+      "parse_ok": true,
+      "fields_filled": 4,
+      "quote_verified": false,
+      "evidence_verification": "unverified",
+      "honest_decline": true
+    }
+  ],
+  "summary": {
+    "ask_total": 6,
+    "ask_ok": 6,
+    "ask_parse_ok": 6,
+    "ask_quote_verified": 0,
+    "ask_avg_seconds": 28.3,
+    "review_total_seconds": 321.7
+  }
+}
