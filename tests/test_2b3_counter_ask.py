@@ -627,12 +627,16 @@ def test_bad_tickets_consistent_across_count_registry_index(monkeypatch):
     # 窗口一：页面计数只算好票（宁少勿多）
     assert llm_ask_service.count_valid_ask_evidence(row) == 1
 
-    # 窗口二：登记簿对三张坏票各记一条 broken，且逐出关联账目
+    # 窗口二：登记簿对三张坏票各记一条 broken，且逐出关联账目；
+    # 「合格票数量」不给坏票盖章（外审 P2 终审修订）：好票 1 + 坏票 3
+    # → qualified_occurrence_total == 1、qualified_unique_total == 1
     normalized = normalize_review_evidence(row)
     reg = build_evidence_registry(normalized, [])
     ask_broken = [b for b in reg["broken_refs"] if b["where"] == "ask"]
     reasons = sorted(b["reason"] for b in ask_broken)
     assert reasons == ["bad_coords", "cross_version", "malformed_id"], reasons
+    assert reg["qualified_occurrence_total"] == 1
+    assert reg["qualified_unique_total"] == 1
 
     # 窗口三：索引只收好票——坏票绝不混进正式索引
     index = rebuild_evidence_index(normalized)

@@ -550,8 +550,6 @@ def build_evidence_registry(
         occurrence_total += 1
         eid = str(ev.get("evidence_id") or "")
         qualified = ev.get("verification") in _REGISTRY_QUALIFIED
-        if qualified:
-            qualified_occurrence_total += 1
         # 批 2a PR review P2-b：登记簿自检——归一化会跳过 quote 缺失的票据
         # （_fix 的门控条件），这类票据带着可疑 ID 混进来时归一化 warnings
         # 抓不到（broken_ref_count 恒 0）。登记簿自己验：不合格带 ID / ID
@@ -575,7 +573,11 @@ def build_evidence_registry(
                 "new_evidence_id": "",
                 "reason": problems[0],
             })
-            return  # 逐出：不计 unique / multi_source / qualified_unique
+            # 逐出（外审 P2 修订）：不计 unique / multi_source / qualified_unique /
+            # qualified_occurrence——「合格票数量」不能给坏票盖章
+            return
+        if qualified:
+            qualified_occurrence_total += 1
         if qualified and eid:
             qualified_ids.add(eid)
         if eid:
