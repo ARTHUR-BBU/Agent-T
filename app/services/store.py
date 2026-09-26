@@ -68,6 +68,12 @@ class ReviewStore:
         conn.execute("PRAGMA journal_mode=WAL")
         return conn
 
+    @property
+    def ttl_seconds(self) -> float:
+        """行级 TTL 只读视图（2b-③ §3.5：TTL=0 = 永不过期 → Ask 引用不登记）。
+        消费方走公开只读属性，不读私有变量（最小接口新增）。"""
+        return self._ttl
+
     def _mark_stale_processing(self) -> None:
         with self._lock, closing(self._conn()) as conn, conn:
             rows = conn.execute(

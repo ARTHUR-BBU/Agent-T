@@ -315,6 +315,10 @@ class Objection(BaseModel):
     claim_content_hash: str = ""  # 内容指纹（说明文字漂移检测）
     evidence_refs: list[EvidenceEdgeInfo] = Field(default_factory=list)
     evidence: Optional[EvidenceRefInfo] = None
+    # 2b-③：反证四态（absent/present/missing；未受理=空串）+ 反证票据
+    # （present 时非空；不显式声明会被 pydantic 静默剥掉——批 1 教训）
+    counter_evidence_status: str = ""
+    counter_evidence_ref: Optional[EvidenceRefInfo] = None
     # 批 2b-②：rebuts fail-closed 契约（审计阻塞三——目标无合格主证据不生成边）
     rebuts_status: Literal["present", "missing", "not_applicable"] = "not_applicable"
     rebuts_reason: str = ""  # missing 时 = target_no_valid_evidence
@@ -363,6 +367,8 @@ class ReviewSummary(BaseModel):
     # 架构 batch3 / A5：规则完成 / AI 部分完成 / 全部完成（旧记录 None）
     completion: Optional[CompletionStage] = None
     document_version: str = ""
+    # 2b-③（§3.6）：追问涉及证据计数（合格票口径；明细永不下发，不回放旧对话）
+    ask_evidence_count: int = 0
     # 顶层事实材料镜像（与 quality.facts 同源；质量关闭时仍可有确定性抽取）
     facts: list[FactMaterial] = Field(default_factory=list)
     # A6 有界主动核验（旧记录 None；前端「需你确认」）

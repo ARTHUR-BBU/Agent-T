@@ -56,6 +56,15 @@ _DECLARATION = "未发现反证原文"
 
 _DIRECTIONS = ("false_positive", "omission")
 
+# 2b-③（实现稿 §10 钉 1）：「未发现反证」判定先统一格式——空白折叠后比较，
+# 不得因前后空格/全角空格差异把 absent 误判成 missing。只做空白归一，
+# **不扩语义别名**（扩别名=放宽要件②的原文核验豁免面，是受理语义变更）
+_DECLARATION_CANONICAL = re.sub(r"[\s　]+", "", _DECLARATION)
+
+
+def _is_declaration(counter: str) -> bool:
+    return re.sub(r"[\s　]+", "", counter or "") == _DECLARATION_CANONICAL
+
 
 class Objection(BaseModel):
     item_id: str
@@ -72,6 +81,12 @@ class Objection(BaseModel):
     clause_id: Optional[str] = None  # 服务端按 quote 定位（不信任模型编号）
     clause_ambiguous: bool = False  # 摘句跨多条款时 True
     evidence: Optional[dict[str, Any]] = None  # 宪法证据法批：服务端票据（含 evidence_id）
+    # 2b-③：反证四态（absent/present/missing；未受理=空串——「本条未走反证
+    # 资格判定」，不得与 missing「尝试验证过但失败」混同，§2.1 四态表）
+    counter_evidence_status: str = ""
+    # 2b-③（§2.2）：反证票据的真实档案位置——present 时非空；v1.0 审计 P1
+    # 「票发了没地方放」由此修复。counter_evidence 裸字符串保留（展示事实源）
+    counter_evidence_ref: Optional[dict[str, Any]] = None
     adopted: bool = False  # 人工「采纳为规则改进提案」动作（只改本键）
     needs_confirm: bool = True  # 代码强制；模型输出 schema 里没有此字段
 
@@ -404,13 +419,14 @@ def _validate(
     else:
         clause_ambiguous = len(ids) > 1
         clause_id = None if clause_ambiguous else str(ids[0])
-    # ② 反证引用或声明无（反证同样受相关性范围约束）
+    # ② 反证引用或声明无（反证同样受相关性范围约束；声明判定走空白折叠
+    # 归一——§10 钉 1，空格差异不得改变 absent/受理走向）
     counter = str(r.get("counter_evidence") or "").strip()
     if not counter:
         return False, "要件②反证缺失", clause_id, clause_ambiguous
-    if counter != _DECLARATION and not blind_spot.quote_supported(text, counter):
+    if not _is_declaration(counter) and not blind_spot.quote_supported(text, counter):
         return False, "要件②反证原文未能在原文核验", clause_id, clause_ambiguous
-    if counter != _DECLARATION and allowed_spans is not None:
+    if not _is_declaration(counter) and allowed_spans is not None:
         if not _quote_span_hits(text, counter, allowed_spans):
             return False, "要件②反证与该异议的条款范围不符", clause_id, clause_ambiguous
     # ③ 法律逻辑链（按清洗后文本复验）
@@ -583,6 +599,10 @@ def run_objections(
         # 宪法证据法批：受理异议生成服务端票据（含稳定 evidence_id）——
         # 六层里此前唯一裸字符串引用的一层补齐（审计 B1-4）
         obj_evidence = None
+        # 2b-③（§2.1 四态表）：反证状态只在受理异议建票阶段判定；
+        # 未受理保持空串（不得标 missing——未受理≠验证失败，账目不许说谎）
+        counter_status = ""
+        counter_ref: Optional[dict[str, Any]] = None
         if accepted:
             obj_evidence = build_evidence(
                 text=text, quote=str(r.get("quote") or ""),
@@ -590,6 +610,39 @@ def run_objections(
                 document_version=document_version or "",
                 clause_id=clause_id,
             )
+            counter_text = str(r.get("counter_evidence") or "").strip()
+            if _is_declaration(counter_text):
+                # 模型明确声明未发现反证：absent，不发票
+                counter_status = "absent"
+            else:
+                located = build_evidence(
+                    text=text, quote=counter_text,
+                    parse_source="objection",
+                    document_version=document_version or "",
+                    clause_index=clause_index,
+                )
+                if located.get("verification") in ("verified", "ambiguous"):
+                    # present：反证定位成功 → 票据有真实档案位置（§2.2）。
+                    # 写入即归一化为终态（canonical quote + 真实端点），
+                    # 与读路径 normalize 同锚定。
+                    # 外审加固：归一化之后**再复核一次**——极端情况下归一
+                    # 可能降级/清 ID，此时绝不把 present 和一张废票同时入账
+                    from app.services.evidence import normalize_evidence_ref
+                    counter_ref = normalize_evidence_ref(located, text)
+                    s, e = counter_ref.get("start"), counter_ref.get("end")
+                    if (
+                        counter_ref.get("verification") in ("verified", "ambiguous")
+                        and str(counter_ref.get("evidence_id") or "")
+                        and isinstance(s, int) and isinstance(e, int)
+                    ):
+                        counter_status = "present"
+                    else:
+                        counter_status = "missing"
+                        counter_ref = None
+                else:
+                    # missing：模型给了反证但服务端定位失败 → fail-closed
+                    # 不发票（与批 1「missing 无资格 ID」同哲学）
+                    counter_status = "missing"
         proposal = llm_ask._scrub_banned_echo(scorecard.scrub_forbidden(
             str(r.get("proposal") or ""))).strip()
         # rule_id 服务端唯一决定（外审批 2）：模型可能把提案挂到错误规则上，
@@ -611,6 +664,8 @@ def run_objections(
                 clause_id=clause_id,
                 clause_ambiguous=bool(ambiguous),
                 evidence=obj_evidence,
+                counter_evidence_status=counter_status,
+                counter_evidence_ref=counter_ref,
                 needs_confirm=True,  # 代码强制
             )
         )

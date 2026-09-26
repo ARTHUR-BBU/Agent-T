@@ -30,9 +30,10 @@ from app.api.schemas import (
     UploadResponse,
 )
 from app.api.routes_objection import router as _objection_router
-from app.api.routes_verify import _pack_verify, router as _verify_router
+from app.api.routes_verify import _merge_evidence_index, _pack_verify, router as _verify_router
 from app.graph.pipeline import run_review
 from app.services import llm_ask, precheck as precheck_service, report as report_service
+from app.services import verify as verify_service
 from app.prompts import precheck as precheck_prompts
 from app.services import llm_budget, llm_call_log, rate_limit
 from app.services.checklist import list_categories
@@ -423,6 +424,9 @@ def get_review(review_id: str):
         ask_available=bool(llm_ask.get_api_key()),
         completion=row.get("completion"),
         document_version=row.get("document_version") or "",
+        # 2b-③（§3.6）：追问涉及证据计数（只计合格票，§10 钉 4）——计数可见，
+        # 明细与问题内容永不下发（§4.9 规则三）
+        ask_evidence_count=llm_ask.count_valid_ask_evidence(row),
         facts=facts or [],
         evidence_registry=EvidenceRegistryInfo(**evidence_registry),
         claim_migration_warnings=[ClaimMigrationWarningInfo(**w) for w in claim_warnings],
@@ -471,6 +475,74 @@ def download_report(review_id: str):
     )
 
 
+def _record_ask_evidence(
+    *,
+    review_id: str,
+    row: dict,
+    item: dict,
+    body: AskRequest,
+    result: dict,
+) -> None:
+    """Ask 引用入库（2b-③ §3.4）：锁内「读→追加→写回→重建索引」四步全程
+    同一把锁（与 verify 三端点同锁，并发写互不覆盖）。入库失败静默跳过——
+    账本是观测设施，绝不影响 Ask 主流程（§3.3 原话）。
+    """
+    try:
+        _record_ask_evidence_locked(review_id=review_id, row=row, item=item, body=body, result=result)
+    except Exception:  # noqa: BLE001
+        # 账本是观测设施（§3.3）：入库任何失败（SQLite 瞬时错误/账本数据
+        # 异常等）只留日志——已成功且已付费的 Ask 绝不因可选路径变 500
+        logger.exception("ask evidence ledger write failed review_id=%s", review_id)
+
+
+def _record_ask_evidence_locked(
+    *,
+    review_id: str,
+    row: dict,
+    item: dict,
+    body: AskRequest,
+    result: dict,
+) -> None:
+    # §3.5 规则四：TTL=0（永不过期）时不登记——宁缺毋滥
+    if store.ttl_seconds <= 0:
+        return
+    # §3.5：row 上限（MAX_ASK_EVIDENCE_ENTRIES 启动期已严格校验）；超限后
+    # 新追问照常回答、不再入账、不计错误
+    existing = row.get("ask_evidence") or []
+    if len(existing) >= llm_ask.MAX_ASK_EVIDENCE_ENTRIES:
+        return
+    entry = llm_ask.build_ask_evidence_entry(
+        question=body.question,
+        item_id=str(item.get("id") or body.item_id),
+        result=result,
+        row_document_version=row.get("document_version") or "",
+        row_text=row.get("text") or "",
+    )
+    if entry is None:  # §3.3 门禁四条任一不过：不入账，响应不变
+        return
+    with verify_service.lock_for(review_id):
+        # 锁内以 fresh 行重验归属（§10 钉 3 对抗面：A 合同票据不能放进 B
+        # 合同行——并发期间行被替换/改版时，按陈旧快照写入就是跨合同混账）
+        fresh = store.get(review_id)
+        if fresh is None:
+            return
+        recheck = llm_ask.build_ask_evidence_entry(
+            question=body.question,
+            item_id=str(item.get("id") or body.item_id),
+            result=result,
+            row_document_version=fresh.get("document_version") or "",
+            row_text=fresh.get("text") or "",
+        )
+        if recheck is None:
+            return
+        entries = fresh.get("ask_evidence") or []
+        if len(entries) >= llm_ask.MAX_ASK_EVIDENCE_ENTRIES:
+            return
+        entries = list(entries) + [recheck]
+        store.update(review_id, ask_evidence=entries)
+        _merge_evidence_index(review_id)
+
+
 @router.post(
     "/ask",
     response_model=AskResponse,
@@ -506,6 +578,7 @@ def ask(body: AskRequest):
             category=row.get("category") or "procurement",
             stance=row.get("stance") or "neutral",
         )
+    _record_ask_evidence(review_id=body.review_id, row=row, item=item, body=body, result=result)
     return AskResponse(
         ok=bool(result.get("ok")),
         item_id=item.get("id", body.item_id),

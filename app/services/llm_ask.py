@@ -149,6 +149,117 @@ def _normalize_question(question: str) -> str:
 # 追问长度上限（外部审计：无上限的长问题直接放大模型费用）
 MAX_QUESTION_CHARS = 500
 
+# ---- 2b-③：Ask 引用入库（总设计稿 §4.9 隐私 TTL 四规则 + 实现稿 §3） ----
+
+ASK_QUESTION_MAX_CHARS = 200  # 账本内问题文本截断（§3.1：只存引用账目）
+# 账本票据七键白名单（§3.2，冻结）：**不存 quote**——原文已在行 text 里，
+# 重复保存原文摘句既扩隐私面又增体积
+_ASK_EVIDENCE_KEYS = (
+    "evidence_id",
+    "document_version",
+    "clause_id",
+    "start",
+    "end",
+    "verification",
+    "parse_source",
+)
+
+
+def _parse_max_ask_evidence_entries() -> int:
+    """MAX_ASK_EVIDENCE_ENTRIES 解析（§3.5/Q3：默认 50，严格校验）。
+
+    照 store.py fail-fast 先例：负数/非数字/空串 → 启动即报错并写明合法
+    范围，绝不静默容错。0 = 本批不入账（合法的「关到底」）。
+    注意：未设置（None）才回落默认 50；显式设为空串同属非法配置。"""
+    raw = os.getenv("MAX_ASK_EVIDENCE_ENTRIES", "50").strip()
+    if raw == "":
+        raise RuntimeError(
+            "MAX_ASK_EVIDENCE_ENTRIES 配置非法：''（须为 ≥0 的整数；0 = 不入账）"
+        )
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"MAX_ASK_EVIDENCE_ENTRIES 配置非法：{raw!r}（须为 ≥0 的整数；0 = 不入账）"
+        ) from exc
+    if value < 0:
+        raise RuntimeError(
+            f"MAX_ASK_EVIDENCE_ENTRIES 配置非法：{raw!r}（负数无意义；0 = 不入账）"
+        )
+    return value
+
+
+MAX_ASK_EVIDENCE_ENTRIES = _parse_max_ask_evidence_entries()
+
+
+def build_ask_evidence_entry(
+    *,
+    question: str,
+    item_id: str,
+    result: Optional[dict[str, Any]],
+    row_document_version: str,
+    row_text: str,
+) -> Optional[dict[str, Any]]:
+    """Ask 票据入账门禁（§3.3）+ 账本元素组装（§3.1/§3.2）。
+
+    同时满足四条才返回账本元素；任一不满足 → 返回 None（Ask 照常回答、
+    正常返回票据，只是不入账——**账本是观测设施，不能反过来掐断用户功能**）：
+    1. evidence_id 非空；
+    2. verification ∈ {verified, ambiguous}；
+    3. evidence.document_version 与行 document_version 严格相等（跨合同防线）；
+    4. normalize_evidence_ref 复核通过（纯函数，复核副本不变异入参）。
+
+    asked_at 取服务器时钟（§10 钉 2：用户可以提问，但不能自己改档案日期
+    ——模型/客户端提供的任何时间值一律忽略）。
+    """
+    if not isinstance(result, dict) or not result.get("ok"):
+        return None
+    ev = result.get("evidence")
+    if not isinstance(ev, dict):
+        return None
+    if not str(ev.get("evidence_id") or ""):  # 门禁 1
+        return None
+    if ev.get("verification") not in ("verified", "ambiguous"):  # 门禁 2
+        return None
+    if str(ev.get("document_version") or "") != str(row_document_version or ""):  # 门禁 3
+        return None
+    from datetime import datetime, timezone
+
+    from app.services.evidence import normalize_evidence_ref
+
+    norm = normalize_evidence_ref(dict(ev), row_text or "")  # 门禁 4：复核副本
+    if (
+        norm.get("verification") not in ("verified", "ambiguous")
+        or not str(norm.get("evidence_id") or "")
+        or str(norm.get("document_version") or "") != str(row_document_version or "")
+    ):
+        return None
+    return {
+        "asked_at": datetime.now(timezone.utc).isoformat(),  # 钉 2：服务端时钟
+        "item_id": str(item_id or ""),
+        "question": str(question or "")[:ASK_QUESTION_MAX_CHARS],
+        # 七键白名单投影（终态值）：不存 quote / 不存 answer（§3.1 红线）
+        "evidence": {k: norm.get(k) for k in _ASK_EVIDENCE_KEYS},
+        "quote_verified": bool(result.get("quote_verified")),
+    }
+
+
+def count_valid_ask_evidence(row: dict[str, Any]) -> int:
+    """ask_evidence_count 派生（§3.6 + §10 钉 4）：只计合格票。
+
+    坏票判据走 evidence.ask_ledger_ticket_defects **单一实现**（外审 P2：
+    计数/登记簿/索引三窗口口径必须一致）——缺 ID / 形状非法 / 资格态不符 /
+    跨版本 / 坏坐标一律**不计数**（宁少勿多）。"""
+    from app.services.evidence import ask_ledger_ticket_defects
+
+    dv = str((row or {}).get("document_version") or "")
+    count = 0
+    for entry in (row or {}).get("ask_evidence") or []:
+        ev = entry.get("evidence") if isinstance(entry, dict) else None
+        if ev and not ask_ledger_ticket_defects(ev, dv):
+            count += 1
+    return count
+
 
 def _scrub_banned_echo(text: str) -> str:
     """Remove inducement rubber-stamp phrases from model output."""
@@ -301,25 +412,25 @@ def ask_about_item(
     try:
         from app.services.evidence import build_evidence, document_version_for
 
-        qtext = ""
-        if parsed and quote_ok:
-            qtext = str(parsed.get("原文在哪") or "")
-        evidence = build_evidence(
-            text=contract_text or "",
-            quote=qtext,
-            parse_source="ask",
-            document_version=document_version_for(contract_text or ""),
-            force_verification="verified" if quote_ok and qtext else "unverified",
-        )
+        # Q4（实现稿 §8）：删除原「先 force 建票再重定位」的两次 build——
+        # 第一次结果纯丢弃，且 force verified 无坐标时会产生「有 ID 无坐标」
+        # 的病态票。行为等价：有摘句 → locate 定位；无摘句 → unverified 空票
+        qtext = str(parsed.get("原文在哪") or "") if (parsed and quote_ok) else ""
         if quote_ok and qtext:
-            # 有摘句时再定位坐标（force 会跳过 locate）
-            located = build_evidence(
+            evidence = build_evidence(
                 text=contract_text or "",
                 quote=qtext,
                 parse_source="ask",
-                document_version=evidence["document_version"],
+                document_version=document_version_for(contract_text or ""),
             )
-            evidence = located
+        else:
+            evidence = build_evidence(
+                text=contract_text or "",
+                quote="",
+                parse_source="ask",
+                document_version=document_version_for(contract_text or ""),
+                force_verification="unverified",
+            )
     except Exception:  # noqa: BLE001
         logger.exception("ask evidence build failed")
         evidence = None
