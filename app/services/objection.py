@@ -624,10 +624,21 @@ def run_objections(
                 if located.get("verification") in ("verified", "ambiguous"):
                     # present：反证定位成功 → 票据有真实档案位置（§2.2）。
                     # 写入即归一化为终态（canonical quote + 真实端点），
-                    # 与读路径 normalize 同锚定
+                    # 与读路径 normalize 同锚定。
+                    # 外审加固：归一化之后**再复核一次**——极端情况下归一
+                    # 可能降级/清 ID，此时绝不把 present 和一张废票同时入账
                     from app.services.evidence import normalize_evidence_ref
                     counter_ref = normalize_evidence_ref(located, text)
-                    counter_status = "present"
+                    s, e = counter_ref.get("start"), counter_ref.get("end")
+                    if (
+                        counter_ref.get("verification") in ("verified", "ambiguous")
+                        and str(counter_ref.get("evidence_id") or "")
+                        and isinstance(s, int) and isinstance(e, int)
+                    ):
+                        counter_status = "present"
+                    else:
+                        counter_status = "missing"
+                        counter_ref = None
                 else:
                     # missing：模型给了反证但服务端定位失败 → fail-closed
                     # 不发票（与批 1「missing 无资格 ID」同哲学）

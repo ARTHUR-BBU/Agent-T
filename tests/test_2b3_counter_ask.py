@@ -406,24 +406,28 @@ def test_t_b8_count_only_valid_tickets(monkeypatch):
 
 # ---------- C 组：三路并发（§5——必须能制造真实写入冲突） ----------
 
-def _run_concurrent_asks(monkeypatch, n: int = 2) -> list[dict]:
-    """n 路并发 ask（真实端点写路径）；store.get 注入屏障强制两线程在
+def _run_concurrent_asks(monkeypatch, n: int = 2, rid: str | None = None) -> str:
+    """n 路并发 ask（真实端点写路径）；store.get 注入屏障强制各线程在
     「锁内重读」处会师——制造陈旧读冲突（§5.1：不能靠运气撞竞态）。
 
-    持锁时：先到者等屏障，后到者被锁挡住无法会师 → 屏障超时破裂（1.5s），
-    先到者按 fresh 行继续 → 两票都活。
-    删锁变异后：两线程同时会师、同读陈旧空账本 → 各写各的 → 丢一票 → 测试红。
+    持锁时：先到者在读**前**等屏障，后到者被锁挡住无法会师 → 屏障超时
+    破裂（1.5s），先到者读 fresh 行继续 → 各票都活。
+    删锁变异后：两线程同时会师、再各自读 → 都读到陈旧空账本 → 各写各的
+    → 丢一票 → 测试红。
+    rid 传入时复用该审查（供真三路并发共用同一本账）。
     """
     monkeypatch.setattr(llm_ask_service, "ask_about_item",
                         lambda **kw: _ask_ok_result())
-    rid = _mk_done_row()
+    if rid is None:
+        rid = _mk_done_row()
     barrier = threading.Barrier(n)
     local = threading.local()
+    ask_idents: set[int] = set()
     orig_get = store_module.get
 
     def staged_get(rid_: str):
-        res = orig_get(rid_)
-        if rid_ == rid:
+        # 屏障在读之前：会师后再读，保证删锁时各线程拿到的是同一段陈旧历史
+        if rid_ == rid and threading.get_ident() in ask_idents:
             n_calls = getattr(local, "n", 0) + 1
             local.n = n_calls
             if n_calls == 2:  # 第 2 次 = 写路径锁内重读（§3.4 四步之「读」）
@@ -431,13 +435,14 @@ def _run_concurrent_asks(monkeypatch, n: int = 2) -> list[dict]:
                     barrier.wait(timeout=1.5)
                 except threading.BrokenBarrierError:
                     pass  # 持锁路径：另一线程到不了这里，超时破裂是预期
-        return res
+        return orig_get(rid_)
 
     monkeypatch.setattr(store_module, "get", staged_get)
 
     errors: list[Exception] = []
 
     def worker(i: int) -> None:
+        ask_idents.add(threading.get_ident())
         try:
             r = client.post("/api/ask", json={"review_id": rid, "item_id": "sublet",
                                               "question": f"并发第 {i} 问"})
@@ -451,34 +456,113 @@ def _run_concurrent_asks(monkeypatch, n: int = 2) -> list[dict]:
     for t in threads:
         t.join(timeout=30)
     assert not errors, errors
-    return store_module.get(rid)["ask_evidence"]
+    return rid
 
 
 def test_two_concurrent_asks_both_recorded(monkeypatch):
     """T-C1：两路并发 Ask 不互盖（删锁变异：本测试必须变红——§5.2）。"""
-    entries = _run_concurrent_asks(monkeypatch, n=2)
+    rid = _run_concurrent_asks(monkeypatch, n=2)
+    entries = store_module.get(rid)["ask_evidence"]
     assert entries is not None and len(entries) == 2, (
         f"并发写丢票：{entries}")
     assert {e["question"] for e in entries} == {"并发第 0 问", "并发第 1 问"}
 
 
-def test_three_way_concurrent_ask_ask_adopt_no_clobber(monkeypatch):
+def test_three_way_concurrent_ask_ask_verify_adopt_same_row(monkeypatch):
+    """T-C2（外审 P1 整改）：Ask×2 + Verify + Objection adopt **同一份合同、
+    同时起跑**——同键（ask_evidence）互不覆盖，跨键（verify / adopted）各自
+    存活，evidence_index 与最终账本一致。
+
+    外审抓出的假三路（v1）：adopt 在合同 A、两个 Ask 在合同 B——各写各的
+    账本当然不互盖。本版四线程共用同一 review_id，start 屏障保证同时启动。
+    """
     _enable(monkeypatch)
-    """T-C2：Ask+Ask+Objection 三路并发——同键（ask_evidence）互不覆盖，
-    跨键（objections.adopted）各自存活。"""
+    from app.services import verify as verify_service
+
     monkeypatch.setattr(llm_ask_service, "ask_about_item",
                         lambda **kw: _ask_ok_result())
-    # 预置一条受理异议供 adopt
+    # Verify 打桩：不跑真 LLM，只落一个可断言的 verify 状态
+    monkeypatch.setattr(
+        verify_service, "run_bounded_verify",
+        lambda **kw: {"available": True, "reason": None, "questions": [],
+                      "document_version": kw.get("document_version") or ""})
+
+    # 预置一条受理异议（未采纳）供 adopt——与 Ask 同一行
     out = _run(lambda s, u: json.dumps(
         {"objections": [_payload(quote="第一条 乙方不得转租，违反的出租方可解除合同", counter_evidence="经出租方书面同意的转租有效")]},
         ensure_ascii=False))
     rid = _mk_done_row(objections={"available": True, "objections": out["objections"]})
-    r = client.post(f"/api/review/{rid}/objections/adopt", json={"index": 0})
-    assert r.status_code == 200
-    entries = _run_concurrent_asks(monkeypatch, n=2)
-    assert len(entries) == 2, "ask 并发丢票"
+
+    # 复用 _run_concurrent_asks 的屏障手法，但四路同起跑
+    start = threading.Barrier(4)
+    ask_idents: set[int] = set()
+    local = threading.local()
+    orig_get = store_module.get
+
+    # 两路 Ask 共享一个「会师」屏障（读前配对）：持锁时超时破裂，删锁时真会师
+    ask_pair = threading.Barrier(2)
+
+    def staged_get(rid_: str):
+        if rid_ == rid and threading.get_ident() in ask_idents:
+            n_calls = getattr(local, "n", 0) + 1
+            local.n = n_calls
+            if n_calls == 2:
+                try:
+                    ask_pair.wait(timeout=1.5)
+                except threading.BrokenBarrierError:
+                    pass
+        return orig_get(rid_)
+
+    monkeypatch.setattr(store_module, "get", staged_get)
+
+    errors: list[Exception] = []
+
+    def _run_fn(fn) -> None:
+        try:
+            start.wait(timeout=5)  # 四路真正同时起跑（外审 P1 要求）
+            fn()
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    def ask_fn(i: int) -> None:
+        ask_idents.add(threading.get_ident())
+        r = client.post("/api/ask", json={"review_id": rid, "item_id": "sublet",
+                                          "question": f"三路第 {i} 问"})
+        assert r.status_code == 200, r.text
+
+    def verify_fn() -> None:
+        r = client.post(f"/api/review/{rid}/verify")
+        assert r.status_code == 200, r.text
+
+    def adopt_fn() -> None:
+        r = client.post(f"/api/review/{rid}/objections/adopt", json={"index": 0})
+        assert r.status_code == 200, r.text
+
+    threads = [
+        threading.Thread(target=_run_fn, args=(lambda: ask_fn(0),)),
+        threading.Thread(target=_run_fn, args=(lambda: ask_fn(1),)),
+        threading.Thread(target=_run_fn, args=(verify_fn,)),
+        threading.Thread(target=_run_fn, args=(adopt_fn,)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert not errors, errors
+
+    # 四路结果全部存活于同一行
     stored = store_module.get(rid)
+    entries = stored.get("ask_evidence") or []
+    assert len(entries) == 2, f"ask 并发丢票：{entries}"
+    assert {e["question"] for e in entries} == {"三路第 0 问", "三路第 1 问"}
     assert stored["objections"]["objections"][0]["adopted"] is True, "adopt 被并发冲掉"
+    assert (stored.get("verify") or {}).get("available") is True, "verify 被并发冲掉"
+    # evidence_index 与最终账本一致（两问票据都在索引里）
+    by_span = (stored.get("evidence_index") or {}).get("by_span") or {}
+    for e in entries:
+        ev = e["evidence"]
+        key = f"{_DV}|{ev.get('clause_id') or ''}|{ev['start']}|{ev['end']}"
+        assert by_span.get(key) == ev["evidence_id"], f"索引缺 Ask 票：{key}"
 
 
 # ---------- D 组：兼容与派生（§6 通用验收） ----------
@@ -510,3 +594,94 @@ def test_old_row_byte_identical_plus_new_keys(monkeypatch):
     client.get(f"/api/review/{rid}")
     after = store_module.get(rid)
     assert _json.dumps(after, sort_keys=True, ensure_ascii=False) == snap, "GET 不写 store"
+
+
+# ---------- E 组：坏票三窗口口径一致（外审 P2 整改）+ present 加固 ----------
+
+def _bad_ticket(ev_overrides: dict) -> dict:
+    base_ev = {"evidence_id": "ev-" + "a" * 12, "document_version": _DV,
+               "clause_id": "c02", "start": 10, "end": 20,
+               "verification": "verified", "parse_source": "ask"}
+    base_ev.update(ev_overrides)
+    return {"asked_at": "2026-09-25T00:00:00+00:00", "item_id": "sublet",
+            "question": "坏票", "quote_verified": True, "evidence": base_ev}
+
+
+def test_bad_tickets_consistent_across_count_registry_index(monkeypatch):
+    """外审 P2 整改：坏票在页面计数 / 登记簿 / span 索引三窗口结论一致——
+    计数不算、登记簿记 broken、索引不收。三类案例各验一遍。"""
+    from app.services.evidence import (
+        ask_ledger_ticket_defects,
+        build_evidence_registry,
+        normalize_review_evidence,
+    )
+
+    good = _bad_ticket({})
+    malformed = _bad_ticket({"evidence_id": "ev-XYZ"})  # 形状非法
+    cross = _bad_ticket({"document_version": "other-contract"})  # 跨合同
+    bad_coords = _bad_ticket({"start": None, "end": None})  # 坐标缺失
+    ledger = [good, malformed, cross, bad_coords]
+    rid = _mk_done_row(ask_evidence=ledger)
+    row = store_module.get(rid)
+
+    # 窗口一：页面计数只算好票（宁少勿多）
+    assert llm_ask_service.count_valid_ask_evidence(row) == 1
+
+    # 窗口二：登记簿对三张坏票各记一条 broken，且逐出关联账目
+    normalized = normalize_review_evidence(row)
+    reg = build_evidence_registry(normalized, [])
+    ask_broken = [b for b in reg["broken_refs"] if b["where"] == "ask"]
+    reasons = sorted(b["reason"] for b in ask_broken)
+    assert reasons == ["bad_coords", "cross_version", "malformed_id"], reasons
+
+    # 窗口三：索引只收好票——坏票绝不混进正式索引
+    index = rebuild_evidence_index(normalized)
+    assert len(index["by_span"]) == 1
+    only_key = next(iter(index["by_span"]))
+    ev = good["evidence"]
+    assert only_key == f"{_DV}|{ev['clause_id']}|{ev['start']}|{ev['end']}"
+    assert index["by_span"][only_key] == ev["evidence_id"]
+
+    # 单一判据自证：三张坏票都能被 ask_ledger_ticket_defects 命中，好票零缺陷
+    assert ask_ledger_ticket_defects(ev, _DV) == []
+    for bad in (malformed, cross, bad_coords):
+        assert ask_ledger_ticket_defects(bad["evidence"], _DV), bad
+
+
+def test_index_never_registers_defective_ask_ticket(monkeypatch):
+    """补一个直写场景：带合法 ID + qualified + 坐标但**跨版本**的票
+    （三窗口里最容易被漏收进索引的形态）不进索引。"""
+    from app.services.evidence import normalize_review_evidence
+    cross = _bad_ticket({"document_version": "foreign-dv"})
+    rid = _mk_done_row(ask_evidence=[cross])
+    row = store_module.get(rid)
+    ev = cross["evidence"]
+    key = f"{_DV}|{ev['clause_id']}|{ev['start']}|{ev['end']}"
+    index = rebuild_evidence_index(normalize_review_evidence(row))
+    assert key not in index["by_span"], "跨合同票被收进了本合同索引"
+
+
+def test_present_counter_downgrades_when_normalize_fails(monkeypatch):
+    """外审加固：present 判定在归一化**之后**复核——归一化降级/清 ID 时
+    绝不把 present 和一张废票同时入账（宁可 missing，不发无资格票）。"""
+    _enable(monkeypatch)
+    import app.services.evidence as evidence_module
+
+    real_normalize = evidence_module.normalize_evidence_ref
+
+    def fake_normalize(ref, text):
+        out = real_normalize(ref, text)
+        out["verification"] = "missing"  # 模拟归一化后降级
+        out["evidence_id"] = ""
+        out["start"] = None
+        out["end"] = None
+        return out
+
+    monkeypatch.setattr(evidence_module, "normalize_evidence_ref", fake_normalize)
+    out = _run(lambda s, u: json.dumps(
+        {"objections": [_payload(quote="第一条 乙方不得转租，违反的出租方可解除合同", counter_evidence="经出租方书面同意的转租有效")]},
+        ensure_ascii=False))
+    ob = out["objections"][0]
+    assert ob["accepted"] is True
+    assert ob["counter_evidence_status"] == "missing"
+    assert ob["counter_evidence_ref"] is None

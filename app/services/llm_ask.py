@@ -247,21 +247,17 @@ def build_ask_evidence_entry(
 def count_valid_ask_evidence(row: dict[str, Any]) -> int:
     """ask_evidence_count 派生（§3.6 + §10 钉 4）：只计合格票。
 
-    缺 ID / 资格态不符 / 跨版本（document_version 与行不相等）的坏票
-    **不计数**——宁少勿多，档案袋里的坏票不能被算成正常票据。"""
+    坏票判据走 evidence.ask_ledger_ticket_defects **单一实现**（外审 P2：
+    计数/登记簿/索引三窗口口径必须一致）——缺 ID / 形状非法 / 资格态不符 /
+    跨版本 / 坏坐标一律**不计数**（宁少勿多）。"""
+    from app.services.evidence import ask_ledger_ticket_defects
+
     dv = str((row or {}).get("document_version") or "")
     count = 0
     for entry in (row or {}).get("ask_evidence") or []:
         ev = entry.get("evidence") if isinstance(entry, dict) else None
-        if not isinstance(ev, dict):
-            continue
-        if not str(ev.get("evidence_id") or ""):
-            continue
-        if ev.get("verification") not in ("verified", "ambiguous"):
-            continue
-        if str(ev.get("document_version") or "") != dv:
-            continue
-        count += 1
+        if ev and not ask_ledger_ticket_defects(ev, dv):
+            count += 1
     return count
 
 

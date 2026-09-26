@@ -543,7 +543,7 @@ def build_evidence_registry(
     registry_broken: list[dict[str, str]] = []
     span_ids: dict[str, set[str]] = {}  # 施工纪律 1：同 span 异 ID 检测
 
-    def _count(ev: Any, container: str) -> None:
+    def _count(ev: Any, container: str, extra_problems: Optional[list[str]] = None) -> None:
         nonlocal occurrence_total, qualified_occurrence_total, empty_id_occurrences
         if not isinstance(ev, dict):
             return
@@ -558,6 +558,8 @@ def build_evidence_registry(
         # 形状非法 / 缺 quote 却挂合格标签，一律记 broken 并逐出关联账目。
         # 2b-③（§4.1）：`ask` 来源票**不存 quote 是设计决定不是票据损坏**
         # （隐私边界），quote 自检按容器标签豁免；其余自检照常适用。
+        # 2b-③ P2（外审）：ask 票另走 ask_ledger_ticket_defects 单一判据
+        # （调用方传入）——坏票在计数/登记簿/索引三窗口口径一致。
         problems: list[str] = []
         if eid and not qualified:
             problems.append("unqualified_id_at_registry")
@@ -565,6 +567,7 @@ def build_evidence_registry(
             problems.append("malformed_id")
         if container != "ask" and not (ev.get("quote") or "").strip() and (eid or qualified):
             problems.append("quote_missing")
+        problems.extend(extra_problems or [])
         if problems:
             registry_broken.append({
                 "where": container,
@@ -613,10 +616,18 @@ def build_evidence_registry(
         for q in verify.get("questions") or []:
             _count(q.get("evidence") if isinstance(q, dict) else None, "verify.questions")
     # 2b-③（§4.1）：Ask 账本入登记簿——票进了账本必须查得到；七键白名单
-    # 不存 quote（§3.2），quote 自检按容器标签豁免（见 _count）
+    # 不存 quote（§3.2），quote 自检按容器标签豁免（见 _count）。
+    # P2：坏票走 ask_ledger_ticket_defects 单一判据记 broken 并逐出关联账目
+    _row_dv = row_normalized.get("document_version") or ""
     for entry in row_normalized.get("ask_evidence") or []:
-        if isinstance(entry, dict):
-            _count(entry.get("evidence") if isinstance(entry.get("evidence"), dict) else None, "ask")
+        if not isinstance(entry, dict):
+            continue
+        ev = entry.get("evidence") if isinstance(entry.get("evidence"), dict) else None
+        _count(
+            ev,
+            "ask",
+            extra_problems=ask_ledger_ticket_defects(ev, _row_dv) if ev else None,
+        )
 
     return {
         "registry_version": 1,
@@ -764,12 +775,51 @@ def rebuild_evidence_index(row_normalized: dict[str, Any]) -> dict[str, Any]:
     if isinstance(verify, dict):
         for q in verify.get("questions") or []:
             _reg(q.get("evidence") if isinstance(q, dict) else None)
-    # 2b-③（§4.2）：Ask 账本票进索引（写入时已规范化为终态，直接按存量派生）
+    # 2b-③（§4.2）：Ask 账本票进索引（写入时已规范化为终态，直接按存量派生）。
+    # P2（外审）：坏票先过 ask_ledger_ticket_defects 单一判据——登记簿记 broken
+    # 的票，索引同样不收（坏票宁可少算，绝不混进正式索引）
     for entry in row_normalized.get("ask_evidence") or []:
-        if isinstance(entry, dict):
-            _reg(entry.get("evidence") if isinstance(entry.get("evidence"), dict) else None)
+        if not isinstance(entry, dict):
+            continue
+        ev = entry.get("evidence") if isinstance(entry.get("evidence"), dict) else None
+        if ev and not ask_ledger_ticket_defects(ev, dv):
+            _reg(ev)
     return {"version": EVIDENCE_INDEX_VERSION, "by_span": by_span,
             "_duplicates": duplicates, "_text_len": len(text)}
+
+
+# ---------- 批 2b-③：Ask 账本坏票单一判据（外审 P2：三窗口口径统一） ----------
+
+
+def ask_ledger_ticket_defects(ev: Any, row_dv: str) -> list[str]:
+    """Ask 账本票据的坏票判据（**唯一权威实现**）。
+
+    外审 P2：页面计数 / 证据登记簿 / span 索引三个窗口此前各查各的——
+    坏票可能「计数不算、登记簿记坏、索引却当正常票入账」。三个窗口
+    从此都走本函数：坏票宁可少算，绝不混进正式索引。
+
+    判据（任一命中即坏票）：
+    - unqualified_ticket：verification 不在 {verified, ambiguous}
+    - missing_id / malformed_id：ID 缺失或形状非法（ev-+12 位十六进制）
+    - cross_version：document_version 与行严格不等（跨合同防线）
+    - bad_coords：坐标缺失/非法（无 span 可索引）
+    """
+    if not isinstance(ev, dict):
+        return ["not_a_ticket"]
+    problems: list[str] = []
+    eid = str(ev.get("evidence_id") or "")
+    if ev.get("verification") not in _REGISTRY_QUALIFIED:
+        problems.append("unqualified_ticket")
+    if not eid:
+        problems.append("missing_id")
+    elif not _ID_SHAPE.fullmatch(eid):
+        problems.append("malformed_id")
+    if str(ev.get("document_version") or "") != str(row_dv or ""):
+        problems.append("cross_version")
+    s, e = ev.get("start"), ev.get("end")
+    if not (isinstance(s, int) and isinstance(e, int) and 0 <= s < e):
+        problems.append("bad_coords")
+    return problems
 
 
 # ---------- 批 2b-②：主张标注（claim_id / claim_content_hash / evidence_refs） ----------
