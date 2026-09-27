@@ -37,8 +37,17 @@ def _load_env_file(path: Path) -> dict[str, str]:
 def setup_profile(profile: str, model: str = "") -> None:
     """glm = easyrouter + glm-5.3-flash（走 ZHIPU_* 通道）；
     deepseek = 官方 API（key 从部署凭据文件读，不进对话）。"""
-    for k in ("ZHIPU_API_KEY", "ZHIPU_API_BASE", "GLM_MODEL", "GLM_API_KEY",
-              "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL"):
+    # P1（Codex）：清光所有供应商端点/分层模型覆盖——环境残留的
+    # DEEPSEEK_API_BASE / {PROVIDER}_MODEL_{PURPOSE} 会让对比静默走偏
+    for k in (
+        "ZHIPU_API_KEY", "ZHIPU_API_BASE", "GLM_MODEL", "GLM_API_KEY",
+        "DEEPSEEK_API_KEY", "DEEPSEEK_MODEL", "DEEPSEEK_API_BASE",
+        "GROK_MODEL", "XAI_API_KEY",
+        "ZHIPU_MODEL_PRECHECK", "ZHIPU_MODEL_REVIEW",
+        "GLM_MODEL_PRECHECK", "GLM_MODEL_REVIEW",
+        "DEEPSEEK_MODEL_PRECHECK", "DEEPSEEK_MODEL_REVIEW",
+        "GROK_MODEL_PRECHECK", "GROK_MODEL_REVIEW",
+    ):
         os.environ.pop(k, None)
     if profile == "glm":
         env = _load_env_file(ROOT / ".env")
@@ -51,12 +60,22 @@ def setup_profile(profile: str, model: str = "") -> None:
         if model:
             os.environ["GLM_MODEL"] = model  # 同通道换模型零改码
     elif profile == "deepseek":
-        creds = _load_env_file(Path(r"F:\合同审查Agent\.deploy-credentials.txt"))
-        if not creds.get("deepseek_key"):
-            print("FATAL: 部署凭据文件无 deepseek_key", file=sys.stderr)
+        # P2（Codex）：调用方已设 DEEPSEEK_API_KEY 则直接用（可移植）；
+        # 否则从凭据文件读，路径可用 MODEL_AB_CREDENTIALS_FILE 覆盖
+        caller_key = os.environ.get("MODEL_AB_DEEPSEEK_KEY", "")
+        creds_path = Path(os.environ.get("MODEL_AB_CREDENTIALS_FILE", "")
+                          or Path(r"F:\合同审查Agent\.deploy-credentials.txt"))
+        creds = _load_env_file(creds_path)
+        key = caller_key or creds.get("deepseek_key", "")
+        if not key:
+            print(f"FATAL: 无 DeepSeek key（环境 MODEL_AB_DEEPSEEK_KEY / {creds_path} 均未提供）",
+                  file=sys.stderr)
             sys.exit(2)
-        os.environ["DEEPSEEK_API_KEY"] = creds["deepseek_key"]
-        os.environ["DEEPSEEK_MODEL"] = creds.get("deepseek_model", "")
+        os.environ["DEEPSEEK_API_KEY"] = key
+        # P2（Codex）：_model_for 只在变量缺失时回落默认——空串会把请求
+        # 变成空模型名。凭据未给模型就保持未设，走 DEFAULT_DEEPSEEK_MODEL
+        if (creds.get("deepseek_model") or "").strip():
+            os.environ["DEEPSEEK_MODEL"] = creds["deepseek_model"].strip()
     else:
         raise SystemExit(f"未知 profile: {profile}")
 
@@ -127,6 +146,15 @@ def run_asks(review_result: dict, fname: str) -> list[dict]:
             dt = round(time.time() - t0, 1)
             ans = r.get("answer") or {}
             ev = r.get("evidence") or {}
+            # P2（Codex）：响应里的「原文在哪」已被核验器覆写成占位文案——
+            # 诚实度必须从核验**前**的原始模型输出（raw_text）测
+            model_quote, honest_decline = None, None
+            try:
+                original = json.loads(r.get("raw_text") or "{}")
+                model_quote = str(original.get("原文在哪") or "").strip()
+                honest_decline = ("未定位" in model_quote) or (not model_quote)
+            except (json.JSONDecodeError, AttributeError):
+                pass
             out.append({
                 "file": fname,
                 "item_id": item.get("id"),
@@ -137,7 +165,9 @@ def run_asks(review_result: dict, fname: str) -> list[dict]:
                                      if str(ans.get(f) or "").strip()),
                 "quote_verified": bool(r.get("quote_verified")),
                 "evidence_verification": ev.get("verification"),
-                "honest_decline": (str(ans.get("原文在哪") or "") == "未定位到原文"),
+                "model_attempted_quote": bool(model_quote) and not (
+                    honest_decline if honest_decline is not None else False),
+                "honest_decline": honest_decline,
             })
         except Exception as exc:  # noqa: BLE001
             out.append({"file": fname, "item_id": item.get("id"),
