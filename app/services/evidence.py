@@ -1123,3 +1123,113 @@ def annotate_review_claims(
                     "self_no_valid_evidence" if not primary else "target_no_valid_evidence"
                 )
     return row_normalized, warnings
+
+
+# ---------- 批 2c：决定记录（轻量版当前状态）+ 统一派生流水线 ----------
+
+_DECISION_CONSISTENCY_ORDER = ("claim_drift", "evidence_broken")
+
+
+def compose_decision(
+    *,
+    document_version: str,
+    claim_id: str,
+    claim_content_hash: str,
+    evidence_ids: list[str],
+    decision_type: str,
+    choice: str,
+    human_note: str = "",
+    revised_quote: str = "",
+    decided_at: str,
+    existing: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    """组装/更新决定记录（2c 专项稿 §2.0 十一键 + §2.1 真幂等三语义）。
+
+    纯函数。调用方负责 note/quote 截断（与对象级同源同截断）；
+    decided_at 由服务端时钟产生（调用方传入）。幂等语义：
+    ①完全相同重复提交 → 原记录原样返回（字节稳定，decided_at 不刷新）；
+    ②仅 note/quote 变 → 说明修订（覆盖两字段+刷新 decided_at，id 不变）；
+    ③choice 变 → 新 id、全新记录。
+    """
+    blob = chr(31).join([document_version, claim_id, decision_type, choice])
+    decision_id = "dc-" + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+    note = human_note or ""
+    quote = revised_quote or ""
+    if existing is not None and existing.get("decision_id") == decision_id:
+        if existing.get("human_note") == note and existing.get("revised_quote") == quote:
+            return existing  # 语义①：字节稳定
+        out = dict(existing)  # 语义②：说明修订
+        out["human_note"] = note
+        out["revised_quote"] = quote
+        out["decided_at"] = decided_at
+        return out
+    return {  # 语义③：新决定
+        "decision_id": decision_id,
+        "decision_type": decision_type,
+        "actor": "user",
+        "authority": "human",
+        "claim_id": claim_id,
+        "claim_content_hash": claim_content_hash,
+        "evidence_ids": sorted({e for e in (evidence_ids or []) if e}),
+        "choice": choice,
+        "human_note": note,
+        "revised_quote": quote,
+        "decided_at": decided_at,
+    }
+
+
+def _decision_consistency(
+    decision: dict[str, Any],
+    current_claim_id: str,
+    current_hash: str,
+    current_ev_ids: set,
+) -> tuple:
+    """决定后一致性检测（2c 专项稿 §2.3）：reasons 固定排序、可并存。"""
+    reasons = []
+    if decision.get("claim_id") != current_claim_id or (
+        decision.get("claim_id") == current_claim_id
+        and decision.get("claim_content_hash") != current_hash
+    ):
+        reasons.append("claim_drift")
+    if any(e not in current_ev_ids for e in decision.get("evidence_ids") or []):
+        reasons.append("evidence_broken")
+    reasons.sort(key=_DECISION_CONSISTENCY_ORDER.index)
+    return ("degraded", reasons) if reasons else ("consistent", [])
+
+
+def _apply_decision_consistency(view: dict) -> None:
+    """对带 decision 的对象组装派生字段（只在响应层视图，不写回 store）。"""
+    containers = [
+        ((view.get("verify") or {}).get("questions") or []),
+        ((view.get("objections") or {}).get("objections") or []),
+    ]
+    for objs in containers:
+        for obj in objs:
+            if not isinstance(obj, dict) or not isinstance(obj.get("decision"), dict):
+                continue
+            current_ids = {
+                r.get("evidence_id") for r in obj.get("evidence_refs") or [] if r.get("evidence_id")
+            }
+            status, reasons = _decision_consistency(
+                obj["decision"],
+                obj.get("claim_id") or "",
+                obj.get("claim_content_hash") or "",
+                current_ids,
+            )
+            obj["decision"]["consistency"] = status
+            obj["decision"]["consistency_reasons"] = reasons
+
+
+def derive_claims_view(row: dict) -> tuple:
+    """唯一权威派生流水线（2c 专项稿 §2.2）：normalize → annotate → 一致性检测。
+
+    全部主张消费出口（get_review / pack_verify / adopt 响应 / 报告）共用，
+    禁止任何路径跳步或另起炉灶。返回 (派生视图, 归一化迁移警告, 主张迁移警告)
+    ——两类警告 schema 不同（BrokenRefInfo vs ClaimMigrationWarningInfo），
+    消费方各自取用；报告路径捕获但不渲染（警告页面可见）。
+    """
+    norm_warnings = []
+    out = normalize_review_evidence(row or {}, norm_warnings)
+    out, claim_warnings = annotate_review_claims(out)
+    _apply_decision_consistency(out)
+    return out, norm_warnings, claim_warnings

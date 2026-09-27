@@ -214,6 +214,29 @@ class QualityInfo(BaseModel):
 
 
 
+class DecisionInfo(BaseModel):
+    """人工决定记录（批 2c 轻量版，当前状态级）。
+
+    store 内 decision = 11 键（decision_id..decided_at，见 2c 专项稿 §2.0）；
+    API 层 DecisionInfo = 13 键 = 11 + 派生 consistency/consistency_reasons
+    （两派生键只在响应层组装，永不写回 store）。
+    """
+
+    decision_id: str
+    decision_type: str  # human_confirm | human_dispute | objection_adopt
+    actor: str = "user"
+    authority: str = "human"
+    claim_id: str
+    claim_content_hash: str
+    evidence_ids: list[str] = Field(default_factory=list)
+    choice: str  # confirm | dispute | adopted
+    human_note: str = ""
+    revised_quote: str = ""
+    decided_at: str
+    consistency: str = "consistent"  # consistent | degraded（读路径派生）
+    consistency_reasons: list[str] = Field(default_factory=list)  # claim_drift/evidence_broken 固定排序
+
+
 class ConfirmQuestionInfo(BaseModel):
     """A6 待人工确认问题（有界主动核验）。"""
 
@@ -228,6 +251,7 @@ class ConfirmQuestionInfo(BaseModel):
     claim_content_hash: str = ""  # 内容指纹（说明文字漂移检测）
     evidence_refs: list[EvidenceEdgeInfo] = Field(default_factory=list)
     evidence: Optional[EvidenceRefInfo] = None
+    decision: Optional[DecisionInfo] = None  # 批 2c：人工决定（旧档案 None；防剥字显式声明）
     verification: str = "unverified"
     fact_ok: Optional[bool] = None
     status: str = "pending"  # pending|confirmed|disputed|rechecked
@@ -315,6 +339,7 @@ class Objection(BaseModel):
     claim_content_hash: str = ""  # 内容指纹（说明文字漂移检测）
     evidence_refs: list[EvidenceEdgeInfo] = Field(default_factory=list)
     evidence: Optional[EvidenceRefInfo] = None
+    decision: Optional[DecisionInfo] = None  # 批 2c：采纳决定（旧档案 None；防剥字显式声明）
     # 2b-③：反证四态（absent/present/missing；未受理=空串）+ 反证票据
     # （present 时非空；不显式声明会被 pydantic 静默剥掉——批 1 教训）
     counter_evidence_status: str = ""

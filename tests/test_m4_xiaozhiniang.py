@@ -165,7 +165,7 @@ def test_xz2c_blind_candidates_stay_in_own_section():
     text = _doc_text(build_report_docx(row))
     sec2 = text.index("二、需关注与未找到汇总")
     sec3 = text.index("三、逐条明细")
-    sec4 = text.index("四、模型补盲候选")
+    sec4 = text.index("五、模型补盲候选")  # 2c：四让位给「人工决定与确认」节
     assert "补盲独有风险点" not in text[sec2:sec3], "候选不得进规则汇总表"
     assert "补盲独有风险点" not in text[sec3:sec4], "候选不得混入逐条明细"
     assert text.index("补盲独有风险点") > sec4, "候选只出现在自己的节里"
@@ -285,7 +285,7 @@ def test_xz7_api_503_when_docx_lib_missing(monkeypatch):
     row["items"] = [_item("付款条件", "需关注", "付款过急。", "三日内支付。")]
     rid = store.create(**row)
 
-    def _boom(_row):
+    def _boom(*_a):
         raise ImportError("No module named 'docx'")
 
     monkeypatch.setattr(report_service, "build_report_docx", _boom)
