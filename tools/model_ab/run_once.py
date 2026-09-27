@@ -34,7 +34,7 @@ def _load_env_file(path: Path) -> dict[str, str]:
     return vals
 
 
-def setup_profile(profile: str) -> None:
+def setup_profile(profile: str, model: str = "") -> None:
     """glm = easyrouter + glm-5.3-flash（走 ZHIPU_* 通道）；
     deepseek = 官方 API（key 从部署凭据文件读，不进对话）。"""
     for k in ("ZHIPU_API_KEY", "ZHIPU_API_BASE", "GLM_MODEL", "GLM_API_KEY",
@@ -48,6 +48,8 @@ def setup_profile(profile: str) -> None:
         if not os.environ.get("ZHIPU_API_KEY"):
             print("FATAL: .env 无 ZHIPU_API_KEY", file=sys.stderr)
             sys.exit(2)
+        if model:
+            os.environ["GLM_MODEL"] = model  # 同通道换模型零改码
     elif profile == "deepseek":
         creds = _load_env_file(Path(r"F:\合同审查Agent\.deploy-credentials.txt"))
         if not creds.get("deepseek_key"):
@@ -147,10 +149,12 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--profile", required=True, choices=("glm", "deepseek"))
     ap.add_argument("--out", required=True)
+    ap.add_argument("--model", default="", help="覆盖 GLM_MODEL（同通道换模型）")
     args = ap.parse_args()
-    setup_profile(args.profile)
+    setup_profile(args.profile, args.model)
 
-    results: dict = {"profile": args.profile, "contracts": [], "asks": []}
+    results: dict = {"profile": args.profile, "model": os.environ.get("GLM_MODEL", ""),
+                     "contracts": [], "asks": []}
     for fname, category in CONTRACTS:
         review, full = run_contract(fname, category)
         results["contracts"].append(review)

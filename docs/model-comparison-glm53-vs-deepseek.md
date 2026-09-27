@@ -44,7 +44,15 @@ quote_verified 两家都是 0——跟生产验收发现一致：模型引的句
 3. **先修片段核验，再复测引用质量**：当前 0% vs 0% 比不出高下；修好后引用核验通过率会成为最有信息量的模型对比指标。
 4. **对比跑道已沉淀**（`tools/model_ab/run_once.py`）：M6.5 真实合同验证阶段可直接复用——换卷子就能跑，两模型同台。
 
-## 四、复现方式
+## 四、mimo-v2.6-flash 尝试记录（2026-09-27）
+
+easyrouter 模型列表里有 `mimo-v2.6-flash`，但实际调用返回 503：**「分组『限时特价通道』下模型 mimo-v2.6-flash 无可用渠道（distributor）」**——模型挂在列表上但你当前分组没有供货渠道，无法测试。跑道已加 `--model` 参数（同通道换模型零改码），渠道恢复后一条命令即可补测：
+
+```bash
+python -X utf8 tools/model_ab/run_once.py --profile glm --model mimo-v2.6-flash --out docs/model-ab/mimo.json
+```
+
+## 五、复现方式
 
 ```bash
 # GLM（走 .env 的 easyrouter 配置）
