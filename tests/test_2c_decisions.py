@@ -299,9 +299,12 @@ def test_t_c4_report_with_decision(monkeypatch):
     data = client.get(f"/api/review/{rid}/report").content
     text = _doc_text(data)
     assert "四、人工决定与确认" in text
-    assert "cl-" in text and "确认" in text
+    assert "确认" in text
     d = _get_decision(rid)
     assert d["evidence_ids"][0] in text, "证据引用列必须出现（Codex P1 落实）"
+    # 逐条明细的主张编号只有流水线才派生（store 原件没有）——
+    # 防「决定表自带 cl- 掩盖了报告绕过视图」的假绿（变异 4 首跑未红教训）
+    assert "主张编号：cl-" in text
 
 
 def test_t_c5_drift_report(monkeypatch):
