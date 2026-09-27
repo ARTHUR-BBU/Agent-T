@@ -128,6 +128,7 @@ relation = Literal["primary", "supports", "rebuts", "context", "counter"]
 ```
 
 - `authority` 区分人与机器（审计口径：机器裁决永不冒充人工决定）；`actor` 可溯源（规则引擎 / 再核 / 用户会话）。
+- **轻量版契约修订（2026-09-27，2c 专项稿 v1.5 显式声明）**：嵌套 `decision: {choice, note, revised_quote}` 拍平为顶层 `choice / human_note / revised_quote`（`note` 更名 `human_note`，与问题级既有字段同名同义）。理由与影响面见 2c 专项稿 §2.0——本行为「显式修订治理契约」，非静默偏离；完整历史账解冻时如需嵌套形，随 decision_history 一并重评估。
 - verify 的问题级 `human_choice`/`status` 等「当前状态」字段保留不变（消费端兼容），`decision_history` 是其背后的完整账目。
 
 ### 4.8 决定历史只追加（新增规则四）
