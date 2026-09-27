@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services.evidence import document_version_for
+from app.services.evidence import build_evidence as _be, document_version_for as _dvf
 from app.services.store import store as store_module
 from tests.helpers import wait_review_done
 
@@ -42,7 +43,6 @@ _sample_text = (
     __import__("pathlib").Path(__file__).resolve().parents[1]
     / "fixtures" / "procurement_sample.txt"
 ).read_text(encoding="utf-8")
-from app.services.evidence import build_evidence as _be, document_version_for as _dvf
 SAMPLE_OBJECTION["evidence"] = _be(
     text=_sample_text, quote=SAMPLE_OBJECTION["quote"],
     parse_source="objection", document_version=_dvf(_sample_text),

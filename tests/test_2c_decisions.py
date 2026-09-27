@@ -6,11 +6,8 @@
 """
 from __future__ import annotations
 
-import copy
 import io
 import json
-
-import pytest
 
 from app.services import llm_ask as llm_ask_service  # noqa: F401 统一导入风格
 from app.services.evidence import build_evidence, document_version_for
