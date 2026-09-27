@@ -1146,7 +1146,9 @@ def compose_decision(
     """组装/更新决定记录（2c 专项稿 §2.0 十一键 + §2.1 真幂等三语义）。
 
     纯函数。调用方负责 note/quote 截断（与对象级同源同截断）；
-    decided_at 由服务端时钟产生（调用方传入）。幂等语义：
+    decided_at 由服务端时钟产生（调用方传入）。幂等语义（v1.5 修订序）：
+    ⓪当前主张指纹/证据集已变化（同 id）→ 快照刷新（含 note/quote/decided_at）
+      ——用户重新确认的是**当前内容**，绝不沿用旧快照继续显示 drift（审计 P1-2）；
     ①完全相同重复提交 → 原记录原样返回（字节稳定，decided_at 不刷新）；
     ②仅 note/quote 变 → 说明修订（覆盖两字段+刷新 decided_at，id 不变）；
     ③choice 变 → 新 id、全新记录。
@@ -1155,10 +1157,25 @@ def compose_decision(
     decision_id = "dc-" + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
     note = human_note or ""
     quote = revised_quote or ""
+    sorted_evidence = sorted({e for e in (evidence_ids or []) if e})
     if existing is not None and existing.get("decision_id") == decision_id:
+        # 语义②前置（审计 P1-2）：当前主张指纹/证据集已变化 → 用户重新确认的
+        # 是**当前内容**，必须刷新快照（decided_at 同步刷新），绝不沿用旧快照
+        # 继续显示 claim_drift
+        if (
+            existing.get("claim_content_hash") != claim_content_hash
+            or existing.get("evidence_ids") != sorted_evidence
+        ):
+            out = dict(existing)
+            out["claim_content_hash"] = claim_content_hash
+            out["evidence_ids"] = sorted_evidence
+            out["human_note"] = note
+            out["revised_quote"] = quote
+            out["decided_at"] = decided_at
+            return out
         if existing.get("human_note") == note and existing.get("revised_quote") == quote:
             return existing  # 语义①：字节稳定
-        out = dict(existing)  # 语义②：说明修订
+        out = dict(existing)  # 语义③：说明修订
         out["human_note"] = note
         out["revised_quote"] = quote
         out["decided_at"] = decided_at

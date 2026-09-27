@@ -224,6 +224,59 @@ def test_t_a6_true_idempotency(monkeypatch):
     assert d4["decision_id"] != d1["decision_id"] and d4["choice"] == "dispute"
 
 
+def test_t_a7_reconfirm_after_drift_refreshes_snapshot(monkeypatch):
+    """T-A7（审计 P1-2）：漂移后**再次确认** → 快照刷新为当前内容，
+    consistency 回到 consistent——用户确认的是当前内容，绝不沿用旧快照。"""
+    rid = _mk()
+    _confirm(rid)
+    stored = store_module.get(rid)
+    for q in stored["verify"]["questions"]:
+        if q.get("id") == "q1":
+            q["question"] = "漂移后重确认：问题文本已改"
+    store_module.update(rid, verify=stored["verify"])
+    assert "claim_drift" in (_get_decision(rid)["consistency_reasons"])
+    r = _confirm(rid)  # 同选择再次确认（当前内容）
+    assert r.status_code == 200
+    d = _get_decision(rid)
+    assert d["consistency"] == "consistent", "重新确认后必须按当前内容刷新快照"
+    assert d["consistency_reasons"] == []
+    # 快照 = 当前派生指纹
+    from app.services.evidence import derive_claims_view
+    view, _w, _cw = derive_claims_view(store_module.get(rid))
+    current = next(q for q in view["verify"]["questions"] if q.get("id") == "q1")
+    assert d["claim_content_hash"] == current["claim_content_hash"]
+    assert d["decision_id"] == _get_decision(rid)["decision_id"]
+
+
+def test_t_a8_shared_ticket_no_cross_contamination(monkeypatch):
+    """T-A8（审计 P1-1）：两条主张共享一张票、其中一条失效——
+    失效方的报告证据引用必须显示「已失效」，有效方仍「已定位」；
+    决定表不得用全局大清单串台。"""
+    shared = _ev(_ITEM_QUOTE)
+    q2 = _question(id="q2", source="blind", source_subject_key="k2",
+                   title="第二条问题", evidence=dict(shared))
+    rid = _mk(verify={"available": True, "reason": None,
+                      "questions": [_question(), q2]})
+    _confirm(rid)                       # q1 确认
+    client.post(f"/api/review/{rid}/confirm",
+                json={"question_id": "q2", "choice": "confirm"})
+    # 只把 q1 的票据降级（q2 引用同一张票）
+    stored = store_module.get(rid)
+    for q in stored["verify"]["questions"]:
+        if q.get("id") == "q1":
+            q["evidence"]["verification"] = "missing"
+            q["evidence"]["evidence_id"] = ""
+    store_module.update(rid, verify=stored["verify"])
+    body = client.get(f"/api/review/{rid}").json()
+    qs = {q["id"]: q for q in body["verify"]["questions"]}
+    assert "evidence_broken" in qs["q1"]["decision"]["consistency_reasons"]
+    assert qs["q2"]["decision"]["consistency"] == "consistent"
+    # 报告：决定表按各自对象判定——失效与有效并存
+    text = _doc_text(client.get(f"/api/review/{rid}/report").content)
+    assert "已失效" in text, "q1 的证据引用必须显示已失效（不得被 q2 的有效引用串台）"
+    assert "已定位（当前有效）" in text
+
+
 # ---------- B 组：adopt ----------
 
 def test_t_b1_adopt_decision_covers_all_refs(monkeypatch):

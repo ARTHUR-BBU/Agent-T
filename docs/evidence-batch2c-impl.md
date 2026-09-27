@@ -77,12 +77,14 @@ human_note。理由：①当前状态记录+白名单冻结纪律下，拍平形
 ### 2.1 decision_id 与真幂等（已裁决同意）
 
 - ID 公式：`"dc-" + sha256(document_version + <US> + claim_id + <US> + decision_type + <US> + choice)[:12]`；decided_at 不入哈希。
-- 三语义：①完全相同重复提交 → 整条字节稳定、decided_at 不刷新；②仅 note/quote 变 → 说明修订（覆盖+刷新 decided_at，如实呈现），id 不变；③choice 变 → 新 id、整体替换。收口纯函数 `compose_decision`。
+- 四语义（v1.5 增⓪，审计 P1-2）：**⓪同 id 但当前主张指纹/证据集已变化 → 快照刷新**（claim_content_hash/evidence_ids/note/quote/decided_at 更新——用户重新确认的是当前内容，绝不沿用旧快照继续显示 drift）；①完全相同重复提交 → 整条字节稳定、decided_at 不刷新；②仅 note/quote 变 → 说明修订（覆盖+刷新 decided_at，如实呈现），id 不变；③choice 变 → 新 id、整体替换。收口纯函数 `compose_decision`（T-A7 钉⓪）。
 
 ### 2.2 唯一权威流水线 `derive_claims_view`
 
 ```text
-derive_claims_view(mini_row: dict) -> tuple[dict, list]:
+derive_claims_view(mini_row: dict) -> tuple[dict, list, list]:
+    # v1.5 P2：与实现对齐——返回 (视图, 归一化迁移警告, 主张迁移警告)，
+    # 两类警告 schema 不同（BrokenRefInfo vs ClaimMigrationWarningInfo）
     1. copy.deepcopy(store 行片段)
     2. normalize_review_evidence(copy, warnings)   # 旧票据补定位/降级/清 ID
     3. annotate_review_claims(normalized)          # claim_id / claim_content_hash / evidence_refs
@@ -214,7 +216,7 @@ GET /api/review/{id}/report：
 ### 4.3 报告回归口径（v1.4 P1-B：二选一已定，选方案 1 并写死）
 
 **方案 1（采纳）**：旧档案首次导出**同样包含派生主张信息**（读时现算 claim 是 2b-② 既定行为，报告如实呈现派生视图）。「与今天的旧版报告逐字节一致」红线**废除**，代之以三条仍然坚硬的口径：
-1. **确定性契约保持**：同一档案两次导出字节一致（test_m4 b1==b2 机制不变）；
+1. **确定性契约保持（字节级，v1.5 P1-3 落实）**：同一档案两次导出字节一致——python-docx 的 ZIP 内部时间戳随时刻变化，`build_report_docx` 出口统一做 **ZIP 时间戳固定化**（重写为 1980-01-01），同输入恒同字节（test_m4 b1==b2 机制随之稳定化）；
 2. **版式 v2 golden 钉死**：新增/更新的固定样例（含旧档案带派生编号、带决定、带降级、带警告各场景）全部落 golden 文件，版式再变必须显式改 golden；
 3. **存量报告测试修订清单**：test_report.py / test_m4_xiaozhiniang.py / test_legacy_cleanup.py / test_legacy_xiaozhiniang.py / test_audit_fixes.py / test_credibility_arch_batch3.py 中受新增行影响的断言，随 v2 golden 逐一修订（修订本身进 PR diff，接受审计）。
 

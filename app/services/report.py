@@ -77,7 +77,28 @@ def build_report_docx(row: dict[str, Any], warnings: list | None = None) -> byte
 
     buf = io.BytesIO()
     doc.save(buf)
-    return buf.getvalue()
+    return _normalize_docx_zip(buf.getvalue())
+
+
+def _normalize_docx_zip(data: bytes) -> bytes:
+    """重写 ZIP 条目时间戳为固定值（2c §4.3：字节级确定性契约）。
+
+    python-docx 生成的 ZIP 内部时间戳随当前时刻变化，会导致「同档案两次
+    导出」偶发字节不同（审计 P1-3 实测）。重写后：同输入 → 恒同字节。
+    """
+    import zipfile
+
+    src = io.BytesIO(data)
+    out = io.BytesIO()
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(
+        out, "w", zipfile.ZIP_DEFLATED
+    ) as zout:
+        for info in zin.infolist():
+            fixed = zipfile.ZipInfo(info.filename, date_time=(1980, 1, 1, 0, 0, 0))
+            fixed.compress_type = info.compress_type
+            fixed.external_attr = info.external_attr
+            zout.writestr(fixed, zin.read(info.filename))
+    return out.getvalue()
 
 
 # ---------- 各节 ----------
@@ -278,13 +299,13 @@ def _decisions(doc: Any, row: dict[str, Any]) -> None:
     """四、人工决定与确认（2c §4.2）：有决定或有未编号确认才出现本节。"""
     questions = ((row.get("verify") or {}).get("questions") or [])
     objections = ((row.get("objections") or {}).get("objections") or [])
-    decisions: list[tuple[str, dict[str, Any]]] = []
+    decisions: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
     for q in questions:
         if isinstance(q, dict) and isinstance(q.get("decision"), dict):
-            decisions.append((q.get("title") or q.get("question") or "核验问题", q["decision"]))
+            decisions.append((q.get("title") or q.get("question") or "核验问题", q["decision"], q))
     for ob in objections:
         if isinstance(ob, dict) and isinstance(ob.get("decision"), dict):
-            decisions.append((ob.get("item_id") or "异议", ob["decision"]))
+            decisions.append((ob.get("item_id") or "异议", ob["decision"], ob))
     # 未编号确认披露（v1.5：pending-only 场景的安放处）
     unnumbered = [
         q for q in questions
@@ -301,20 +322,17 @@ def _decisions(doc: Any, row: dict[str, Any]) -> None:
         for i, text in enumerate(("对象", "决定", "基于主张", "证据引用", "一致性", "决定时间")):
             header[i].text = text
         choice_names = {"confirm": "确认", "dispute": "争议", "adopted": "采纳"}
-        for name, d in decisions:
+        for name, d, obj in decisions:
             cells = table.add_row().cells
             cells[0].text = _scrub(name)
             cells[1].text = choice_names.get(d.get("choice") or "", d.get("choice") or "")
             cells[2].text = d.get("claim_id") or ""
-            # 证据引用：编号 + 当前定位状态（在当前合格 refs 中=已定位，否则已失效）
+            # 证据引用：编号 + 当前定位状态——**只按本对象自己的 evidence_refs
+            # 判定**（审计 P1：全局大清单会让「A 的票失效、B 还引用着」串台成
+            # 「当前有效」，与一致性栏自相矛盾）
             current_ids = {
                 r.get("evidence_id")
-                for ob in objections if isinstance(ob, dict)
-                for r in (ob.get("evidence_refs") or [])
-            } | {
-                r.get("evidence_id")
-                for q in questions if isinstance(q, dict)
-                for r in (q.get("evidence_refs") or [])
+                for r in (obj.get("evidence_refs") or []) if isinstance(obj, dict)
             }
             lines = []
             for eid in d.get("evidence_ids") or []:
