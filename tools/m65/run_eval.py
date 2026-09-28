@@ -298,16 +298,24 @@ def require_tls(base: str) -> bool:
 
 
 def select_contract_files(fixtures_dir: Path, manifest: dict,
-                          include_all: bool = False) -> tuple[list[Path], list[Path]]:
-    """P1（外审 #86）：manifest 是唯一「正式合同」名册——不在名册里的文件
-    （如资料汇编 PDF）默认不跑，防止混进合同统计；--all 才作为额外场景
-    （extra-non-contract）附带执行，单独落 contracts_extra，不入七问汇总。"""
+                          extra_manifest: dict | None = None) -> tuple[list[Path], list[Path]]:
+    """P1（外审 #86）：manifest 是唯一「正式合同」名册；manifest-extra.json 是
+    唯一「附加场景」名册（每个文件必须显式登记品类，如资料汇编 PDF）。
+    两个名册之外的磁盘文件一律不跑——不猜品类，报告可复现。"""
     supported = (".docx", ".doc", ".pdf", ".txt")
-    on_disk = sorted(p for p in fixtures_dir.iterdir() if p.suffix.lower() in supported)
     in_manifest = [fixtures_dir / name for name in sorted(manifest)
                    if (fixtures_dir / name).exists()]
-    extras = [p for p in on_disk if p not in in_manifest]
-    return in_manifest, (extras if include_all else [])
+    extras: list[Path] = []
+    for name, cat in sorted((extra_manifest or {}).items()):
+        p = fixtures_dir / name
+        if not p.exists() or p.suffix.lower() not in supported:
+            continue
+        if name in manifest:
+            continue  # 名册冲突：正式合同优先，不重复跑
+        if not str(cat).strip():
+            continue  # 附加名册也必须显式品类
+        extras.append(p)
+    return in_manifest, extras
 
 
 def main() -> None:
@@ -327,7 +335,12 @@ def main() -> None:
     manifest_path = fixtures / "manifest.json"
     manifest = (json.loads(io.open(manifest_path, encoding="utf-8").read())
                 if manifest_path.exists() else {})
-    files, extra_files = select_contract_files(fixtures, manifest, include_all=args.all)
+    # 附加场景名册：独立于正式合同名册，每个文件显式登记品类（不猜）
+    extra_manifest_path = fixtures / "manifest-extra.json"
+    extra_manifest = {}
+    if args.all and extra_manifest_path.exists():
+        extra_manifest = json.loads(io.open(extra_manifest_path, encoding="utf-8").read())
+    files, extra_files = select_contract_files(fixtures, manifest, extra_manifest)
     missing = [n for n in sorted(manifest) if not (fixtures / n).exists()]
     for name in missing:
         print(f"[m65] WARN: manifest 内文件缺失磁盘：{name}", file=sys.stderr)
@@ -364,14 +377,10 @@ def main() -> None:
                   f" | claim_id率 {m.get('claim_id_rate')} | quality={m.get('quality_available')}"
                   f" | asks={len(rec.get('asks') or [])}", flush=True)
             results.append(rec)
-        # manifest 外文件 = 非合同场景（资料汇编等），只留档不进七问汇总；
-        # P1（外审 #86）：附加场景同样不许静默猜品类（默认采购会塞错规则包）
+        # 附加名册文件 = 非合同场景（资料汇编等），只留档不进七问汇总；
+        # 品类来自附加名册显式登记（P1 外审 #86：绝不静默猜）
         for p in extra_files:
-            cat = manifest.get(p.name)
-            if not cat:
-                print(f"[m65][extra] 跳过 {p.name}：名册外文件无显式品类，"
-                      f"不猜（防错规则包）。需要的请在 manifest 登记品类后重跑", file=sys.stderr)
-                continue
+            cat = str(extra_manifest.get(p.name) or "").strip()
             print(f"[m65][extra] {p.name} -> {cat}（非合同场景，不入汇总）...", flush=True)
             rec = eval_contract(client, args.base, p, cat)
             rec["scenario"] = "extra-non-contract"

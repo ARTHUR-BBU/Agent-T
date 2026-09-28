@@ -88,8 +88,9 @@
 ## 复现
 
 ```bash
-# 正式七问（manifest 名册 7 份）
-python -X utf8 tools/m65/run_eval.py --fixtures fixtures-real --out docs/m65/run1.json
-# 附带非合同场景（名册外文件单独落 contracts_extra，不入汇总）
-python -X utf8 tools/m65/run_eval.py --fixtures fixtures-real --all --out docs/m65/run1.json
+# 正式七问（manifest 名册 7 份）——非 HTTPS 公网地址必须显式 --insecure：
+# 生产 HTTPS 待备案，本轮属知情自担明文传输风险的选择（外审 #86 门禁）
+python -X utf8 tools/m65/run_eval.py --fixtures fixtures-real --insecure --out docs/m65/run1.json
+# 附带非合同场景（manifest-extra.json 附加名册，显式品类；单独落 contracts_extra，不入汇总）
+python -X utf8 tools/m65/run_eval.py --fixtures fixtures-real --all --insecure --out docs/m65/run1.json
 ```

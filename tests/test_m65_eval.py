@@ -76,7 +76,7 @@ def test_summarize_contract_and_report_counts():
     assert s["claim_id_rates"] == [0.5]
 
 
-# ---------- select_contract_files：manifest 是唯一名册（P1：汇编 PDF 不得混入） ----------
+# ---------- select_contract_files：manifest 正式名册 + manifest-extra 附加名册 ----------
 
 @pytest.fixture()
 def fixtures_dir(tmp_path: Path) -> Path:
@@ -91,22 +91,36 @@ def test_select_files_manifest_is_authority(fixtures_dir: Path):
     manifest = {"proc-a.docx": "procurement", "lease-a.docx": "lease"}
     files, extras = m65.select_contract_files(fixtures_dir, manifest)
     assert [p.name for p in files] == ["lease-a.docx", "proc-a.docx"]
-    assert extras == []  # 汇编 PDF 默认绝不混入合同统计
+    assert extras == []  # 无附加名册 → 汇编 PDF 绝不混入
 
 
-def test_select_files_include_all_routes_extras_separately(fixtures_dir: Path):
+def test_select_files_extra_manifest_requires_explicit_category(fixtures_dir: Path):
     manifest = {"proc-a.docx": "procurement", "lease-a.docx": "lease"}
-    files, extras = m65.select_contract_files(fixtures_dir, manifest, include_all=True)
+    # 附加名册显式登记品类 → 进 extras
+    files, extras = m65.select_contract_files(
+        fixtures_dir, manifest, {"extra-compilation.pdf": "procurement"})
     assert [p.name for p in files] == ["lease-a.docx", "proc-a.docx"]
+    assert [p.name for p in extras] == ["extra-compilation.pdf"]
+    # 附加名册登记了但品类为空 → 拒绝（不猜）
+    _, extras2 = m65.select_contract_files(
+        fixtures_dir, manifest, {"extra-compilation.pdf": ""})
+    assert extras2 == []
+
+
+def test_select_files_roster_conflict_formal_wins(fixtures_dir: Path):
+    # 同一文件同时出现在两个名册 → 正式合同优先，不重复跑
+    manifest = {"proc-a.docx": "procurement"}
+    extra = {"proc-a.docx": "nda", "extra-compilation.pdf": "procurement"}
+    files, extras = m65.select_contract_files(fixtures_dir, manifest, extra)
+    assert [p.name for p in files] == ["proc-a.docx"]
     assert [p.name for p in extras] == ["extra-compilation.pdf"]
 
 
 def test_select_files_manifest_missing_on_disk_reported_not_crashed(fixtures_dir: Path):
     manifest = {"proc-a.docx": "procurement", "ghost.docx": "nda"}
-    files, _ = m65.select_contract_files(fixtures_dir, manifest)
+    extra = {"extra-compilation.pdf": "procurement", "lease-a.docx": "lease"}
+    files, extras = m65.select_contract_files(fixtures_dir, manifest, extra)
     assert [p.name for p in files] == ["proc-a.docx"]  # 磁盘缺失的 ghost 不进名册
-    # 名册外的磁盘文件（含名册漏登记的真实合同）只在 --all 下进 extras
-    _, extras = m65.select_contract_files(fixtures_dir, manifest, include_all=True)
     assert [p.name for p in extras] == ["extra-compilation.pdf", "lease-a.docx"]
 
 
