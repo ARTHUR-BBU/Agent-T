@@ -382,17 +382,11 @@ def get_review(review_id: str):
             if pc.get("stance_notice") else ""
         )}
     # 宪法证据法批（第三轮复核 P1-2）：读路径归一化**全部** EvidenceRef
-    # 容器（items/blind/quality/facts/objections/verify——此前只归一化 items）
-    # 证据法批 2a：warnings 在归一化改写前捕获异常（审计修订一——报警器
-    # 不能先擦掉报警记录），登记簿由归一化行 + warnings 派生（纯读视图）
-    from app.services.evidence import build_evidence_registry, normalize_review_evidence
-    warnings: list = []
-    row = normalize_review_evidence(row, warnings)
+    # 容器 + 批 2b-② 主张标注 + 批 2c 决定一致性检测——统一走唯一权威
+    # 流水线（derive_claims_view），页面/verify/adopt/报告四出口同源
+    from app.services.evidence import build_evidence_registry, derive_claims_view
+    row, warnings, claim_warnings = derive_claims_view(row)
     evidence_registry = build_evidence_registry(row, warnings)
-    # 批 2b-②：主张标注（读路径补齐旧记录，同写路径公式）+ 迁移警告
-    # （响应派生诊断——绝不写回 store，实现稿 §1.4 写入语义）
-    from app.services.evidence import annotate_review_claims
-    row, claim_warnings = annotate_review_claims(row)
     clause_index = row.get("clause_index")
     stance = row.get("stance") or "neutral"
     quality = row.get("quality")
@@ -453,7 +447,11 @@ def download_report(review_id: str):
         raise HTTPException(status_code=409, detail="审查尚未完成，暂不能导出报告")
 
     try:
-        data = report_service.build_report_docx(row)
+        # 2c（§4.0，审计终审 P1）：报告入口走统一派生流水线——原件直进会让
+        # 主张编号/证据状态/决定一致性全部缺位（页面盖了红章、打印版还是旧的）
+        from app.services.evidence import derive_claims_view
+        view, warnings, _claim_warnings = derive_claims_view(row)
+        data = report_service.build_report_docx(view, warnings)
     except ImportError:
         # python-docx 缺失时不裸抛，给出可操作的错误
         raise HTTPException(status_code=503, detail="服务器未安装 python-docx，无法生成报告")

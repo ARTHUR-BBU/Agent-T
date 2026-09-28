@@ -8,7 +8,6 @@ from fastapi import APIRouter, HTTPException
 from app.api.deps import require_done_row
 from app.api.schemas import ConfirmRequest, ConfirmResponse, ReverifyRequest, ReverifyResponse, VerifyBudgetInfo, VerifyInfo
 from app.services import verify as verify_service
-from app.services.evidence import normalize_verify_state
 from app.services.store import store
 
 router = APIRouter()  # 前缀由聚合 router（/api）提供，勿重复
@@ -22,26 +21,21 @@ def pack_verify(raw: dict | None, *, row: dict | None = None) -> VerifyInfo | No
     PR review P1-a：带 row 上下文时先做读路径归一化——verify 子路由此前
     直读 store 原始行，get_review 归一化过的响应会被 confirm/reverify 的
     未归一化响应刷回旧形态（陈旧 ID + 虚假 verified）。
+    2c：改走唯一权威流水线 derive_claims_view（normalize → annotate →
+    决定一致性检测），verify 出口与页面出口同源。
     """
     if not raw or not isinstance(raw, dict):
         return None
     if row is not None:
-        raw = normalize_verify_state(
-            raw,
-            text=row.get("text") or "",
-            document_version=row.get("document_version") or "",
-        )
-        # 批 2b-②（审计 P1-b）：verify 出口同样做主张标注——done 后写方
-        # （trigger/confirm/reverify）的响应此前不带 claim 字段，recheck 后
-        # 还可能带陈旧标注；统一在出口对副本重标注（确定性派生）
-        from app.services.evidence import annotate_review_claims, normalize_review_evidence
+        from app.services.evidence import derive_claims_view
         mini = {
             "text": row.get("text") or "",
             "document_version": row.get("document_version") or "",
             "rule_pack": row.get("rule_pack"),
+            "items": row.get("items") or [],
             "verify": raw,
         }
-        raw = annotate_review_claims(normalize_review_evidence(mini))[0]["verify"]
+        raw = derive_claims_view(mini)[0]["verify"]
     try:
         info = verify_service.VerifyInfo.model_validate(raw)
     except Exception:  # noqa: BLE001
@@ -156,6 +150,50 @@ def confirm_question(review_id: str, body: ConfirmRequest):
             return ConfirmResponse(ok=False, error="问题不存在")
         except ValueError as exc:
             return ConfirmResponse(ok=False, error=str(exc))
+        # 2c（§3.1）：写时派生 claim 三元组并挂决定记录（唯一流水线，同函数同公式）
+        from app.services.evidence import compose_decision, derive_claims_view
+        from datetime import datetime, timezone
+        view, _w, _cw = derive_claims_view({
+            "text": row.get("text") or "",
+            "document_version": row.get("document_version") or "",
+            "rule_pack": row.get("rule_pack"),
+            "items": row.get("items") or [],
+            "verify": updated,
+        })
+        vq = next(
+            (q for q in (view.get("verify") or {}).get("questions") or []
+             if isinstance(q, dict) and q.get("id") == body.question_id),
+            None,
+        )
+        claim_id = (vq or {}).get("claim_id") or ""
+        if claim_id and isinstance(vq, dict):
+            # 钉4（Codex）：决定记录沿用 apply_confirmation 截断后的字段值——
+            # 未截断的请求原文会让两处表示不一致，且给 SQLite 留无界写入面
+            existing = None
+            u_note = u_quote = ""
+            for q in updated.get("questions") or []:
+                if isinstance(q, dict) and q.get("id") == body.question_id:
+                    existing = (
+                        q.get("decision")
+                        if isinstance(q.get("decision"), dict) else None
+                    )
+                    u_note = q.get("human_note") or ""
+                    u_quote = q.get("revised_quote") or ""
+            decision = compose_decision(
+                document_version=row.get("document_version") or "",
+                claim_id=claim_id,
+                claim_content_hash=vq.get("claim_content_hash") or "",
+                evidence_ids=[r.get("evidence_id") for r in vq.get("evidence_refs") or []],
+                decision_type="human_confirm" if body.choice == "confirm" else "human_dispute",
+                choice=body.choice,
+                human_note=u_note,
+                revised_quote=u_quote,
+                decided_at=datetime.now(timezone.utc).isoformat(),
+                existing=existing,
+            )
+            for q in updated.get("questions") or []:
+                if isinstance(q, dict) and q.get("id") == body.question_id:
+                    q["decision"] = decision
         # Design B：update 只带 verify，不带 items
         store.update(review_id, verify=updated)
         _merge_evidence_index(review_id)

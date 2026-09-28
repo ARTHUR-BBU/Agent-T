@@ -52,8 +52,14 @@ def _scrub(text: Any) -> str:
     return scrub_forbidden(str(text or ""))
 
 
-def build_report_docx(row: dict[str, Any]) -> bytes:
-    """从 store 行拼装报告，返回 docx 字节流。纯展示，无 LLM 调用。"""
+def build_report_docx(row: dict[str, Any], warnings: list | None = None) -> bytes:
+    """从派生视图拼装报告，返回 docx 字节流。纯展示，无 LLM 调用。
+
+    2c（§4.0）：入参为 derive_claims_view 的派生视图（含 claim/decision/
+    一致性标注）——入口必须走统一流水线，禁止原件直进。warnings 为归一化
+    迁移警告，本路径捕获但不渲染（迁移警告页面可见；渲染会随每次归一化
+    漂移，破坏确定性契约）。
+    """
     from docx import Document
 
     row = _sanitize(row)
@@ -63,6 +69,7 @@ def build_report_docx(row: dict[str, Any]) -> bytes:
     _conclusion(doc, row)
     _attention_table(doc, row)
     _item_details(doc, row)
+    _decisions(doc, row)
     _blind_candidates(doc, row)
     _policy_quotes(doc, row)
     _appendix(doc, row)
@@ -70,7 +77,28 @@ def build_report_docx(row: dict[str, Any]) -> bytes:
 
     buf = io.BytesIO()
     doc.save(buf)
-    return buf.getvalue()
+    return _normalize_docx_zip(buf.getvalue())
+
+
+def _normalize_docx_zip(data: bytes) -> bytes:
+    """重写 ZIP 条目时间戳为固定值（2c §4.3：字节级确定性契约）。
+
+    python-docx 生成的 ZIP 内部时间戳随当前时刻变化，会导致「同档案两次
+    导出」偶发字节不同（审计 P1-3 实测）。重写后：同输入 → 恒同字节。
+    """
+    import zipfile
+
+    src = io.BytesIO(data)
+    out = io.BytesIO()
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(
+        out, "w", zipfile.ZIP_DEFLATED
+    ) as zout:
+        for info in zin.infolist():
+            fixed = zipfile.ZipInfo(info.filename, date_time=(1980, 1, 1, 0, 0, 0))
+            fixed.compress_type = info.compress_type
+            fixed.external_attr = info.external_attr
+            zout.writestr(fixed, zin.read(info.filename))
+    return out.getvalue()
 
 
 # ---------- 各节 ----------
@@ -231,13 +259,130 @@ def _item_details(doc: Any, row: dict[str, Any]) -> None:
         run = p.add_run("原文摘句：")
         run.bold = True
         p.add_run(quote if quote.strip() else "暂无")
+        # 2c（§4.1）：主张编号 + 证据状态（未编号/未定位不冒充已核实）
+        p = doc.add_paragraph()
+        run = p.add_run("主张编号：")
+        run.bold = True
+        p.add_run(it.get("claim_id") or "未编号（证据不合格，未纳入证据链）")
+        p = doc.add_paragraph()
+        run = p.add_run("证据状态：")
+        run.bold = True
+        p.add_run(_evidence_status_text(it.get("evidence")))
+
+
+def _evidence_status_text(ev: Any) -> str:
+    """证据状态中文直陈（§4.1）。红线：不得把「未定位」写成「已核实」。"""
+    if not isinstance(ev, dict):
+        return "无证据票据"
+    verification = ev.get("verification")
+    if verification == "verified" and ev.get("evidence_id"):
+        return "摘句已核验定位"
+    if verification == "ambiguous" and ev.get("evidence_id"):
+        return "摘句已定位（多处出现，取首处）"
+    if verification in ("missing", "unverified"):
+        return "未能定位到原文（该条结论未获原文支撑，请人工核查）"
+    return "无证据票据"
+
+
+def _consistency_texts(decision: dict[str, Any]) -> list[str]:
+    """决定一致性中文文案（§2.3，reasons 可并存）。"""
+    texts = {
+        "claim_drift": "主张身份或内容已变化，当前主张与决定时点不一致",
+        "evidence_broken": "决定引用的证据票据已失效或无法定位",
+    }
+    if decision.get("consistency") != "degraded":
+        return []
+    return [texts.get(r, r) or str(r) for r in decision.get("consistency_reasons") or []]
+
+
+def _decisions(doc: Any, row: dict[str, Any]) -> None:
+    """四、人工决定与确认（2c §4.2）：有决定或有未编号确认才出现本节。"""
+    questions = ((row.get("verify") or {}).get("questions") or [])
+    objections = ((row.get("objections") or {}).get("objections") or [])
+    decisions: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    for q in questions:
+        if isinstance(q, dict) and isinstance(q.get("decision"), dict):
+            decisions.append((q.get("title") or q.get("question") or "核验问题", q["decision"], q))
+    for ob in objections:
+        if isinstance(ob, dict) and isinstance(ob.get("decision"), dict):
+            decisions.append((ob.get("item_id") or "异议", ob["decision"], ob))
+    # 未编号确认披露（v1.5：pending-only 场景的安放处）
+    unnumbered = [
+        q for q in questions
+        if isinstance(q, dict) and q.get("status") in ("confirmed", "disputed")
+        and not isinstance(q.get("decision"), dict)
+    ]
+    # 受理异议反证状态（§4.1：四态中文直陈）——**不依赖决定存在**（v1.5 钉2：
+    # 已受理未采纳的异议也要能看到反证状态）
+    accepted = [ob for ob in objections if isinstance(ob, dict) and ob.get("accepted")]
+    if not decisions and not unnumbered and not accepted:
+        return  # Q4：三者皆无才省略整节
+    doc.add_heading("四、人工决定与确认", level=1)
+    if decisions:
+        table = doc.add_table(rows=1, cols=6)
+        table.style = "Table Grid"
+        header = table.rows[0].cells
+        for i, text in enumerate(("对象", "决定", "基于主张", "证据引用", "一致性", "决定时间")):
+            header[i].text = text
+        choice_names = {"confirm": "确认", "dispute": "争议", "adopted": "采纳"}
+        for name, d, obj in decisions:
+            cells = table.add_row().cells
+            cells[0].text = _scrub(name)
+            cells[1].text = choice_names.get(d.get("choice") or "", d.get("choice") or "")
+            # 钉3（Codex）：指纹实际写入（尾 6 位）——只说不写等于没有审计线索
+            _h = d.get("claim_content_hash") or ""
+            _claim_cell = d.get("claim_id") or ""
+            if _h:
+                _claim_cell = _claim_cell + chr(10) + _h[-6:]
+            cells[2].text = _claim_cell
+            # 证据引用：编号 + 当前定位状态——**只按本对象自己的 evidence_refs
+            # 判定**（审计 P1：全局大清单会让「A 的票失效、B 还引用着」串台成
+            # 「当前有效」，与一致性栏自相矛盾）
+            current_ids = {
+                r.get("evidence_id")
+                for r in (obj.get("evidence_refs") or []) if isinstance(obj, dict)
+            }
+            lines = []
+            for eid in d.get("evidence_ids") or []:
+                state = "已定位（当前有效）" if eid in current_ids else "已失效"
+                lines.append(f"{eid}（{state}）")
+            cells[3].text = chr(10).join(lines) if lines else "无"
+            degraded = _consistency_texts(d)
+            cells[4].text = "；".join(degraded) if degraded else "一致"
+            cells[5].text = d.get("decided_at") or ""
+        doc.add_paragraph(
+            "「基于主张」含内容指纹快照尾 6 位（cc- 前缀），用于核对决定时点的主张内容。"
+        )
+    if unnumbered:
+        doc.add_paragraph(
+            "以下问题已人工确认，因无主张编号未纳入决定链："
+            + "；".join(
+                _scrub(q.get("title") or q.get("question") or "")[:40]
+                for q in unnumbered
+            )
+        )
+    # 受理异议反证状态（§4.1：四态中文直陈）
+    if accepted:
+        doc.add_heading("受理异议的反证状态", level=2)
+        state_names = {
+            "absent": "模型声明未发现反证（absent）",
+            "present": "反证已定位并出具票据（present）",
+            "missing": "反证定位失败，未出具票据（missing）",
+        }
+        for ob in accepted:
+            st = ob.get("counter_evidence_status") or ""
+            doc.add_paragraph(
+                f"{ob.get('item_id') or '异议'}（{ob.get('direction') or ''}）："
+                + state_names.get(st, "未走反证资格判定"),
+                style="List Bullet",
+            )
 
 
 def _blind_candidates(doc: Any, row: dict[str, Any]) -> None:
     candidates = row.get("blind_candidates") or []
     if not candidates:
         return
-    doc.add_heading("四、模型补盲候选（需人工确认）", level=1)
+    doc.add_heading("五、模型补盲候选（需人工确认）", level=1)
     doc.add_paragraph(
         "以下为模型提出的候选风险，未经规则引擎确认，不构成审查结论，"
         "请人工核实后再决定是否采信。"
@@ -255,7 +400,7 @@ def _blind_candidates(doc: Any, row: dict[str, Any]) -> None:
 
 
 def _policy_quotes(doc: Any, row: dict[str, Any]) -> None:
-    doc.add_heading("五、政策摘句", level=1)
+    doc.add_heading("六、政策摘句", level=1)
     policies = [p for p in (row.get("policies") or []) if str(p).strip()]
     if not policies:
         doc.add_paragraph("本次审查未引用政策条款。")

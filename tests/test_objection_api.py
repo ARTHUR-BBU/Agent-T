@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.services.evidence import document_version_for
+from app.services.evidence import build_evidence as _be, document_version_for as _dvf
 from app.services.store import store as store_module
 from tests.helpers import wait_review_done
 
@@ -21,7 +22,7 @@ SAMPLE_OBJECTION = {
     "rule_id": "penalty_cap#r0",
     "rule_class": "heuristic",
     "direction": "false_positive",
-    "quote": "第三条 乙方应于收货后七日内提出书面异议。",
+    "quote": "乙方保证货物为正品，若出现质量问题，乙方可协助处理，甲方不得追究乙方违约责任。",
     "counter_evidence": "未发现反证原文",
     "legal_reasoning": "异议期七日约定属于常见商务条款，规则词表对「书面异议」"
                        "的命中语境未区分质量异议期与付款异议期，疑似误报。",
@@ -31,9 +32,21 @@ SAMPLE_OBJECTION = {
     "reject_reason": None,
     "clause_id": "c03",
     "clause_ambiguous": False,
+    # 2c（§3.3）：采纳前置校验 claim_id——样例须带合格票据，否则 adopt 422
+    "evidence": None,  # import 后填充（见下方 _with_evidence）
     "adopted": False,
     "needs_confirm": True,
 }
+
+# 2c：样例异议带合格票据（同 fixture 原文 + 同 document_version 派生）
+_sample_text = (
+    __import__("pathlib").Path(__file__).resolve().parents[1]
+    / "fixtures" / "procurement_sample.txt"
+).read_text(encoding="utf-8")
+SAMPLE_OBJECTION["evidence"] = _be(
+    text=_sample_text, quote=SAMPLE_OBJECTION["quote"],
+    parse_source="objection", document_version=_dvf(_sample_text),
+)
 
 SAMPLE_OBJECTIONS = {
     "available": True,

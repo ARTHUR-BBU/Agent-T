@@ -67,6 +67,7 @@ class ConfirmQuestion(BaseModel):
     claim_id: str = ""  # 批 2b-②：主张编号（防 pack_verify 静默剥字）
     claim_content_hash: str = ""
     evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
+    decision: Optional[dict[str, Any]] = None  # 批 2c：决定记录透传（防 pack_verify 静默剥字——v1.4 P1-A）
     triage: TriageDisposition = "must_human"
     triage_reason: str = ""
     triage_rule: str = ""  # objection_short|acceptance_annex|payment_recheck|quote_unlocated|amount_cross|default
