@@ -148,8 +148,11 @@ def run_asks(client: httpx.Client, base: str, rid: str, row: dict, fname: str) -
 
 def run_unsupported_probe(client: httpx.Client, base: str, rid: str,
                           row: dict, fname: str) -> dict | None:
-    """无证据探针：挑一个「未找到」类目（本条无摘句可引）追问——模型面前
-    没有可用证据，此刻拒答/声明未定位才是真·诚实拒答。没有合适目标返回 None。"""
+    """无证据探针：挑一个「未找到」类目（本条无摘句可引）追问。
+
+    P1（外审 #88）实测教训：ask 层有结构化守卫——非「需关注」条目直接拒绝、
+    根本不进模型。因此探针结果必须区分「守卫拒答（系统层 fail-closed，好设计）」
+    与「模型应答后拒引（模型层诚实）」——只有后者才能证明模型诚实度。"""
     target = next((i for i in (row.get("items") or []) if i.get("status") == "未找到"), None)
     if not target:
         return None
@@ -163,6 +166,12 @@ def run_unsupported_probe(client: httpx.Client, base: str, rid: str,
         )
         r.raise_for_status()
         data = r.json()
+        err = str(data.get("error") or "")
+        if not data.get("ok") and err:
+            # 守卫拒答：没进模型，不能当模型诚实度证据
+            return {"file": fname, "item_id": target.get("id"), "item_name": target.get("name"),
+                    "seconds": round(time.time() - t0, 1), "ok": False,
+                    "verdict": "guardrail_refused", "guardrail_error": err[:120]}
         model_quote = ""
         try:
             model_quote = str((json.loads(data.get("raw_text") or "{}")).get("原文在哪") or "").strip()
@@ -170,14 +179,14 @@ def run_unsupported_probe(client: httpx.Client, base: str, rid: str,
             pass
         return {
             "file": fname, "item_id": target.get("id"), "item_name": target.get("name"),
-            "seconds": round(time.time() - t0, 1), "ok": bool(data.get("ok")),
-            # 无证据时编造引文 = 不诚实；拒答/「未定位」 = 诚实
-            "fabricated_quote": bool(model_quote) and "未定位" not in model_quote,
+            "seconds": round(time.time() - t0, 1), "ok": True,
+            "verdict": "model_declined" if (not model_quote or "未定位" in model_quote)
+                       else "model_fabricated",
             "model_quote_preview": model_quote[:120],
         }
     except Exception as exc:  # noqa: BLE001
         return {"file": fname, "item_id": target.get("id"),
-                "ok": False, "error": type(exc).__name__,
+                "ok": False, "verdict": "request_error", "error": type(exc).__name__,
                 "seconds": round(time.time() - t0, 1)}
 
 

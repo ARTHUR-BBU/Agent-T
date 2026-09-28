@@ -70,20 +70,30 @@ def analyze_f1(rec: dict, text: str) -> list[dict]:
 
 def analyze_f2(rec: dict, text: str) -> list[dict]:
     out: list[dict] = []
+
+    def norm(s: str) -> str:
+        # API 摘句可能把换行吃成空格，匹配前统一去空白
+        return "".join(s.split())
+
+    text_norm = norm(text)
     for i in rec.get("items_detail") or []:
         note = str(i.get("note") or "")
         if i.get("status") == "需关注" and "单方免除" in note:
-            # 找到该结论引用的原文（quote 截断过，退回全文检索对等信号）
+            # 只在结论引用的原文附近找对等信号（±300 字符）；锚点匹配不上就
+            # 挂「待人工复核」，绝不退回全文扫描——全文里「双方」几乎必然出现，
+            # 会把不相干的单方免责也冤判成对等（外审 #88 P2）
             quote = str(i.get("quote") or "")
-            anchor = quote.strip("…。 ")[:20]
-            ctx = text
-            if anchor and anchor in text:
-                pos = text.find(anchor)
-                ctx = text[max(0, pos - 300): pos + 300]
-            equal_hits = [s for s in _F2_EQUAL_SIGNALS if s in ctx]
+            anchor = norm(quote.strip("…。 "))[:20]
+            ctx_norm = ""
+            if anchor and anchor in text_norm:
+                pos = text_norm.find(anchor)
+                ctx_norm = text_norm[max(0, pos - 300): pos + 300]
+            equal_hits = [s for s in _F2_EQUAL_SIGNALS if s in ctx_norm]
+            verdict = ("误报嫌疑（原文对等）" if equal_hits
+                       else "待人工复核（锚点未匹配或邻域无对等信号）")
             out.append({
                 "type": "F2", "file": rec.get("file"), "item": i.get("name"),
-                "verdict": "误报嫌疑（原文对等）" if equal_hits else "待人工复核",
+                "verdict": verdict, "anchor_matched": bool(anchor and anchor in text_norm),
                 "signal_hits": equal_hits, "quote_head": quote[:60],
             })
     return out

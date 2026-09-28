@@ -16,6 +16,12 @@ assert _spec is not None and _spec.loader is not None  # 路道文件固定存�
 m65 = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(m65)
 
+_F12_TOOLS = Path(__file__).resolve().parents[1] / "tools" / "m65" / "analyze_f12.py"
+_f12_spec = importlib.util.spec_from_file_location("m65_analyze_f12", _F12_TOOLS)
+assert _f12_spec is not None and _f12_spec.loader is not None
+m65f12 = importlib.util.module_from_spec(_f12_spec)
+_f12_spec.loader.exec_module(m65f12)
+
 
 # ---------- summarize：Ask 失败必须进分母（P1：不能只统计交卷的人） ----------
 
@@ -139,6 +145,33 @@ def test_require_tls_allows_https_and_loopback_only():
     assert m65.require_tls("http://127.0.0.1:8080") is True
     # 生产 HTTP 公网地址默认拒绝——须显式 --insecure
     assert m65.require_tls("http://59.110.13.13:8080") is False
+
+
+# ---------- analyze_f2：锚点未匹配必须挂起，绝不全文扫描（P2 外审 #88） ----------
+
+def _f2_rec(quote: str) -> dict:
+    return {"file": "x.docx", "items_detail": [
+        {"name": "违约责任", "status": "需关注", "note": "单方免除乙方违约责任",
+         "quote": quote}]}
+
+
+def test_analyze_f2_anchor_miss_pends_even_if_text_has_equality_words():
+    text = "第一条 双方应诚信履约。第八条 乙方违约的，乙方向甲方支付违约金。"
+    # 引句与原文空白/换行被 API 吃掉导致匹配不上——不许退回全文找「双方」
+    rows = m65f12.analyze_f2(_f2_rec("…第七条 甲方应在签约后十个工作日内交付定金。"), text)
+    assert len(rows) == 1
+    assert rows[0]["verdict"].startswith("待人工复核")
+    assert rows[0]["anchor_matched"] is False  # 锚点没匹配上——不许借全文找「双方」
+    assert rows[0]["signal_hits"] == []
+
+
+def test_analyze_f2_anchor_match_detects_equal_language_nearby():
+    text = "第九条 任何一方对由于不可抗力造成的不能履行合同不承担违约责任，双方各自承担风险。"
+    quote = "…任何一方对由于不可抗力造成的不能履行合同不承担违约责任。"
+    rows = m65f12.analyze_f2(_f2_rec(quote), text)
+    assert rows[0]["anchor_matched"] is True
+    assert rows[0]["verdict"] == "误报嫌疑（原文对等）"
+    assert "任何一方" in rows[0]["signal_hits"]
 
 
 def test_detect_category_fallback_hints_and_default():
