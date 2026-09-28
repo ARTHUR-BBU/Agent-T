@@ -312,8 +312,11 @@ def _decisions(doc: Any, row: dict[str, Any]) -> None:
         if isinstance(q, dict) and q.get("status") in ("confirmed", "disputed")
         and not isinstance(q.get("decision"), dict)
     ]
-    if not decisions and not unnumbered:
-        return  # Q4：两者皆无才省略整节
+    # 受理异议反证状态（§4.1：四态中文直陈）——**不依赖决定存在**（v1.5 钉2：
+    # 已受理未采纳的异议也要能看到反证状态）
+    accepted = [ob for ob in objections if isinstance(ob, dict) and ob.get("accepted")]
+    if not decisions and not unnumbered and not accepted:
+        return  # Q4：三者皆无才省略整节
     doc.add_heading("四、人工决定与确认", level=1)
     if decisions:
         table = doc.add_table(rows=1, cols=6)
@@ -326,7 +329,12 @@ def _decisions(doc: Any, row: dict[str, Any]) -> None:
             cells = table.add_row().cells
             cells[0].text = _scrub(name)
             cells[1].text = choice_names.get(d.get("choice") or "", d.get("choice") or "")
-            cells[2].text = d.get("claim_id") or ""
+            # 钉3（Codex）：指纹实际写入（尾 6 位）——只说不写等于没有审计线索
+            _h = d.get("claim_content_hash") or ""
+            _claim_cell = d.get("claim_id") or ""
+            if _h:
+                _claim_cell = _claim_cell + chr(10) + _h[-6:]
+            cells[2].text = _claim_cell
             # 证据引用：编号 + 当前定位状态——**只按本对象自己的 evidence_refs
             # 判定**（审计 P1：全局大清单会让「A 的票失效、B 还引用着」串台成
             # 「当前有效」，与一致性栏自相矛盾）
@@ -343,7 +351,7 @@ def _decisions(doc: Any, row: dict[str, Any]) -> None:
             cells[4].text = "；".join(degraded) if degraded else "一致"
             cells[5].text = d.get("decided_at") or ""
         doc.add_paragraph(
-            "内容指纹快照见各决定的 claim_content_hash（cc- 前缀），用于核对决定时点的主张内容。"
+            "「基于主张」含内容指纹快照尾 6 位（cc- 前缀），用于核对决定时点的主张内容。"
         )
     if unnumbered:
         doc.add_paragraph(
@@ -354,7 +362,6 @@ def _decisions(doc: Any, row: dict[str, Any]) -> None:
             )
         )
     # 受理异议反证状态（§4.1：四态中文直陈）
-    accepted = [ob for ob in objections if isinstance(ob, dict) and ob.get("accepted")]
     if accepted:
         doc.add_heading("受理异议的反证状态", level=2)
         state_names = {

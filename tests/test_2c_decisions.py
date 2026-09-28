@@ -277,6 +277,39 @@ def test_t_a8_shared_ticket_no_cross_contamination(monkeypatch):
     assert "已定位（当前有效）" in text
 
 
+def test_t_c7_adopted_false_objection_still_shows_counter_status(monkeypatch):
+    """钉2（Codex）：已受理未采纳（未 adopt）的异议——反证状态也要出现在报告，
+    不得因「无决定」早退被吞。"""
+    rid = _mk()
+    text = _doc_text(client.get(f"/api/review/{rid}/report").content)
+    assert "四、人工决定与确认" in text, "有受理异议时决定节必须出现"
+    assert "present" in text or "已定位并出具票据" in text, "反证状态必须渲染"
+
+
+def test_t_c8_decision_row_emits_content_hash(monkeypatch):
+    """钉3（Codex）：决定表必须实际写入指纹（尾 6 位），不是只「告知可见」。"""
+    rid = _mk()
+    _confirm(rid)
+    d = _get_decision(rid)
+    text = _doc_text(client.get(f"/api/review/{rid}/report").content)
+    assert d["claim_content_hash"][-6:] in text, "指纹尾 6 位必须出现在决定表"
+
+
+def test_t_a9_decision_truncation_matches_question_fields(monkeypatch):
+    """钉4（Codex）：决定记录沿用截断后的字段值——超长 note/quote 不得原样入库。"""
+    rid = _mk()
+    long_note = "长" * 400
+    r = _confirm(rid, human_note=long_note, revised_quote="引" * 300)
+    assert r.status_code == 200
+    d = _get_decision(rid)
+    stored = store_module.get(rid)
+    q = next(q for q in stored["verify"]["questions"] if q.get("id") == "q1")
+    assert len(d["human_note"]) <= 300, "决定 note 必须与问题级同截断"
+    # 镜像断言：决定字段 == 问题级截断后的字段（截断常量以对象级为准）
+    assert d["revised_quote"] == q["revised_quote"], "两处表示必须一致"
+    assert d["human_note"] == q["human_note"], "两处表示必须一致"
+
+
 # ---------- B 组：adopt ----------
 
 def test_t_b1_adopt_decision_covers_all_refs(monkeypatch):

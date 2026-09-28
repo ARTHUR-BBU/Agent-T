@@ -167,12 +167,18 @@ def confirm_question(review_id: str, body: ConfirmRequest):
         )
         claim_id = (vq or {}).get("claim_id") or ""
         if claim_id and isinstance(vq, dict):
-            existing = next(
-                (q.get("decision") for q in updated.get("questions") or []
-                 if isinstance(q, dict) and q.get("id") == body.question_id
-                 and isinstance(q.get("decision"), dict)),
-                None,
-            )
+            # 钉4（Codex）：决定记录沿用 apply_confirmation 截断后的字段值——
+            # 未截断的请求原文会让两处表示不一致，且给 SQLite 留无界写入面
+            existing = None
+            u_note = u_quote = ""
+            for q in updated.get("questions") or []:
+                if isinstance(q, dict) and q.get("id") == body.question_id:
+                    existing = (
+                        q.get("decision")
+                        if isinstance(q.get("decision"), dict) else None
+                    )
+                    u_note = q.get("human_note") or ""
+                    u_quote = q.get("revised_quote") or ""
             decision = compose_decision(
                 document_version=row.get("document_version") or "",
                 claim_id=claim_id,
@@ -180,8 +186,8 @@ def confirm_question(review_id: str, body: ConfirmRequest):
                 evidence_ids=[r.get("evidence_id") for r in vq.get("evidence_refs") or []],
                 decision_type="human_confirm" if body.choice == "confirm" else "human_dispute",
                 choice=body.choice,
-                human_note=body.human_note or "",
-                revised_quote=body.revised_quote or "",
+                human_note=u_note,
+                revised_quote=u_quote,
                 decided_at=datetime.now(timezone.utc).isoformat(),
                 existing=existing,
             )
