@@ -57,3 +57,28 @@
 全国合同示范文本库（htsfwb.samr.gov.cn）有公开 API：
 - 搜索：`/api/content/SearchTemplates?key=<关键词>&loc=<地区>`
 - 下载：`/api/File/DownTemplate?id=<模板id>&type=1`（type=1 docx，type=2 pdf）
+
+## 第二轮扩样（2026-09-28，SAMR 全国合同示范文本库，10 份）
+
+> 目的：锤 F-1（期限/价款漏报）与 F-2（对等免责误报）是否通病。样式跨度 2000→2026 五代
+> 文本体例 + 地方版；3 份 OLE .doc 经 Word COM 转 docx（验证通过）。下载：htsfwb.samr.gov.cn
+> 公开 API（DownTemplate type=1）。品类按最接近规则包登记（委托/承揽 → procurement）。
+
+### 采购/买卖/工程/服务类（manifest: procurement）
+
+| agri-produce-sale-samr-2025.docx | `d504a9b7a76cf0cb6bdbab7cd05ceabf6a87d8e08b26f6d313c453a252f886da` | SAMR 库 id 8ed1cb2d，GF-2025-0151 农副产品买卖合同 |
+| cement-sale-gf-2008.docx | `b0c4c44d677de2157e241af89ad153025d94d10e00262483e2ba7c303094949b` | SAMR 库 id 92ca27de，GF-2008-0113 水泥买卖合同（老式表格条款） |
+| data-processing-service-2025.docx | `403ff3d365a01bc572bd8ea37bf2b0fd75c17c7ba20c01284a5ddb0492bb90fe` | SAMR 库 id 6cdbe704，GF-2025-2616 数据委托处理服务合同（国家数据局+市监总局） |
+| construction-work-contract-2017.docx | `490462c0b0d6b16d7081e99a7aa8c4c7131cd735a553b3cdcb30e20ed8a7d1d8` | SAMR 库 id 082423f0，GF-2017-0201 建设工程施工合同（6.2万字含通用条款） |
+| energy-hosting-service-2026.docx | `bcb7b11d8501b1702bcebb018c4bd0adabc1b98ecdd2ed5edcbed6a597e6ce72` | SAMR 库 id a1a47ab6，GF-2026-2621 公共机构能源费用托管服务合同（2026最新） |
+| raw-milk-purchase-2016.docx | `9e06a79d9e83e4d370e7e6c4128c8b952078cb50d710fc7f08dfe20ae939fabc` | SAMR 库 id cd988310，GF-2016-0157 生鲜乳购销合同 |
+
+### 租赁类（manifest: lease）
+
+| shanghai-residential-lease-2014.docx | `3544c4024de8c37dbbb8548bce1248d505c454d0f1035e9f7a8bf11ee03c663e` | SAMR 库 id 179cc9d1，上海市居住房屋租赁合同（2014版，非GF编号） |
+| zhejiang-vehicle-lease-2024.docx | `596029723222aa69c38df026e1d0f50dc95ec2472b109fef1ff3e45a50f0bee6` | SAMR 库 id 7d0f8a02，HT33/SF24-2024 浙江省小微型客车租赁合同（3.8万字） |
+
+### 其他类（manifest: procurement——最接近规则包）
+
+| mandate-contract-samr-2025.docx | `58f7cd38beff837cee1a5b79b68a2da1058d596cc021f7fa5b66807875bcd9e6` | SAMR 库 id 50b57729，GF-2025-1001 委托合同（通用服务，按最接近的采购规则包审） |
+| work-contract-gf-2000.docx | `0bf28408417f24456c7027ac1f7b4f718c2937493829857dce04764eba03640c` | SAMR 库 id 191aec5c，GF-2000-0303 承揽合同（短模板，报酬期限在表格） |

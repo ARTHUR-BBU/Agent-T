@@ -329,6 +329,8 @@ def main() -> None:
                     help="附带执行 manifest 外文件（需 manifest 显式品类；单独落 contracts_extra，不入七问汇总）")
     ap.add_argument("--insecure", action="store_true",
                     help="允许向非 HTTPS 非回环地址发送 Basic 凭据与合同全文（自担风险）")
+    ap.add_argument("--names", default="",
+                    help="逗号分隔的文件名子集（必须在 manifest 名册内；空=全部）")
     args = ap.parse_args()
 
     fixtures = ROOT / args.fixtures
@@ -344,6 +346,13 @@ def main() -> None:
     missing = [n for n in sorted(manifest) if not (fixtures / n).exists()]
     for name in missing:
         print(f"[m65] WARN: manifest 内文件缺失磁盘：{name}", file=sys.stderr)
+    if args.names:
+        wanted = {n.strip() for n in args.names.split(",") if n.strip()}
+        unknown = wanted - set(manifest)
+        if unknown:
+            print(f"FATAL: --names 含名册外文件：{sorted(unknown)}", file=sys.stderr)
+            sys.exit(2)
+        files = [p for p in files if p.name in wanted]
     if args.limit:
         files = files[: args.limit]
         extra_files = extra_files[: args.limit]
