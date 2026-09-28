@@ -1,0 +1,1445 @@
+{
+  "base": "http://59.110.13.13:8080",
+  "files": [
+    "business-cooperation-nda-guangdong.docx",
+    "equipment-lease-construction-2000.docx",
+    "food-procurement-xinjiang-2025.docx",
+    "gov-procurement-goods-mof-2024.docx",
+    "house-lease-gf-2025-2614.docx",
+    "school-uniform-procurement-guangzhou.docx",
+    "trade-secret-nda-guangdong.docx"
+  ],
+  "summary": {
+    "contracts_total": 7,
+    "contracts_done": 7,
+    "ask_attempted": 4,
+    "ask_ok": 4,
+    "ask_failed": 0,
+    "ask_parse_ok": 4,
+    "ask_fields_filled_avg": 4.0,
+    "ask_honest_decline": 0,
+    "ask_quote_verified": 0,
+    "claim_id_rates": [
+      0.67,
+      0.64,
+      0.42,
+      0.92,
+      0.93,
+      0.75,
+      0.75
+    ],
+    "report_ok": 7,
+    "wall_seconds": 1169.1
+  },
+  "contracts": [
+    {
+      "file": "business-cooperation-nda-guangdong.docx",
+      "category": "nda",
+      "review_id": "89c5702d4d46",
+      "status": "done",
+      "error": null,
+      "metrics": {
+        "items_total": 12,
+        "attention_items": 1,
+        "scorecard_available": true,
+        "scorecard_total": 57,
+        "claim_id_rate": 0.67,
+        "evidence_verification_dist": {
+          "verified": 8,
+          "missing": 4
+        },
+        "broken_ref_count": 0,
+        "unique_evidence": 28,
+        "quality_available": true,
+        "quality_reason": null,
+        "quality_observations": 12,
+        "facts": 7,
+        "objections_available": true,
+        "objections_count": 1,
+        "completion": "fully_complete"
+      },
+      "items_detail": [
+        {
+          "id": "subject",
+          "name": "主体（谁跟谁签）",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "商务合作保密协议（参考文本） 甲　　方： 法定代表人：                统一社会信用代码： 电　　话：…",
+          "claim_id": "cl-23508b590918",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "confidentiality_scope",
+          "name": "保密范围与义务（什么算秘密、要怎么守）",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…事项进行商务合作，双方在谈判或合作期间，均因合作需要可能接触或掌握对方有价值的保密信息（包括但不限于口头、书面或其他任何形式），双方本着平等自愿、协商一致、诚实守信的…",
+          "claim_id": "cl-b8b6ad672fd2",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "payment",
+          "name": "价款与支付",
+          "status": "本类不适用",
+          "note": "本类无对价，不按缺项报警",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "agreement_term",
+          "name": "协议期限（这份协议管多久）",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "confidentiality_duration",
+          "name": "保密存续期（秘密要守到哪一天——和协议期限分开看）",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…条  保密义务期限 甲乙双方互为保密信息的提供方和接受方，负有保密义务。本协议的保密期限，为本协议签订之日起至双方终止谈判或合作后    年止。 第六条  知识产权 任…",
+          "claim_id": "cl-223e43cf5df0",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "breach",
+          "name": "违约责任（违约怎么赔）",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…任 1、任何一方如违反本协议下的保密义务，应承担违约责任。双方约定，本协议项下之违约金（以下简称“违约金”），其违约金数额相当于双方拟达成或已达成合作金额的   ％…",
+          "claim_id": "cl-77ed8ec837bf",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "unfair_terms",
+          "name": "格式条款 / 单方不公平（有没有一边倒）",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…第十条  其他 1、本协议自甲乙双方法定代表人或授权代表签字盖章之日起生效，且未经双方书面协议不得补充或修改。本协议签署、履行、解释和争议解决均适用中华人民共和国法律。…",
+          "claim_id": "cl-3128a3449ee0",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "ip",
+          "name": "知识产权归属（成果/秘密相关权利归谁）",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "jurisdiction",
+          "name": "管辖与争议（吵起来找谁管）",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…诉讼或程序，本协议双方均选择以下第    种方式解决： （1）向本合同签订地人民法院提请诉讼； （2）向            仲裁委员会申请仲裁。 2、若协议履行…",
+          "claim_id": "cl-4fa037f76cbf",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "termination",
+          "name": "解除与终止（怎么收场）",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "governing_law",
+          "name": "适用法律（按哪国/哪地法律）",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…采取合理的方式来减轻损失，包括但不限于指定措施和限制使用的合理请求。 第九条  适用法律和争议解决 1、对因本协议或本协议各方的权利和义务而发生的或与之有关的任何事项和…",
+          "claim_id": "cl-bb045a43e000",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "signature",
+          "name": "签署与印章（谁有权签字、章齐不齐）",
+          "status": "需关注",
+          "note": "仅见盖章栏，未见签字栏或授权代表签署，签署要件不完整",
+          "quote": "…份，具有同等法律效力。 （签署页） 甲　　方：              （盖章）       乙　　方： 法定代表人/授权代表:…",
+          "claim_id": "cl-d00c87dda2bc",
+          "evidence_verification": "verified"
+        }
+      ],
+      "verify": {
+        "available": true,
+        "questions_total": 8,
+        "pending": 8
+      },
+      "asks": [
+        {
+          "file": "business-cooperation-nda-guangdong.docx",
+          "item_id": "signature",
+          "item_name": "签署与印章（谁有权签字、章齐不齐）",
+          "seconds": 9.5,
+          "ok": true,
+          "parse_ok": true,
+          "fields_filled": 4,
+          "quote_verified": false,
+          "evidence_verification": "unverified",
+          "honest_decline": false,
+          "answer_text": {
+            "风险等级": "中",
+            "这条在查啥": "签署与印章要件：谁有权代表双方签字、签署页是否同时具备「签字+盖章」、生效条件表述是否唯一确定，以及协议份数、各方持有份数是否填写完整。签署要件是协议能否被证明成立、生效的形式基础，也是争议中对方能否主张「未经有效签署、协议不成立」的抗辩点。",
+            "问题是啥": "1）生效条件表述为「签字盖章」，中文合同实务中该表述既可解读为「签字并盖章」，也可能被解读为「签字或盖章」，一旦一方仅盖章未签字（或仅签字未盖章），双方对协议是否已生效可能产生分歧；规则备注已指出「仅见盖章栏，未见签字栏或授权代表签署，签署要件不完整」。2）签署页虽有「法定代表人/授权代表:」一行，但未标明是「签字」栏，也未预留授权委托书/授权范围的核对要求，若由授权代表签署，缺少证明其有权签署的授权文件指引，事后一方可主张「签署人无权代理」。3）第十条第2款的份数、「各执」份数均为空白（「一式    份，双方各执    份」），签署时若不填写，持有份数与原件数量无从确定，影响举证。4）本协议为双方互负保密义务的NDA，签署要件不完整对披露方与接收方的利害是双向对称的：任何一方都可能事后否认协议生效、否认对方签署人有权代表对方；换言之，该缺陷对双方都是潜在不利，而非单向有利于某一方。",
+            "建议怎么改": "1）把生效条件由「签字盖章」改为明确的「签字并盖章」，并写明以较晚完成的一方签署日为生效日，避免「或」的歧义。2）签署页明确区分「盖章」与「法定代表人/授权代表签字（签字）」两栏，并加注：授权代表签署的，应同时提供授权委托书作为附件或于签署时提交对方留存。3）将第十条第2款的份数、各执份数在定稿时填实（如「一式肆份，双方各执贰份」），不留空白。4）保留第十条第1款中「适用中华人民共和国法律」及「未经双方书面协议不得补充或修改」的原意，不新增实体义务；适用法律已写明，管辖方式仍按第九条勾选填实（属于另一清单项，另行处理）。5）按采购/合规口径，签署须「签字+盖章」齐备，本条的修改方向即为把该要求落到生效条款与签署页表述上。（原文摘句未核验，改写稿已隐藏）"
+          }
+        }
+      ],
+      "unsupported_probe": {
+        "file": "business-cooperation-nda-guangdong.docx",
+        "item_id": "agreement_term",
+        "item_name": "协议期限（这份协议管多久）",
+        "seconds": 0.0,
+        "ok": false,
+        "fabricated_quote": false,
+        "model_quote_preview": ""
+      },
+      "report": {
+        "http": 200,
+        "bytes": 39586,
+        "is_docx": true
+      },
+      "text_chars_full": 2765
+    },
+    {
+      "file": "equipment-lease-construction-2000.docx",
+      "category": "lease",
+      "review_id": "1d9d7f02dec6",
+      "status": "done",
+      "error": null,
+      "metrics": {
+        "items_total": 14,
+        "attention_items": 1,
+        "scorecard_available": true,
+        "scorecard_total": 58,
+        "claim_id_rate": 0.64,
+        "evidence_verification_dist": {
+          "verified": 9,
+          "missing": 5
+        },
+        "broken_ref_count": 0,
+        "unique_evidence": 31,
+        "quality_available": true,
+        "quality_reason": null,
+        "quality_observations": 12,
+        "facts": 7,
+        "objections_available": true,
+        "objections_count": 0,
+        "completion": "fully_complete"
+      },
+      "items_detail": [
+        {
+          "id": "subject",
+          "name": "主体",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…都是合 同的组成部分，与合同具有同等效力。 2 出租人  出租人（章） 住处： 法定代表人（签名）： 委托代理人（签名）： 电话： 传真： 开户银行： 账号： 邮政编码：…",
+          "claim_id": "cl-b67fec5d5e12",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "lessor_title",
+          "name": "出租权限",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…在租赁时期，出租人如将租赁物资所有权转移给第三人，应正式通知承租人，租赁物资新的所有权人即成为本合同的当然出租人。 二、在租赁时期，承租人未经出租人同意，不得将租赁物资…",
+          "claim_id": "cl-8d2fe58ae612",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "lease_term",
+          "name": "租期与续租",
+          "status": "需关注",
+          "note": "全文未找到租期/租赁期限约定，构成不定期租赁时出租方可随时解除，承租方稳定性无保障",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "delivery_acceptance",
+          "name": "交付与验收",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "use_restriction",
+          "name": "用途与证照",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…第一条\t租赁物资的品名、规格、数目、质量（详见合同附件）： 第二条\t租赁物资的用途及使用方法： 第三条\t租赁期限：自 \t年 \t月 \t日至 \t\t年 \t月 \t日，共计…",
+          "claim_id": "cl-7ac58894248a",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "rent_payment",
+          "name": "租金与支付",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…人因工程需要延长租期，应在合同届满前 \t日内，重新签订合同。 第四条\t租金、租金支付方式和期限 收取租金的标准：\t。租金的支付方式和期限：\t。第五条   押金（保证金）…",
+          "claim_id": "cl-046f6ec0d015",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "deposit",
+          "name": "押金",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…、租金支付方式和期限 收取租金的标准：\t。租金的支付方式和期限：\t。第五条   押金（保证金） 经双方协商，出租人收取承租人押金 \t元。承租人交纳押金后办理提货手续…",
+          "claim_id": "cl-391355071102",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "early_termination",
+          "name": "提前解约与违约金",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…任 一、出租人违约责任： 未按时间提供租赁物资，应向承租人偿付违约期租金 \t％的违约金。 未按质量提供租赁物资，应向承租人偿付违约期租金 \t％的违约金。 未按数量提供…",
+          "claim_id": "cl-c8824525534e",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "renovation",
+          "name": "装修与恢复原状",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "maintenance",
+          "name": "维修义务划分",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "subletting",
+          "name": "转租与分租",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…本合同的当然出租人。 二、在租赁时期，承租人未经出租人同意，不得将租赁物资转让、转租给第三人使用，也不得变卖或作抵押品。 第九条\t租赁期满租赁物资的返还时间为： 第…",
+          "claim_id": "cl-ba45fa55c4f4",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "jurisdiction",
+          "name": "管辖与争议",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…成的，按以下第 \t种方式解决： （一）提交 \t仲裁委员会仲裁； （二）依法向人民法院起诉。 第十三条\t其他约定事项： _。 第十四条\t本合同未作规定的，依据《中华人…",
+          "claim_id": "cl-97124ca603aa",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "governing_law",
+          "name": "适用法律",
+          "status": "本类不适用",
+          "note": "纯境内租赁合同依法当然适用中华人民共和国法律，不存在选择外国法的空间，本项不适用",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "signature",
+          "name": "签署与印章",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…的组成部分，与合同具有同等效力。 2 出租人  出租人（章） 住处： 法定代表人（签名）： 委托代理人（签名）： 电话： 传真： 开户银行： 账号： 邮政编码：\t承租…",
+          "claim_id": "cl-d6f17a62d546",
+          "evidence_verification": "verified"
+        }
+      ],
+      "verify": {
+        "available": true,
+        "questions_total": 8,
+        "pending": 8
+      },
+      "asks": [],
+      "unsupported_probe": {
+        "file": "equipment-lease-construction-2000.docx",
+        "item_id": "delivery_acceptance",
+        "item_name": "交付与验收",
+        "seconds": 0.0,
+        "ok": false,
+        "fabricated_quote": false,
+        "model_quote_preview": ""
+      },
+      "report": {
+        "http": 200,
+        "bytes": 39607,
+        "is_docx": true
+      },
+      "text_chars_full": 1366
+    },
+    {
+      "file": "food-procurement-xinjiang-2025.docx",
+      "category": "procurement",
+      "review_id": "166d9f388212",
+      "status": "done",
+      "error": null,
+      "metrics": {
+        "items_total": 12,
+        "attention_items": 1,
+        "scorecard_available": true,
+        "scorecard_total": 48,
+        "claim_id_rate": 0.42,
+        "evidence_verification_dist": {
+          "verified": 5,
+          "missing": 7
+        },
+        "broken_ref_count": 0,
+        "unique_evidence": 53,
+        "quality_available": true,
+        "quality_reason": null,
+        "quality_observations": 12,
+        "facts": 16,
+        "objections_available": true,
+        "objections_count": 2,
+        "completion": "fully_complete"
+      },
+      "items_detail": [
+        {
+          "id": "subject",
+          "name": "主体",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…乙方    份，由甲方向当地教育行政部门备案      份。 （四）本合同经双方法定代表人签字并加盖公章后生效。 十七、其他约定 （一）合同签订后      日内向属地教…",
+          "claim_id": "cl-4045b6b2acd6",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "subject_matter",
+          "name": "标的",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "payment",
+          "name": "价款与支付",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "term",
+          "name": "期限",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "breach",
+          "name": "违约责任",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…承担。 （三）乙方未按合同约定时间供货的，每延迟一次按延迟供货金额    %支付违约金，如发生    次延迟供货，甲方有权解除合同。 （四）合同期内，如果因乙方原因不…",
+          "claim_id": "cl-ba1029385fdc",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "confidentiality",
+          "name": "保密",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "ip",
+          "name": "知识产权归属",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "jurisdiction",
+          "name": "管辖与争议",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…： 向        仲裁委员会申请仲裁。 （二）依法向          人民法院起诉。 在诉讼或仲裁期间，本合同不涉及争议的条款仍然有效，双方应继续履行。因争议…",
+          "claim_id": "cl-0e0b9b264c3b",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "termination",
+          "name": "解除/终止",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…银行转账或公对个人（农户）银行转账。 （四）其他结算方式： （五）合同期满或中途解除合同，双方应当按照本合同的约定进行对账和结算，确定未结算的价款，甲方在确定价款后…",
+          "claim_id": "cl-366b324dd44c",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "unfair_terms",
+          "name": "格式条款/明显单方不公平",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "governing_law",
+          "name": "适用法律",
+          "status": "需关注",
+          "note": "全文检索未找到适用法律条款（未写明适用哪国/哪地法律），管辖依据不完整",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "signature",
+          "name": "签署与印章",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…份，由甲方向当地教育行政部门备案      份。 （四）本合同经双方法定代表人签字并加盖公章后生效。 十七、其他约定 （一）合同签订后      日内向属地教育行政部门…",
+          "claim_id": "cl-8999aed3a753",
+          "evidence_verification": "verified"
+        }
+      ],
+      "verify": {
+        "available": true,
+        "questions_total": 8,
+        "pending": 8
+      },
+      "asks": [],
+      "unsupported_probe": {
+        "file": "food-procurement-xinjiang-2025.docx",
+        "item_id": "subject_matter",
+        "item_name": "标的",
+        "seconds": 0.0,
+        "ok": false,
+        "fabricated_quote": false,
+        "model_quote_preview": ""
+      },
+      "report": {
+        "http": 200,
+        "bytes": 40295,
+        "is_docx": true
+      },
+      "text_chars_full": 6740
+    },
+    {
+      "file": "gov-procurement-goods-mof-2024.docx",
+      "category": "procurement",
+      "review_id": "a0caf520568d",
+      "status": "done",
+      "error": null,
+      "metrics": {
+        "items_total": 12,
+        "attention_items": 1,
+        "scorecard_available": true,
+        "scorecard_total": 74,
+        "claim_id_rate": 0.92,
+        "evidence_verification_dist": {
+          "verified": 11,
+          "missing": 1
+        },
+        "broken_ref_count": 0,
+        "unique_evidence": 44,
+        "quality_available": true,
+        "quality_reason": null,
+        "quality_observations": 12,
+        "facts": 16,
+        "objections_available": true,
+        "objections_count": 1,
+        "completion": "fully_complete"
+      },
+      "items_detail": [
+        {
+          "id": "subject",
+          "name": "主体",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…（供应商）\t乙方（供应商） 单位名称（公章或合同章）\t单位名称（公章或合同章） 法定代表人 或其委托代理人（签章）\t法定代表人 或其委托代理人（签章） 法定代表人 或其委…",
+          "claim_id": "cl-b488de75641e",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "subject_matter",
+          "name": "标的",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…量（台/套/个/架/组等）： 品牌：                    规格型号： 采购标的的技术要求、商务要求具体见附件。 ①涉及信息类产品，请填写该产品关键…",
+          "claim_id": "cl-9eafd4719652",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "payment",
+          "name": "价款与支付",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…全额付款：     （应明确一次性支付合同款项的条件） 分期付款：  （应明确分期支付合同款项的各期比例和支付条件，各期支付条件应与分期履约验收情况挂钩） ，其中涉及…",
+          "claim_id": "cl-8b942c2ae122",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "term",
+          "name": "期限",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "….2 一方当事人变更名称、住所、联系人、联系电话或电子邮箱等信息的，应当在变更后3日内及时书面通知对方，对方实际收到变更通知前的送达仍为有效送达。 22.3本合同一方…",
+          "claim_id": "cl-4eb7c96add97",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "breach",
+          "name": "违约责任",
+          "status": "需关注",
+          "note": "单方免除乙方违约责任，权利义务严重不对等",
+          "quote": "…能克服的客观情况。 18.2 任何一方对由于不可抗力造成的部分或全部不能履行合同不承担违约责任。但迟延履行后发生不可抗力的，不能免除责任。 18.3 遇有不可抗力的一方，…",
+          "claim_id": "cl-e670128eb26c",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "confidentiality",
+          "name": "保密",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…方依法向第三人赔偿后，有权向乙方追偿。甲方有其他损失的，乙方应当赔偿。 11. 保密义务 11.1 甲、乙双方对采购和合同履行过程中所获悉的国家秘密、工作秘密、商业秘密…",
+          "claim_id": "cl-c69cb6bb3bfb",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "ip",
+          "name": "知识产权归属",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…9.3 如甲方使用上述货物构成对第三人侵权的，则由乙方承担全部责任。 10. 知识产权保护 10.1 乙方对其所销售的货物应当享有知识产权或经权利人合法授权，保证没有…",
+          "claim_id": "cl-776f045dc221",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "jurisdiction",
+          "name": "管辖与争议",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…决的，可以在【政府采购合同专用条款】中进一步约定选择与争议有实际联系的地点的人民法院管辖，但管辖法院的约定不得违反级别管辖和专属管辖的规定。 19.3 如甲乙双方有…",
+          "claim_id": "cl-ed32ed0989a9",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "termination",
+          "name": "解除/终止",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…行；乙方在合理期限内未恢复履约能力且未提供适当担保的，视为拒绝继续履约，甲方有权解除合同并要求乙方承担由此给甲方造成的损失。 （3）乙方分立、合并或者变更住所的，应当及…",
+          "claim_id": "cl-e59062e765ff",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "unfair_terms",
+          "name": "格式条款/明显单方不公平",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…，特别是落实政府采购扶持中小企业，支持绿色发展和乡村振兴等政策情况） （6）履约验收标准： （7）是否以采购活动中供应商提供的样品作为参考：是  否 （8）履约验收其他…",
+          "claim_id": "cl-13cf0c718a7b",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "governing_law",
+          "name": "适用法律",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…法律适用 21.1 本合同的订立、生效、解释、履行及与本合同有关的争议解决，均适用法律、行政法规。 21.2 本合同条款与法律、行政法规的强制性规定不一致的，双方当事…",
+          "claim_id": "cl-b7b77c34e896",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "signature",
+          "name": "签署与印章",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        }
+      ],
+      "verify": {
+        "available": true,
+        "questions_total": 8,
+        "pending": 8
+      },
+      "asks": [
+        {
+          "file": "gov-procurement-goods-mof-2024.docx",
+          "item_id": "breach",
+          "item_name": "违约责任",
+          "seconds": 36.8,
+          "ok": true,
+          "parse_ok": true,
+          "fields_filled": 4,
+          "quote_verified": false,
+          "evidence_verification": "unverified",
+          "honest_decline": false,
+          "answer_text": {
+            "风险等级": "高",
+            "这条在查啥": "查第18条不可抗力免责是否对等、是否变相单方免除乙方违约责任，以及通知/举证、迟延履行后不可抗力的责任后果是否明确。",
+            "问题是啥": "规则备注称“单方免除乙方违约责任，权利义务严重不对等”，但所给18.2摘录写的是“任何一方”，存在规则备注与文本摘录不一致，须核对签署版及专用条款；若签署版或专用条款实际改为仅免乙方，则乙方受益、甲方承担无法追责风险，属严重不对等。即便按现有“任何一方”，18.2免责范围“部分或全部不能履行”较宽，未写明须“根据不可抗力影响”确定免责范围，可能被乙方扩大解释；18.3只规定通知和举证义务，未规定未及时通知、未提交证明导致对方损失扩大的后果，甲方可能难以追责。按中性立场：现有文字表面上双方均受益、双方均免责；若实际为仅免乙方，则明显偏向乙方，甲方承担追责不能风险。另需注意，不可抗力免责不能当然豁免验收、合规发票、质保≥12个月、先验收后付款等采购合规要求。",
+            "建议怎么改": "先核对签署版、专用条款第15.4款“其他违约责任”是否被改为仅免乙方；若存在单方免责，必须改回“任何一方”对等免责。保留“迟延履行后发生不可抗力的，不能免除责任”。增加“根据不可抗力的影响”确定免责范围，避免全部免责。明确18.3通知/举证期限，并写明未及时通知或未提交证据致使损失扩大的，扩大部分不免责。结合采购合规政策，明确不可抗力不影响验收、合规发票、质保≥12个月及先验收后付款、无合规发票可拒付等约定。（原文摘句未核验，改写稿已隐藏）"
+          }
+        }
+      ],
+      "unsupported_probe": {
+        "file": "gov-procurement-goods-mof-2024.docx",
+        "item_id": "signature",
+        "item_name": "签署与印章",
+        "seconds": 0.0,
+        "ok": false,
+        "fabricated_quote": false,
+        "model_quote_preview": ""
+      },
+      "report": {
+        "http": 200,
+        "bytes": 40594,
+        "is_docx": true
+      },
+      "text_chars_full": 10616
+    },
+    {
+      "file": "house-lease-gf-2025-2614.docx",
+      "category": "lease",
+      "review_id": "1657513a2e29",
+      "status": "done",
+      "error": null,
+      "metrics": {
+        "items_total": 14,
+        "attention_items": 0,
+        "scorecard_available": true,
+        "scorecard_total": 100,
+        "claim_id_rate": 0.93,
+        "evidence_verification_dist": {
+          "ambiguous": 1,
+          "verified": 12,
+          "missing": 1
+        },
+        "broken_ref_count": 0,
+        "unique_evidence": 50,
+        "quality_available": true,
+        "quality_reason": null,
+        "quality_observations": 12,
+        "facts": 16,
+        "objections_available": true,
+        "objections_count": 0,
+        "completion": "fully_complete"
+      },
+      "items_detail": [
+        {
+          "id": "subject",
+          "name": "主体",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…：□居民身份证  □护照  □统一社会信用代码  □其他 证件号码： 住所地： 法定代表人：              委托代理人： 联系人：…",
+          "claim_id": "cl-2c6d560b9837",
+          "evidence_verification": "ambiguous"
+        },
+        {
+          "id": "lessor_title",
+          "name": "出租权限",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…□使用权人  □其他         。甲方持有的房屋合法权属证明为：  □房屋所有权证  □不动产权证书  □房屋买卖合同  □房屋租赁合同  □其他…",
+          "claim_id": "cl-d33586a0be8d",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "lease_term",
+          "name": "租期与续租",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…解除合同，乙方应当承担违约责任。 第四条 租赁期间 （一）该房屋租赁期自    年   月   日起至    年   月   日止，  □是  □否  有免租期，免租期为        日，免租期自    年…",
+          "claim_id": "cl-797e0943d33a",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "delivery_acceptance",
+          "name": "交付与验收",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…厅    卫    厨；朝向为         ；房屋装修情况为：  □毛坯  □简装  □精装  □其他     。该房屋的附属设施、设备、家具、电器、装…",
+          "claim_id": "cl-0f57d350ea2d",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "use_restriction",
+          "name": "用途与证照",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…合同文本为示范文本，主要供城镇房屋的出租人将房屋租赁给承租人居住时参照使用，其他用途的房屋租赁当事人可在参照本合同文本的基础上根据具体情况另行约定。 二、租赁期限不…",
+          "claim_id": "cl-66d022efb635",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "rent_payment",
+          "name": "租金与支付",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…年   月   日起至    年   月   日止，  □是  □否  有免租期，免租期为        日，免租期自    年   月   日起至    年…",
+          "claim_id": "cl-b0641bb3186f",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "deposit",
+          "name": "押金",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…房屋且出租人有权出租房屋，并注意留存复印件。 （二）承租人应当注意留存支付租金、押金及其他相关费用的凭据。 （三）承租人应当按照正确使用方法使用房屋及附属设施，避免…",
+          "claim_id": "cl-fe8ecc01d340",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "early_termination",
+          "name": "提前解约与违约金",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…□对甲方进行催告，甲方在催告后    天内仍不缴纳，影响乙方正常使用的，乙方有权提前解除合同并追究甲方违约责任。 （五）乙方逾期缴纳其承担的费用，甲方代为缴纳的，甲方有…",
+          "claim_id": "cl-63c6ec1f9225",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "renovation",
+          "name": "装修与恢复原状",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…户型为：    室    厅    卫    厨；朝向为         ；房屋装修情况为：  □毛坯  □简装  □精装  □其他     。该房屋的附属设施、设…",
+          "claim_id": "cl-ba524076e62a",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "maintenance",
+          "name": "维修义务划分",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…用房屋及附属设施、物品的，乙方  □是  □否  有权自行维修。经甲方同意，乙方维修的，维修费用由甲方承担。 （三）甲方既不承担维修义务，也不愿意承担乙方维修所产生的费用的，乙方有权…",
+          "claim_id": "cl-ec81f6c5ce36",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "subletting",
+          "name": "转租与分租",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…代为清偿权：承租人拖欠租金的，次承租人可以代承租人支付其欠付的租金和违约金，但是转租合同对出租人不具有法律约束力的除外。次承租人代为支付的租金和违约金，可以充抵次承…",
+          "claim_id": "cl-d2d577f4f838",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "jurisdiction",
+          "name": "管辖与争议",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…在本合同中记载的联系电话、联系地址、电子邮箱等信息均真实有效并作为本合同履行以及法院或者仲裁机构解决本合同争议时的有效联系方式和送达地址。 （二）任何一方变更联系电…",
+          "claim_id": "cl-169e769898f8",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "governing_law",
+          "name": "适用法律",
+          "status": "本类不适用",
+          "note": "纯境内租赁合同依法当然适用中华人民共和国法律，不存在选择外国法的空间，本项不适用",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "signature",
+          "name": "签署与印章",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…乙方      份，具有同等效力。 第二十一条 其他 。 附件：房屋交割单 甲方（签名/盖章）：               乙方（签名/盖章）： 法定代表人：…",
+          "claim_id": "cl-2e84d633a010",
+          "evidence_verification": "verified"
+        }
+      ],
+      "verify": {
+        "available": true,
+        "questions_total": 8,
+        "pending": 8
+      },
+      "asks": [],
+      "unsupported_probe": null,
+      "report": {
+        "http": 200,
+        "bytes": 41232,
+        "is_docx": true
+      },
+      "text_chars_full": 8903
+    },
+    {
+      "file": "school-uniform-procurement-guangzhou.docx",
+      "category": "procurement",
+      "review_id": "bdaecadb452e",
+      "status": "done",
+      "error": null,
+      "metrics": {
+        "items_total": 12,
+        "attention_items": 2,
+        "scorecard_available": true,
+        "scorecard_total": 73,
+        "claim_id_rate": 0.75,
+        "evidence_verification_dist": {
+          "verified": 9,
+          "missing": 3
+        },
+        "broken_ref_count": 0,
+        "unique_evidence": 37,
+        "quality_available": true,
+        "quality_reason": null,
+        "quality_observations": 10,
+        "facts": 11,
+        "objections_available": true,
+        "objections_count": 1,
+        "completion": "fully_complete"
+      },
+      "items_detail": [
+        {
+          "id": "subject",
+          "name": "主体",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…箱：                              邮    箱： 法定代表人：                            法定代表人： 身份证号…",
+          "claim_id": "cl-7e57199a891f",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "subject_matter",
+          "name": "标的",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…、乙方所提供的货品应按每件（条）或每套校服独立牢固包装，并在外包装上清楚注明规格型号、以及甲方名称。 七、校服验收 1、乙方交付校服时，甲方应对产品数量、外包装及货…",
+          "claim_id": "cl-cd4d7535aa12",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "payment",
+          "name": "价款与支付",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "term",
+          "name": "期限",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…年    月    日前一次性付给乙方。 十、 履约保证金 1、乙方在收到货款后5日内，需向甲方提交银行保函，以其收到货款的20%作为本合同的履约保证金。 2、履约保…",
+          "claim_id": "cl-97670abab4f7",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "breach",
+          "name": "违约责任",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…承担损失。 2、甲方逾期付款的，每逾期一日，按照逾期付款金额的0.5‰向乙方支付违约金。逾期30日仍未能付清的，乙方有权解除合同。 3、甲方无正当理由拒收货物致使合同…",
+          "claim_id": "cl-1943f05a6096",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "confidentiality",
+          "name": "保密",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "ip",
+          "name": "知识产权归属",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…乙方还须承担赔偿责任。 8、因乙方原因造成甲方被第三方因侵犯专利权、商标权或其他知识产权追诉的，甲方有权要求乙方全额返还已付价款，支付总价款5%的违约金并承担相应的赔偿…",
+          "claim_id": "cl-2b78af888eda",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "jurisdiction",
+          "name": "管辖与争议",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…列第      种方式解决： 1、提请广州仲裁委员会仲裁； 2、向有管辖权的人民法院起诉。 十四、双方约定的其他事项： 十五、附则 1、本项目的采购文件以及其他合同…",
+          "claim_id": "cl-712fa5102e4f",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "termination",
+          "name": "解除/终止",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…日，按照逾期付款金额的0.5‰向乙方支付违约金。逾期30日仍未能付清的，乙方有权解除合同。 3、甲方无正当理由拒收货物致使合同无法履行的，甲方向乙方支付合同总金额5%的…",
+          "claim_id": "cl-c1cf63a6277d",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "unfair_terms",
+          "name": "格式条款/明显单方不公平",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…2、乙方所提供的校服质量保证期      年（不低于一年），自交付之日起计。在质保期内发生质量、规格型号等问题的，乙方应在接到甲方通知后      小时内作出服务响…",
+          "claim_id": "cl-66adb4f3361d",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "governing_law",
+          "name": "适用法律",
+          "status": "需关注",
+          "note": "全文检索未找到适用法律条款（未写明适用哪国/哪地法律），管辖依据不完整",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "signature",
+          "name": "签署与印章",
+          "status": "需关注",
+          "note": "仅见盖章栏，未见签字栏或授权代表签署，签署要件不完整",
+          "quote": "…日止。 4、本合同未尽事宜，双方可签订补充协议。 附件：校服采购清单 甲方（盖章）：                           乙方（盖章）： 地…",
+          "claim_id": "cl-b3ad1dfabd1b",
+          "evidence_verification": "verified"
+        }
+      ],
+      "verify": {
+        "available": true,
+        "questions_total": 8,
+        "pending": 8
+      },
+      "asks": [
+        {
+          "file": "school-uniform-procurement-guangzhou.docx",
+          "item_id": "signature",
+          "item_name": "签署与印章",
+          "seconds": 25.3,
+          "ok": true,
+          "parse_ok": true,
+          "fields_filled": 4,
+          "quote_verified": false,
+          "evidence_verification": "unverified",
+          "honest_decline": false,
+          "answer_text": {
+            "风险等级": "中",
+            "这条在查啥": "核查签署与印章要件是否完整：是否同时具备双方盖章、法定代表人或授权代表签字、授权文件、签署日期，并与“合同自双方签字盖章之日起生效”保持一致。",
+            "问题是啥": "规则引擎标注为需关注，理由是“仅见盖章栏，未见签字栏或授权代表签署，签署要件不完整”。具体看，十五、附则第2款约定“合同自双方签字盖章之日起生效”，即生效要件同时包含签字和盖章；但主文末尾签署栏只列“甲方（盖章）”“乙方（盖章）”，虽有“法定代表人”“委托代理人”信息栏，却没有明确的签字行，附件清单也只写“学校（盖章）/公司（盖章）”“代表：”，未明确代表是否签字。这样会产生三个风险：一是若一方只盖章未签字，是否满足约定的生效条件可能发生争议；二是若由委托代理人签署，未同步核验授权委托书，可能出现无权或越权签署争议；三是签署主体、验收确认人、请款/开票/收款主体不清，会影响先验收后付款、质保金、无合规发票可拒付等后续条款执行。按中性立场，未声明立场的，该签署形式本身不偏向甲或乙；但要件缺失时，谁主张合同已生效、谁要求付款或追责，谁承担举证不利风险。甲方（采购方）需确认乙方有权签署、收款和开票；乙方需确认甲方验收确认人和付款义务主体。",
+            "建议怎么改": "1. 在签署栏增加双方“法定代表人或授权代表（签字）：”行，并保留“（盖章）”，使签字与盖章并列。\n2. 将生效条款与签署栏统一表述为“自双方法定代表人或授权代表签字并加盖单位公章（或合同专用章）之日起生效”；如由授权代表签署，应附授权委托书或授权文件供对方核验。\n3. 附件“校服采购清单”的签署栏同步增加“法定代表人或授权代表（签字）：”，并保留双方盖章栏和日期栏。\n4. 签署时核验双方名称、统一社会信用代码/身份证号、授权范围；在签署页或合同其他条款中明确甲方验收确认人、乙方请款和开票主体，确保与“先验收后付款”“签收≠验收完”“无合规发票可拒付”等要求衔接；如涉及质保金安排，应使付款主体、收款主体、开票主体一致。办公设备原则上不找小规模纳税人的政策不直接适用于本项目，但供应商主体资格与发票合规仍应核验。（原文摘句未核验，改写稿已隐藏）"
+          }
+        }
+      ],
+      "unsupported_probe": {
+        "file": "school-uniform-procurement-guangzhou.docx",
+        "item_id": "payment",
+        "item_name": "价款与支付",
+        "seconds": 0.0,
+        "ok": false,
+        "fabricated_quote": false,
+        "model_quote_preview": ""
+      },
+      "report": {
+        "http": 200,
+        "bytes": 39876,
+        "is_docx": true
+      },
+      "text_chars_full": 4148
+    },
+    {
+      "file": "trade-secret-nda-guangdong.docx",
+      "category": "nda",
+      "review_id": "8977ad2b513b",
+      "status": "done",
+      "error": null,
+      "metrics": {
+        "items_total": 12,
+        "attention_items": 1,
+        "scorecard_available": true,
+        "scorecard_total": 68,
+        "claim_id_rate": 0.75,
+        "evidence_verification_dist": {
+          "verified": 9,
+          "missing": 3
+        },
+        "broken_ref_count": 0,
+        "unique_evidence": 33,
+        "quality_available": true,
+        "quality_reason": null,
+        "quality_observations": 12,
+        "facts": 12,
+        "objections_available": true,
+        "objections_count": 1,
+        "completion": "fully_complete"
+      },
+      "items_detail": [
+        {
+          "id": "subject",
+          "name": "主体（谁跟谁签）",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "商业秘密保密协议（参考文本） 甲　　方（用人单位、披露方）： 法定代表人：                统一社会信用代码： 电　　话：…",
+          "claim_id": "cl-f2518f53f93c",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "confidentiality_scope",
+          "name": "保密范围与义务（什么算秘密、要怎么守）",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "商业秘密保密协议（参考文本） 甲　　方（用人单位、披露方）： 法定代表人：…",
+          "claim_id": "cl-7971690c1c39",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "payment",
+          "name": "价款与支付",
+          "status": "本类不适用",
+          "note": "本类无对价，不按缺项报警",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "agreement_term",
+          "name": "协议期限（这份协议管多久）",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "confidentiality_duration",
+          "name": "保密存续期（秘密要守到哪一天——和协议期限分开看）",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…合同的解除 1、双方协商确定，出现下列情形之一的，本协议自行解除或终止： （1）保密期限届满； （2）甲方宣布解密； （3）甲方保密事项已经公开。 第十七条  纠纷解决…",
+          "claim_id": "cl-44c8d6e22bb7",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "breach",
+          "name": "违约责任（违约怎么赔）",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…履行乙方的保密义务将构成重大违约行为，乙方须承担违约责任。双方约定，本协议项下之违约金（以下简称“违约金”），其违约金数额相当于乙方解除或者终止劳动合同前    个月…",
+          "claim_id": "cl-0293baa5875f",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "unfair_terms",
+          "name": "格式条款 / 单方不公平（有没有一边倒）",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…行账户如下： 开户名称： 银行帐号： 开 户 行： 第十六条  合同的解除 1、双方协商确定，出现下列情形之一的，本协议自行解除或终止： （1）保密期限届满； （2）甲…",
+          "claim_id": "cl-5c1397b928f0",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "ip",
+          "name": "知识产权归属（成果/秘密相关权利归谁）",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "jurisdiction",
+          "name": "管辖与争议（吵起来找谁管）",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…诉讼或程序，本协议双方均选择以下第    种方式解决： （1）向本合同签订地人民法院提请诉讼； （2）向            仲裁委员会申请仲裁。 2、若协议履行…",
+          "claim_id": "cl-227457b20193",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "termination",
+          "name": "解除与终止（怎么收场）",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…行： 第十六条  合同的解除 1、双方协商确定，出现下列情形之一的，本协议自行解除或终止： （1）保密期限届满； （2）甲方宣布解密； （3）甲方保密事项已经公开。 第…",
+          "claim_id": "cl-dbdf5c58d85b",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "governing_law",
+          "name": "适用法律（按哪国/哪地法律）",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…之日起生效，且未经双方书面协议不得补充或修改。本协议签署、履行、解释和争议解决均适用中华人民共和国法律。 2、本协议一式    份，双方各执    份，具有同等法律效力。 （以下无正…",
+          "claim_id": "cl-06fcf1c62a3d",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "signature",
+          "name": "签署与印章（谁有权签字、章齐不齐）",
+          "status": "需关注",
+          "note": "仅见盖章栏，未见签字栏或授权代表签署，签署要件不完整",
+          "quote": "…份，具有同等法律效力。 （以下无正文） 甲　　方：              （盖章）       乙　　方： 法定代表人/授权代表: 日　　期：…",
+          "claim_id": "cl-d518d8fac732",
+          "evidence_verification": "verified"
+        }
+      ],
+      "verify": {
+        "available": true,
+        "questions_total": 8,
+        "pending": 8
+      },
+      "asks": [
+        {
+          "file": "trade-secret-nda-guangdong.docx",
+          "item_id": "signature",
+          "item_name": "签署与印章（谁有权签字、章齐不齐）",
+          "seconds": 19.6,
+          "ok": true,
+          "parse_ok": true,
+          "fields_filled": 4,
+          "quote_verified": false,
+          "evidence_verification": "unverified",
+          "honest_decline": false,
+          "answer_text": {
+            "风险等级": "中",
+            "这条在查啥": "查协议落款与生效要件是否闭环：双方是否均签字并盖章，法定代表人/授权代表是否分别签署，日期与份数是否明确，落款主体是否与正文甲乙双方一致，避免因签署形式瑕疵影响协议生效和举证。",
+            "问题是啥": "正文写的是“签字盖章”生效，但落款只看到甲方一侧标注“（盖章）”，乙方的签字/盖章栏及双方“法定代表人/授权代表”签署栏未分别清楚列明，日期栏也空白。适用法律在第十八条第1款已写明，本次风险点不在适用法律，而在签署要件。按中性立场看，甲方向（披露方/用人单位）通常需要依据本协议约束乙方（接收方/劳动者），若签署形式不完整，甲方主张协议已生效或乙方已受约束时举证更吃力；乙方也可能因签署栏不清而被卷入“是否已签署、谁有权代表签署”的争议。另“一式    份，双方各执    份”未填写，也会影响后续举证与文本管理。",
+            "建议怎么改": "按签署合规要求，把生效条件保留为“签字并盖章”，并在落款处分别列明：甲方名称、盖章、法定代表人/授权代表签字、日期；乙方名称或姓名、签字/盖章、法定代表人/授权代表签字（乙方为自然人时由本人签字）、日期。授权代表签署的，建议附授权委托书或注明授权依据。同时把份数和各执份数填写完整。不要只保留盖章栏，也不要用一个“法定代表人/授权代表”栏同时覆盖双方。（原文摘句未核验，改写稿已隐藏）"
+          }
+        }
+      ],
+      "unsupported_probe": {
+        "file": "trade-secret-nda-guangdong.docx",
+        "item_id": "agreement_term",
+        "item_name": "协议期限（这份协议管多久）",
+        "seconds": 0.0,
+        "ok": false,
+        "fabricated_quote": false,
+        "model_quote_preview": ""
+      },
+      "report": {
+        "http": 200,
+        "bytes": 39419,
+        "is_docx": true
+      },
+      "text_chars_full": 4951
+    }
+  ],
+  "contracts_extra": [
+    {
+      "file": "zibo-trade-secret-compilation.pdf",
+      "category": "procurement",
+      "review_id": "0356171462aa",
+      "status": "done",
+      "error": null,
+      "metrics": {
+        "items_total": 12,
+        "attention_items": 2,
+        "scorecard_available": false,
+        "scorecard_total": null,
+        "claim_id_rate": 0.83,
+        "evidence_verification_dist": {
+          "verified": 10,
+          "missing": 2
+        },
+        "broken_ref_count": 0,
+        "unique_evidence": 20,
+        "quality_available": false,
+        "quality_reason": "parse_failed",
+        "quality_observations": 0,
+        "facts": 8,
+        "objections_available": false,
+        "objections_count": 0,
+        "completion": "fully_complete"
+      },
+      "items_detail": [
+        {
+          "id": "subject",
+          "name": "主体",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…年 月 日 — 18 — 范本四：商业秘密保密协议 甲方（用人单位、披露方）： 法定代表人： 统一社会信用代码： 电 话： 传 真： 地 址： 乙 方（劳动者、接受方）：…",
+          "claim_id": "cl-358f1b33fb30",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "subject_matter",
+          "name": "标的",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…、样式、技术参数、电子数据、 制作方法、技术诀窍等。 c) 配置信息：设备仪器的型号、配置参数、特别要求等。 d) 与业务合作单位协议约定的保密信息 4.1.4 涉…",
+          "claim_id": "cl-5335c6781518",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "payment",
+          "name": "价款与支付",
+          "status": "需关注",
+          "note": "约定一次性/全款支付，且未见质保金或验收后再付安排，违背「小额货90%+10%质保金」政策",
+          "quote": "…可视为 拒绝支付）的，甲方除如数向乙方支付约定的竞业限制补偿费外，还应当向 乙方一次性支付竞业限制补偿总额 ％的违约金。 2、乙方不履行本协议第二条规定的义务，应当向甲方…",
+          "claim_id": "cl-51d18a00e07b",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "term",
+          "name": "期限",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "breach",
+          "name": "违约责任",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…为了有效保护甲方商业秘密， 双方约定：若乙方违反本合同规定的，乙方应当向甲方支付违约金为万元。 甲方遭受到的损失难以计算时，赔偿额为乙方侵权行为所获取的所有经济利 益…",
+          "claim_id": "cl-eafe2013b8ea",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "confidentiality",
+          "name": "保密",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…衔接的商业秘密保护制度体系，对外业务合作中科学防 范商业秘密纠纷风险。 三、严守保密义务 全市各企业加强对员工的保密培训，切实防范员工不当接受有 偿咨询、违反竞业协议、…",
+          "claim_id": "cl-3ac43d54e2b8",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "ip",
+          "name": "知识产权归属",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…企业资料汇编 企业商业秘密保护 常用制度措施汇编 编写说明 商业秘密是企业的重要知识产权，是企业的核心竞争力。全市 市场监管系统在“进千企 解难题 促发展”活动中，发现…",
+          "claim_id": "cl-cb39d5b6deca",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "jurisdiction",
+          "name": "管辖与争议",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…权 全市市场监管部门将以员工（包括离职员工）泄密为执法重点， 加强与公安、检察、法院等部门的执法协作，实现行政执法与刑事 司法有效衔接，依法打击侵犯商业秘密违法行为…",
+          "claim_id": "cl-9664d074f040",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "termination",
+          "name": "解除/终止",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…给付与否，受害方均有 权立即终止谈判或解除与违约方的合同、合作关系，因终止谈判或解除合同、 合作所造成的缔约过失赔偿责任、合同赔偿损失由违约方自行承担。 3、损失赔偿的…",
+          "claim_id": "cl-f38a58c6a0aa",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "unfair_terms",
+          "name": "格式条款/明显单方不公平",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "governing_law",
+          "name": "适用法律",
+          "status": "通过",
+          "note": "条款基本可接受",
+          "quote": "…来减轻损失，包括但不限于指定措施和限制使 — 36 — 用的合理请求。 第九条 适用法律和争议解决 1、对因本协议或本协议各方的权利和义务而发生的或与之有关的任何 事项…",
+          "claim_id": "cl-197a3f2c25b3",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "signature",
+          "name": "签署与印章",
+          "status": "需关注",
+          "note": "仅见盖章栏，未见签字栏或授权代表签署，签署要件不完整",
+          "quote": "…2、本协议一式 份，双方各执 份，具有同等法律效力。 （以下无正文） 甲方： （盖章） 乙方： 法定代表人/授权代表: 日期： 日期： — 25 — 三、竞业限制协议…",
+          "claim_id": "cl-e995d8f4ceb1",
+          "evidence_verification": "verified"
+        }
+      ],
+      "verify": {
+        "available": true,
+        "questions_total": 3,
+        "pending": 3
+      },
+      "asks": [
+        {
+          "file": "zibo-trade-secret-compilation.pdf",
+          "item_id": "payment",
+          "item_name": "价款与支付",
+          "seconds": 0.5,
+          "ok": false,
+          "parse_ok": false,
+          "fields_filled": 0,
+          "quote_verified": null,
+          "evidence_verification": null,
+          "honest_decline": true,
+          "answer_text": {
+            "风险等级": "",
+            "这条在查啥": "",
+            "问题是啥": "",
+            "建议怎么改": ""
+          }
+        },
+        {
+          "file": "zibo-trade-secret-compilation.pdf",
+          "item_id": "signature",
+          "item_name": "签署与印章",
+          "seconds": 0.5,
+          "ok": false,
+          "parse_ok": false,
+          "fields_filled": 0,
+          "quote_verified": null,
+          "evidence_verification": null,
+          "honest_decline": true,
+          "answer_text": {
+            "风险等级": "",
+            "这条在查啥": "",
+            "问题是啥": "",
+            "建议怎么改": ""
+          }
+        }
+      ],
+      "unsupported_probe": {
+        "file": "zibo-trade-secret-compilation.pdf",
+        "item_id": "term",
+        "item_name": "期限",
+        "seconds": 0.0,
+        "ok": false,
+        "fabricated_quote": false,
+        "model_quote_preview": ""
+      },
+      "report": {
+        "http": 200,
+        "bytes": 39775,
+        "is_docx": true
+      },
+      "text_chars_full": 45758,
+      "scenario": "extra-non-contract"
+    }
+  ]
+}
