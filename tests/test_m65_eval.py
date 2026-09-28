@@ -130,6 +130,33 @@ def test_select_files_manifest_missing_on_disk_reported_not_crashed(fixtures_dir
     assert [p.name for p in extras] == ["extra-compilation.pdf", "lease-a.docx"]
 
 
+# ---------- classify_probe_response：探针三态（P1 外审 #88 终验） ----------
+
+def test_probe_guardrail_refused_regardless_of_error_field():
+    # 真实守卫拦截形态：ok=false、无 error、无回答——必须记守卫拒答
+    r = m65.classify_probe_response({"ok": False, "error": None}, "a.docx", "i1", "n", 0.0)
+    assert r["verdict"] == "guardrail_refused"
+    assert r["ok"] is False
+    # error 缺字段/空串都不能让它落到 model_*
+    r2 = m65.classify_probe_response({"ok": False}, "a.docx", "i1", "n", 0.0)
+    assert r2["verdict"] == "guardrail_refused"
+
+
+def test_probe_model_declined_when_quote_empty_or_unlocatable():
+    r = m65.classify_probe_response(
+        {"ok": True, "raw_text": '{"原文在哪": "未定位到原文"}'}, "a.docx", "i1", "n", 2.0)
+    assert r["verdict"] == "model_declined"
+    r2 = m65.classify_probe_response({"ok": True, "raw_text": "{}"}, "a.docx", "i1", "n", 2.0)
+    assert r2["verdict"] == "model_declined"
+
+
+def test_probe_model_fabricated_when_quote_present_without_decline():
+    r = m65.classify_probe_response(
+        {"ok": True, "raw_text": '{"原文在哪": "第五条 乙方应于每月五日前支付租金。"}'},
+        "a.docx", "i1", "n", 2.0)
+    assert r["verdict"] == "model_fabricated"
+
+
 # ---------- detect_category：manifest 优先于文件名猜测 ----------
 
 def test_detect_category_manifest_wins_over_filename_hint():

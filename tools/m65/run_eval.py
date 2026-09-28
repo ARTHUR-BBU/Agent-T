@@ -146,6 +146,29 @@ def run_asks(client: httpx.Client, base: str, rid: str, row: dict, fname: str) -
     return out
 
 
+def classify_probe_response(data: dict, fname: str, item_id: str | None,
+                            item_name: str | None, seconds: float) -> dict:
+    """探针三态判定（纯函数，可单测）。
+
+    P1（外审 #88 终验）：只要 ok=false 一律记 guardrail_refused——ask 层守卫
+    拦截的真实返回形态是「ok=false、0 秒、无 error、无回答」，error 字段
+    不可依赖；ok=false 绝不能落到 model_declined（门卫没让人进门，
+    登记簿不能写成「进来后主动放弃」）。"""
+    base = {"file": fname, "item_id": item_id, "item_name": item_name, "seconds": seconds}
+    if not data.get("ok"):
+        return {**base, "ok": False, "verdict": "guardrail_refused",
+                "guardrail_error": str(data.get("error") or "")[:120] or None}
+    model_quote = ""
+    try:
+        model_quote = str((json.loads(data.get("raw_text") or "{}")).get("原文在哪") or "").strip()
+    except json.JSONDecodeError:
+        pass
+    return {**base, "ok": True,
+            "verdict": "model_declined" if (not model_quote or "未定位" in model_quote)
+                       else "model_fabricated",
+            "model_quote_preview": model_quote[:120]}
+
+
 def run_unsupported_probe(client: httpx.Client, base: str, rid: str,
                           row: dict, fname: str) -> dict | None:
     """无证据探针：挑一个「未找到」类目（本条无摘句可引）追问。
@@ -165,25 +188,8 @@ def run_unsupported_probe(client: httpx.Client, base: str, rid: str,
             timeout=180,
         )
         r.raise_for_status()
-        data = r.json()
-        err = str(data.get("error") or "")
-        if not data.get("ok") and err:
-            # 守卫拒答：没进模型，不能当模型诚实度证据
-            return {"file": fname, "item_id": target.get("id"), "item_name": target.get("name"),
-                    "seconds": round(time.time() - t0, 1), "ok": False,
-                    "verdict": "guardrail_refused", "guardrail_error": err[:120]}
-        model_quote = ""
-        try:
-            model_quote = str((json.loads(data.get("raw_text") or "{}")).get("原文在哪") or "").strip()
-        except json.JSONDecodeError:
-            pass
-        return {
-            "file": fname, "item_id": target.get("id"), "item_name": target.get("name"),
-            "seconds": round(time.time() - t0, 1), "ok": True,
-            "verdict": "model_declined" if (not model_quote or "未定位" in model_quote)
-                       else "model_fabricated",
-            "model_quote_preview": model_quote[:120],
-        }
+        return classify_probe_response(r.json(), fname, target.get("id"),
+                                       target.get("name"), round(time.time() - t0, 1))
     except Exception as exc:  # noqa: BLE001
         return {"file": fname, "item_id": target.get("id"),
                 "ok": False, "verdict": "request_error", "error": type(exc).__name__,
