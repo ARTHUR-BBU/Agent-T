@@ -29,13 +29,13 @@
       0.75
     ],
     "report_ok": 7,
-    "wall_seconds": 1347.0
+    "wall_seconds": 1169.1
   },
   "contracts": [
     {
       "file": "business-cooperation-nda-guangdong.docx",
       "category": "nda",
-      "review_id": "289c2d6858d7",
+      "review_id": "89c5702d4d46",
       "status": "done",
       "error": null,
       "metrics": {
@@ -49,11 +49,11 @@
           "missing": 4
         },
         "broken_ref_count": 0,
-        "unique_evidence": 30,
+        "unique_evidence": 28,
         "quality_available": true,
         "quality_reason": null,
-        "quality_observations": 10,
-        "facts": 8,
+        "quality_observations": 12,
+        "facts": 7,
         "objections_available": true,
         "objections_count": 1,
         "completion": "fully_complete"
@@ -178,7 +178,7 @@
           "file": "business-cooperation-nda-guangdong.docx",
           "item_id": "signature",
           "item_name": "签署与印章（谁有权签字、章齐不齐）",
-          "seconds": 12.3,
+          "seconds": 9.5,
           "ok": true,
           "parse_ok": true,
           "fields_filled": 4,
@@ -187,19 +187,12 @@
           "honest_decline": false,
           "answer_text": {
             "风险等级": "中",
-            "这条在查啥": "查签署要件是否闭环：谁有权代表主体签署、签字与盖章两个动作是否都有承载栏位、授权代表的授权文件是否要求、份数与日期是否可填可核，以及这些与第十条「签字盖章之日起生效」能否自洽对应。按中性立场，此条属对双方对称的程序性条款：双方都因要件不完整而承担「协议是否生效、何时生效」的不确定；主张协议已生效的一方（通常是已开始投入并已实际披露保密信息的一方）举证负担更重，想否认协议约束力的一方反而因此获得抗辩空间。",
-            "问题是啥": "1）正文把生效要点写成「签字盖章」两个动作，但签署页只印出「（盖章）」字样，签字栏仅以「法定代表人/授权代表:」一行呈现，既未标明「（签字）」也未标明是打印姓名还是手写签名，页面本身无法核对签字是否落地，与规则引擎备注「仅见盖章栏，未见签字栏或授权代表签署，签署要件不完整」一致。2）未见授权代表签署时须提交授权委托书的要求，代签情形下相对方无法确认签署人权限，反而双方都暴露在「越权签署」争议中。3）签署页「甲　　方：」「乙　　方：」后的主体名称栏为空，未预印签约主体全称，存在签署主体识别不清的风险。4）「一式    份，双方各执    份」份数留空，正本数量不确定，影响留存与举证。5）「日　　期：」留空，而生效时点绑定「签字盖章之日」，生效日无独立可核的记载点。6）此处为中性立场下的对称条款：签字、盖章、授权文件义务由甲乙双方各自承担，因而不存在单向获益方；但要件缺失产生的举证不利，由需要主张协议成立并据此追责的一方承担。",
-            "建议怎么改": "1）在签署页把签字与盖章拆成两个独立栏位并标注动作：保留「（盖章）」，另加「法定代表人/授权代表（签字）：」。2）增加一句授权代表签署的授权要求（如「以授权代表身份签署的，应在签署时提交加盖公章的授权委托书」），使签署权限可核。3）在签署页预印「甲方（全称）：」「乙方（全称）：」主体名称栏，与首部主体信息衔接。4）把份数、各执份数、日期三个空格在定稿时填实，日期栏与生效条款相呼应。5）将「签字盖章」明确为「签字并加盖公章（或合同专用章）」，避免对两个动作是并列还是择一产生歧义；同时保留原「未经双方书面协议不得补充或修改」及适用中国法的表述不变。6）本项改动仅为签署形式要件补全，不改变第十条既有权利义务分配，对甲乙双方施加的要求是对称的。以上与保密义务应对等、期限合理及「签署须签字+盖章」的政策口径一致。（原文摘句未核验，改写稿已隐藏）"
+            "这条在查啥": "签署与印章要件：谁有权代表双方签字、签署页是否同时具备「签字+盖章」、生效条件表述是否唯一确定，以及协议份数、各方持有份数是否填写完整。签署要件是协议能否被证明成立、生效的形式基础，也是争议中对方能否主张「未经有效签署、协议不成立」的抗辩点。",
+            "问题是啥": "1）生效条件表述为「签字盖章」，中文合同实务中该表述既可解读为「签字并盖章」，也可能被解读为「签字或盖章」，一旦一方仅盖章未签字（或仅签字未盖章），双方对协议是否已生效可能产生分歧；规则备注已指出「仅见盖章栏，未见签字栏或授权代表签署，签署要件不完整」。2）签署页虽有「法定代表人/授权代表:」一行，但未标明是「签字」栏，也未预留授权委托书/授权范围的核对要求，若由授权代表签署，缺少证明其有权签署的授权文件指引，事后一方可主张「签署人无权代理」。3）第十条第2款的份数、「各执」份数均为空白（「一式    份，双方各执    份」），签署时若不填写，持有份数与原件数量无从确定，影响举证。4）本协议为双方互负保密义务的NDA，签署要件不完整对披露方与接收方的利害是双向对称的：任何一方都可能事后否认协议生效、否认对方签署人有权代表对方；换言之，该缺陷对双方都是潜在不利，而非单向有利于某一方。",
+            "建议怎么改": "1）把生效条件由「签字盖章」改为明确的「签字并盖章」，并写明以较晚完成的一方签署日为生效日，避免「或」的歧义。2）签署页明确区分「盖章」与「法定代表人/授权代表签字（签字）」两栏，并加注：授权代表签署的，应同时提供授权委托书作为附件或于签署时提交对方留存。3）将第十条第2款的份数、各执份数在定稿时填实（如「一式肆份，双方各执贰份」），不留空白。4）保留第十条第1款中「适用中华人民共和国法律」及「未经双方书面协议不得补充或修改」的原意，不新增实体义务；适用法律已写明，管辖方式仍按第九条勾选填实（属于另一清单项，另行处理）。5）按采购/合规口径，签署须「签字+盖章」齐备，本条的修改方向即为把该要求落到生效条款与签署页表述上。（原文摘句未核验，改写稿已隐藏）"
           }
         }
       ],
-      "report": {
-        "http": 200,
-        "bytes": 39583,
-        "is_docx": true
-      },
-      "text_chars_preview": 500,
-      "text_chars_full": 2765,
       "unsupported_probe": {
         "file": "business-cooperation-nda-guangdong.docx",
         "item_id": "agreement_term",
@@ -208,12 +201,18 @@
         "ok": false,
         "fabricated_quote": false,
         "model_quote_preview": ""
-      }
+      },
+      "report": {
+        "http": 200,
+        "bytes": 39586,
+        "is_docx": true
+      },
+      "text_chars_full": 2765
     },
     {
       "file": "equipment-lease-construction-2000.docx",
       "category": "lease",
-      "review_id": "45e42ea8f2be",
+      "review_id": "1d9d7f02dec6",
       "status": "done",
       "error": null,
       "metrics": {
@@ -227,13 +226,13 @@
           "missing": 5
         },
         "broken_ref_count": 0,
-        "unique_evidence": 35,
+        "unique_evidence": 31,
         "quality_available": true,
         "quality_reason": null,
         "quality_observations": 12,
-        "facts": 8,
+        "facts": 7,
         "objections_available": true,
-        "objections_count": 1,
+        "objections_count": 0,
         "completion": "fully_complete"
       },
       "items_detail": [
@@ -370,13 +369,6 @@
         "pending": 8
       },
       "asks": [],
-      "report": {
-        "http": 200,
-        "bytes": 39692,
-        "is_docx": true
-      },
-      "text_chars_preview": 500,
-      "text_chars_full": 1366,
       "unsupported_probe": {
         "file": "equipment-lease-construction-2000.docx",
         "item_id": "delivery_acceptance",
@@ -385,32 +377,38 @@
         "ok": false,
         "fabricated_quote": false,
         "model_quote_preview": ""
-      }
+      },
+      "report": {
+        "http": 200,
+        "bytes": 39607,
+        "is_docx": true
+      },
+      "text_chars_full": 1366
     },
     {
       "file": "food-procurement-xinjiang-2025.docx",
       "category": "procurement",
-      "review_id": "73784a60c67a",
+      "review_id": "166d9f388212",
       "status": "done",
       "error": null,
       "metrics": {
         "items_total": 12,
         "attention_items": 1,
         "scorecard_available": true,
-        "scorecard_total": 47,
+        "scorecard_total": 48,
         "claim_id_rate": 0.42,
         "evidence_verification_dist": {
           "verified": 5,
           "missing": 7
         },
         "broken_ref_count": 0,
-        "unique_evidence": 44,
+        "unique_evidence": 53,
         "quality_available": true,
         "quality_reason": null,
         "quality_observations": 12,
         "facts": 16,
         "objections_available": true,
-        "objections_count": 1,
+        "objections_count": 2,
         "completion": "fully_complete"
       },
       "items_detail": [
@@ -529,13 +527,6 @@
         "pending": 8
       },
       "asks": [],
-      "report": {
-        "http": 200,
-        "bytes": 39854,
-        "is_docx": true
-      },
-      "text_chars_preview": 500,
-      "text_chars_full": 6740,
       "unsupported_probe": {
         "file": "food-procurement-xinjiang-2025.docx",
         "item_id": "subject_matter",
@@ -544,12 +535,18 @@
         "ok": false,
         "fabricated_quote": false,
         "model_quote_preview": ""
-      }
+      },
+      "report": {
+        "http": 200,
+        "bytes": 40295,
+        "is_docx": true
+      },
+      "text_chars_full": 6740
     },
     {
       "file": "gov-procurement-goods-mof-2024.docx",
       "category": "procurement",
-      "review_id": "711013ae1307",
+      "review_id": "a0caf520568d",
       "status": "done",
       "error": null,
       "metrics": {
@@ -563,7 +560,7 @@
           "missing": 1
         },
         "broken_ref_count": 0,
-        "unique_evidence": 45,
+        "unique_evidence": 44,
         "quality_available": true,
         "quality_reason": null,
         "quality_observations": 12,
@@ -684,15 +681,15 @@
       ],
       "verify": {
         "available": true,
-        "questions_total": 7,
-        "pending": 7
+        "questions_total": 8,
+        "pending": 8
       },
       "asks": [
         {
           "file": "gov-procurement-goods-mof-2024.docx",
           "item_id": "breach",
           "item_name": "违约责任",
-          "seconds": 25.8,
+          "seconds": 36.8,
           "ok": true,
           "parse_ok": true,
           "fields_filled": 4,
@@ -700,20 +697,13 @@
           "evidence_verification": "unverified",
           "honest_decline": false,
           "answer_text": {
-            "风险等级": "中",
-            "这条在查啥": "查「违约责任」这一条的免责事由、免责边界与违约后果是否对等、可执行。具体看三件事：① 不可抗力免责是双向还是单向；② 免责的例外（迟延履行后发生不可抗力）有没有保留；③ 违约的具体后果（迟延交货赔偿费、逾期付款利息、其他违约责任、履约保证金不予退还的情形）是否被落实到可引用的条款上。规则引擎已将本条标为「需关注」，备注理由为『单方免除乙方违约责任，权利义务严重不对等』。",
-            "问题是啥": "第一，被摘录的18.2按字面是双向的：『任何一方对由于不可抗力造成的部分或全部不能履行合同不承担违约责任。但迟延履行后发生不可抗力的，不能免除责任。』——它并未直接出现「单方免除乙方违约责任」的表述，且保留了迟延履行后不得免责的例外。因此本报的「需关注」落点不在这一句本身，而在于它周边：18.3只写了『遇有不可抗力的一方，应及时将事件情况以书面形式告知另一方，并在事件发生后及时向另一方提交合同不能履行或部分不能履行或需要延期履行的详细报告，以及证明不可抗力发生及其持续时间的证据。』——只列了告知与举证义务，没有写违反告知义务的后果，也没写不可抗力持续超过一定期间时双方的解除权，免责与举证的边界面是敞口的。\n\n第二，真正的对不等在相邻条款：第16.2（2）项规定『乙方有义务及时告知甲方。甲方有权以书面形式通知乙方中止合同并要求乙方在合理期限内消除相关情形或者提供适当担保。』第16.3（2）项规定『乙方未按合同约定履行，构成根本性违约的，甲方有权终止合同，并追究乙方的违约责任。』——甲方一侧有明确的中止权、解除权与索赔路径，而通用条款中看不到与之对称的乙方违约救济与责任限缩约定。\n\n第三，违约后果全部留白：第三节专用条款里「第15.2（2）项 迟延交货赔偿费」「第15.3款 逾期付款利息」「第15.4款 其他违约责任」「第13.2款 履约保证金不予退还的情形」只有标题、没有正文。违约金的计算方式、上限、逾期付款利息是否对等，均处于未定状态，公式化风险由签约后填写决定。同时第4.4款规定『未在【政府采购合同专用条款】约定的期限内对乙方履约提出任何异议或者向乙方作出任何说明的，视为验收通过』，验收异议期一旦在专用条款中留短，会把验收风险向乙方转移。\n\n按你声明的中性立场（未声明）：现状下受益方是甲方——它握有中止、解除、索赔的明文路径，而乙方的违约后果与救济对应项被留白，弹性更大；承担不确定性义务的是乙方。若按下面改写稿把免责与后果对称化，则双方义务趋于对等。\n\n本项还与采购合规政策交叉，需一并核查：先验收后付款、小额货物90%+10%质保金、质保≥12个月、签收≠验收完成、办公设备原则上不找小规模纳税人、无合规发票可拒付——这些落地节点目前都挂在留空的付款与验收条款上，一旦违约后果缺失，就会出现「验收不合格却已付款」或「无合规发票仍须付款」的敞口。",
-            "建议怎么改": "1）把18.2的「任何一方」在文本上明示为对甲乙双方同等适用，避免执行时被解释成只约束乙方；同时保留「迟延履行后发生不可抗力不免除责任」这一例外。\n2）给18.3补上违反告知/举证义务的后果（对称适用于双方），并约定不可抗力持续超过一定期间时任一方可协商变更或终止，堵住免责敞口。\n3）把第15.2（2）项「迟延交货赔偿费」与第15.3款「逾期付款利息」成对填写，费率、计算基数、起算日、上限一致化；第15.4款「其他违约责任」写明双方各自的违约情形与后果，避免只列乙方。\n4）第13.2款「履约保证金不予退还的情形」与甲方逾期退还的违约金（第13.3款）成对填写。\n5）在第4.4款对应的专用条款中，把甲方提出验收异议的期限写到与验收组织方式相匹配的长度，并明确「签收≠验收完成」：签收仅指数量外观，质量与政策落实情况以验收报告为准。\n6）把付款节点与验收、发票绑定：验收合格并取得合规发票后方启动付款；小额货物按90%+10%质保金执行，质保金在质保期（≥12个月）届满且无质量问题后无息退还；无合规发票可拒付且不构成甲方违约。\n7）注意本改写只覆盖第18条，第15.2/15.3/15.4/13.2等专用条款内容为空，需双方在专用条款中补全后才形成完整违约责任体系。（原文摘句未核验，改写稿已隐藏）"
+            "风险等级": "高",
+            "这条在查啥": "查第18条不可抗力免责是否对等、是否变相单方免除乙方违约责任，以及通知/举证、迟延履行后不可抗力的责任后果是否明确。",
+            "问题是啥": "规则备注称“单方免除乙方违约责任，权利义务严重不对等”，但所给18.2摘录写的是“任何一方”，存在规则备注与文本摘录不一致，须核对签署版及专用条款；若签署版或专用条款实际改为仅免乙方，则乙方受益、甲方承担无法追责风险，属严重不对等。即便按现有“任何一方”，18.2免责范围“部分或全部不能履行”较宽，未写明须“根据不可抗力影响”确定免责范围，可能被乙方扩大解释；18.3只规定通知和举证义务，未规定未及时通知、未提交证明导致对方损失扩大的后果，甲方可能难以追责。按中性立场：现有文字表面上双方均受益、双方均免责；若实际为仅免乙方，则明显偏向乙方，甲方承担追责不能风险。另需注意，不可抗力免责不能当然豁免验收、合规发票、质保≥12个月、先验收后付款等采购合规要求。",
+            "建议怎么改": "先核对签署版、专用条款第15.4款“其他违约责任”是否被改为仅免乙方；若存在单方免责，必须改回“任何一方”对等免责。保留“迟延履行后发生不可抗力的，不能免除责任”。增加“根据不可抗力的影响”确定免责范围，避免全部免责。明确18.3通知/举证期限，并写明未及时通知或未提交证据致使损失扩大的，扩大部分不免责。结合采购合规政策，明确不可抗力不影响验收、合规发票、质保≥12个月及先验收后付款、无合规发票可拒付等约定。（原文摘句未核验，改写稿已隐藏）"
           }
         }
       ],
-      "report": {
-        "http": 200,
-        "bytes": 40844,
-        "is_docx": true
-      },
-      "text_chars_preview": 500,
-      "text_chars_full": 10616,
       "unsupported_probe": {
         "file": "gov-procurement-goods-mof-2024.docx",
         "item_id": "signature",
@@ -722,19 +712,25 @@
         "ok": false,
         "fabricated_quote": false,
         "model_quote_preview": ""
-      }
+      },
+      "report": {
+        "http": 200,
+        "bytes": 40594,
+        "is_docx": true
+      },
+      "text_chars_full": 10616
     },
     {
       "file": "house-lease-gf-2025-2614.docx",
       "category": "lease",
-      "review_id": "49bcc7571b4c",
+      "review_id": "1657513a2e29",
       "status": "done",
       "error": null,
       "metrics": {
         "items_total": 14,
         "attention_items": 0,
         "scorecard_available": true,
-        "scorecard_total": 86,
+        "scorecard_total": 100,
         "claim_id_rate": 0.93,
         "evidence_verification_dist": {
           "ambiguous": 1,
@@ -742,11 +738,11 @@
           "missing": 1
         },
         "broken_ref_count": 0,
-        "unique_evidence": 43,
+        "unique_evidence": 50,
         "quality_available": true,
         "quality_reason": null,
-        "quality_observations": 11,
-        "facts": 13,
+        "quality_observations": 12,
+        "facts": 16,
         "objections_available": true,
         "objections_count": 0,
         "completion": "fully_complete"
@@ -885,37 +881,36 @@
         "pending": 8
       },
       "asks": [],
+      "unsupported_probe": null,
       "report": {
         "http": 200,
-        "bytes": 40925,
+        "bytes": 41232,
         "is_docx": true
       },
-      "text_chars_preview": 500,
-      "text_chars_full": 8903,
-      "unsupported_probe": null
+      "text_chars_full": 8903
     },
     {
       "file": "school-uniform-procurement-guangzhou.docx",
       "category": "procurement",
-      "review_id": "16bb5dc5dd97",
+      "review_id": "bdaecadb452e",
       "status": "done",
       "error": null,
       "metrics": {
         "items_total": 12,
         "attention_items": 2,
         "scorecard_available": true,
-        "scorecard_total": 74,
+        "scorecard_total": 73,
         "claim_id_rate": 0.75,
         "evidence_verification_dist": {
           "verified": 9,
           "missing": 3
         },
         "broken_ref_count": 0,
-        "unique_evidence": 31,
+        "unique_evidence": 37,
         "quality_available": true,
         "quality_reason": null,
-        "quality_observations": 12,
-        "facts": 10,
+        "quality_observations": 10,
+        "facts": 11,
         "objections_available": true,
         "objections_count": 1,
         "completion": "fully_complete"
@@ -1040,7 +1035,7 @@
           "file": "school-uniform-procurement-guangzhou.docx",
           "item_id": "signature",
           "item_name": "签署与印章",
-          "seconds": 25.1,
+          "seconds": 25.3,
           "ok": true,
           "parse_ok": true,
           "fields_filled": 4,
@@ -1048,20 +1043,13 @@
           "evidence_verification": "unverified",
           "honest_decline": false,
           "answer_text": {
-            "风险等级": "高",
-            "这条在查啥": "审查签署与印章要件是否完整：是否有双方签字、盖章，是否明确法定代表人或授权代表签署，以及签署形式与合同生效条款是否一致。",
-            "问题是啥": "附则要求“签字盖章”同时具备，但签署栏仅列“甲方（盖章）/乙方（盖章）”，法定代表人、委托代理人栏未标明为“签字”栏，形成签署要件不完整：可能出现只盖章、无授权代表签字，或签字人身份/授权无法核验。中性立场下，这不是单方受益条款：双方均承担确保签署完整的义务；若签署不完整，甲方后续主张验收、索赔、扣质保金，乙方主张付款、履约，均可能因合同生效或授权瑕疵产生争议。结合合规要求，签署主体和授权链不清也会影响先验收后付款、合规发票核验、质保金扣留等执行。",
-            "建议怎么改": "把生效条件与签署栏统一：保留“一式    份、各执    份、交主管教育部门”原意，将生效条件改为“加盖公章或合同专用章，且法定代表人或授权代表签字之日起生效”；在签署栏增加“法定代表人或授权代表（签字）”“委托代理人（签字）”，并保留身份证号、手机、日期栏；签署时核验营业执照/身份证明及授权文件。付款侧仍应坚持先验收后付款、签收≠验收完、质保不低于12个月；如约定小额货90%+10%质保金，应在签署完整后按该节点执行；无合规发票可拒付；如涉及办公设备采购，原则上不找小规模纳税人。（原文摘句未核验，改写稿已隐藏）"
+            "风险等级": "中",
+            "这条在查啥": "核查签署与印章要件是否完整：是否同时具备双方盖章、法定代表人或授权代表签字、授权文件、签署日期，并与“合同自双方签字盖章之日起生效”保持一致。",
+            "问题是啥": "规则引擎标注为需关注，理由是“仅见盖章栏，未见签字栏或授权代表签署，签署要件不完整”。具体看，十五、附则第2款约定“合同自双方签字盖章之日起生效”，即生效要件同时包含签字和盖章；但主文末尾签署栏只列“甲方（盖章）”“乙方（盖章）”，虽有“法定代表人”“委托代理人”信息栏，却没有明确的签字行，附件清单也只写“学校（盖章）/公司（盖章）”“代表：”，未明确代表是否签字。这样会产生三个风险：一是若一方只盖章未签字，是否满足约定的生效条件可能发生争议；二是若由委托代理人签署，未同步核验授权委托书，可能出现无权或越权签署争议；三是签署主体、验收确认人、请款/开票/收款主体不清，会影响先验收后付款、质保金、无合规发票可拒付等后续条款执行。按中性立场，未声明立场的，该签署形式本身不偏向甲或乙；但要件缺失时，谁主张合同已生效、谁要求付款或追责，谁承担举证不利风险。甲方（采购方）需确认乙方有权签署、收款和开票；乙方需确认甲方验收确认人和付款义务主体。",
+            "建议怎么改": "1. 在签署栏增加双方“法定代表人或授权代表（签字）：”行，并保留“（盖章）”，使签字与盖章并列。\n2. 将生效条款与签署栏统一表述为“自双方法定代表人或授权代表签字并加盖单位公章（或合同专用章）之日起生效”；如由授权代表签署，应附授权委托书或授权文件供对方核验。\n3. 附件“校服采购清单”的签署栏同步增加“法定代表人或授权代表（签字）：”，并保留双方盖章栏和日期栏。\n4. 签署时核验双方名称、统一社会信用代码/身份证号、授权范围；在签署页或合同其他条款中明确甲方验收确认人、乙方请款和开票主体，确保与“先验收后付款”“签收≠验收完”“无合规发票可拒付”等要求衔接；如涉及质保金安排，应使付款主体、收款主体、开票主体一致。办公设备原则上不找小规模纳税人的政策不直接适用于本项目，但供应商主体资格与发票合规仍应核验。（原文摘句未核验，改写稿已隐藏）"
           }
         }
       ],
-      "report": {
-        "http": 200,
-        "bytes": 39527,
-        "is_docx": true
-      },
-      "text_chars_preview": 500,
-      "text_chars_full": 4148,
       "unsupported_probe": {
         "file": "school-uniform-procurement-guangzhou.docx",
         "item_id": "payment",
@@ -1070,12 +1058,18 @@
         "ok": false,
         "fabricated_quote": false,
         "model_quote_preview": ""
-      }
+      },
+      "report": {
+        "http": 200,
+        "bytes": 39876,
+        "is_docx": true
+      },
+      "text_chars_full": 4148
     },
     {
       "file": "trade-secret-nda-guangdong.docx",
       "category": "nda",
-      "review_id": "11c400fc7b70",
+      "review_id": "8977ad2b513b",
       "status": "done",
       "error": null,
       "metrics": {
@@ -1089,7 +1083,7 @@
           "missing": 3
         },
         "broken_ref_count": 0,
-        "unique_evidence": 37,
+        "unique_evidence": 33,
         "quality_available": true,
         "quality_reason": null,
         "quality_observations": 12,
@@ -1218,7 +1212,7 @@
           "file": "trade-secret-nda-guangdong.docx",
           "item_id": "signature",
           "item_name": "签署与印章（谁有权签字、章齐不齐）",
-          "seconds": 27.4,
+          "seconds": 19.6,
           "ok": true,
           "parse_ok": true,
           "fields_filled": 4,
@@ -1227,19 +1221,12 @@
           "honest_decline": false,
           "answer_text": {
             "风险等级": "中",
-            "这条在查啥": "核查签署与印章要件是否完整：谁有权签字、双方是否分别签字并盖章、签署日期与份数是否明确，以及签署栏是否与第十八条第1款“签字盖章”生效条件一致。",
-            "问题是啥": "1. 生效条件写的是“签字盖章”，通常需要签字与盖章齐备；但签署栏只出现甲方“（盖章）”字样，未给甲乙双方分别设置明确的签字栏。\n2. “法定代表人/授权代表:”未标明归属甲方还是乙方，其后也没有独立签字位；若实际仅盖章无签字，一方可能主张未满足约定生效条件。\n3. 若由授权代表签署，缺少授权代表姓名、职务或授权依据，可能产生谁有权代表签署、签署是否有效的争议。\n4. “本协议一式    份，双方各执    份”及“日　　期”留白，影响生效日、持有份数和举证。\n中性立场下：披露方可能因签署瑕疵难以追责，接收方也可能被卷入协议是否生效的争议；双方都需要清楚的签署页。",
-            "建议怎么改": "1. 将签署栏改为甲、乙双方分别列示，每方均设“法定代表人/授权代表（签字）：”“盖章：”“日期：”。\n2. 与第十八条第1款保持一致：若保留“签字盖章”作为生效条件，签署栏必须同时留出签字位和盖章位，避免仅盖章。可将“签字盖章”改为“签字并盖章”以明确二者缺一不可。\n3. 授权代表签署时，注明其姓名、职务，并附授权委托书或注明授权文件编号，避免权限争议。\n4. 补全“本协议一式____份，双方各执____份”以及双方签署日期。\n5. 逐句对照：原文“本协议自甲乙双方签字盖章之日起生效”保留生效逻辑，仅明确为“签字并盖章”；原文“甲　　方：              （盖章）       乙　　方：”改为双方分别列示；原文“法定代表人/授权代表:”改为双方项下的“法定代表人/授权代表（签字）：”；原文“日　　期：”保留为双方各自日期；原文份数空白保留并补全。（原文摘句未核验，改写稿已隐藏）"
+            "这条在查啥": "查协议落款与生效要件是否闭环：双方是否均签字并盖章，法定代表人/授权代表是否分别签署，日期与份数是否明确，落款主体是否与正文甲乙双方一致，避免因签署形式瑕疵影响协议生效和举证。",
+            "问题是啥": "正文写的是“签字盖章”生效，但落款只看到甲方一侧标注“（盖章）”，乙方的签字/盖章栏及双方“法定代表人/授权代表”签署栏未分别清楚列明，日期栏也空白。适用法律在第十八条第1款已写明，本次风险点不在适用法律，而在签署要件。按中性立场看，甲方向（披露方/用人单位）通常需要依据本协议约束乙方（接收方/劳动者），若签署形式不完整，甲方主张协议已生效或乙方已受约束时举证更吃力；乙方也可能因签署栏不清而被卷入“是否已签署、谁有权代表签署”的争议。另“一式    份，双方各执    份”未填写，也会影响后续举证与文本管理。",
+            "建议怎么改": "按签署合规要求，把生效条件保留为“签字并盖章”，并在落款处分别列明：甲方名称、盖章、法定代表人/授权代表签字、日期；乙方名称或姓名、签字/盖章、法定代表人/授权代表签字（乙方为自然人时由本人签字）、日期。授权代表签署的，建议附授权委托书或注明授权依据。同时把份数和各执份数填写完整。不要只保留盖章栏，也不要用一个“法定代表人/授权代表”栏同时覆盖双方。（原文摘句未核验，改写稿已隐藏）"
           }
         }
       ],
-      "report": {
-        "http": 200,
-        "bytes": 39419,
-        "is_docx": true
-      },
-      "text_chars_preview": 500,
-      "text_chars_full": 4951,
       "unsupported_probe": {
         "file": "trade-secret-nda-guangdong.docx",
         "item_id": "agreement_term",
@@ -1248,34 +1235,40 @@
         "ok": false,
         "fabricated_quote": false,
         "model_quote_preview": ""
-      }
+      },
+      "report": {
+        "http": 200,
+        "bytes": 39419,
+        "is_docx": true
+      },
+      "text_chars_full": 4951
     }
   ],
   "contracts_extra": [
     {
       "file": "zibo-trade-secret-compilation.pdf",
       "category": "procurement",
-      "review_id": "df2331db7a04",
+      "review_id": "0356171462aa",
       "status": "done",
       "error": null,
       "metrics": {
         "items_total": 12,
         "attention_items": 2,
-        "scorecard_available": true,
-        "scorecard_total": 68,
+        "scorecard_available": false,
+        "scorecard_total": null,
         "claim_id_rate": 0.83,
         "evidence_verification_dist": {
           "verified": 10,
           "missing": 2
         },
         "broken_ref_count": 0,
-        "unique_evidence": 46,
-        "quality_available": true,
-        "quality_reason": null,
-        "quality_observations": 12,
-        "facts": 16,
-        "objections_available": true,
-        "objections_count": 1,
+        "unique_evidence": 20,
+        "quality_available": false,
+        "quality_reason": "parse_failed",
+        "quality_observations": 0,
+        "facts": 8,
+        "objections_available": false,
+        "objections_count": 0,
         "completion": "fully_complete"
       },
       "items_detail": [
@@ -1390,55 +1383,47 @@
       ],
       "verify": {
         "available": true,
-        "questions_total": 6,
-        "pending": 6
+        "questions_total": 3,
+        "pending": 3
       },
       "asks": [
         {
           "file": "zibo-trade-secret-compilation.pdf",
           "item_id": "payment",
           "item_name": "价款与支付",
-          "seconds": 28.4,
-          "ok": true,
-          "parse_ok": true,
-          "fields_filled": 4,
-          "quote_verified": false,
-          "evidence_verification": "unverified",
-          "honest_decline": false,
+          "seconds": 0.5,
+          "ok": false,
+          "parse_ok": false,
+          "fields_filled": 0,
+          "quote_verified": null,
+          "evidence_verification": null,
+          "honest_decline": true,
           "answer_text": {
-            "风险等级": "中",
-            "这条在查啥": "规则引擎按「价款与支付」检查是否存在一次性/全款支付，以及是否有验收后付款、质保金/质保期安排。但本处命中的上下文并非货物采购价款，而是竞业限制补偿与违约金支付，存在条目错配，需人工复核归类；「需关注」档位不因错配而取消。",
-            "问题是啥": "第一，规则备注称「一次性/全款支付，且未见质保金或验收后再付安排」，与上述原文并不完全对应：竞业限制补偿在第三条是「按月支付」，第四条的一次性支付对象是违约金，不是采购货款；因此「小额货90%+10%质保金」「先验收后付款」等采购政策不能直接套用，命中存在条目错配，建议人工复核归类。第二，仍需关注的是：两处「竞业限制补偿总额 ％的违约金」比例空白，违约金基数与上限不明，无法计算；「延迟支付一个月以上即可视为拒绝支付」触发后甲方可能被要求一次性支付全部补偿并另付违约金；乙方违约时收益归甲方、甲方有权处分、损失计算方式单方且扩张，双方权利义务明显不均衡。第三，按中性立场：若按竞业限制协议看，甲方为补偿支付义务人和竞业限制权利人，乙方为补偿领取人和竞业限制义务人，条款整体偏甲方；若按采购付款规则看，付款方本应承担验收、发票、质保金义务，但本命中文本没有这些安排。",
-            "建议怎么改": "先确认本协议性质：若确为竞业限制协议，不宜强行加入采购质保金、验收后付款条款，应把第三条补偿支付与第四条违约金分开表述。具体：1. 将「竞业限制补偿总额 ％的违约金」改为明确百分比或明确计算方式，并写明违约金基数、是否含税、支付期限；2. 将「延迟支付一个月以上即可视为拒绝支付」改为「经乙方书面催告后超过【】日仍未支付」或约定合理宽限期，避免短期延迟直接触发全部补偿+违约金；3. 明确违约金与损失赔偿能否并用、是否抵扣、损失计算上限，删除或限缩「甲方有权对乙方给予处分」等非合同责任表述；4. 若本协议实际还包含货物/服务采购付款，应另立付款条款，并按采购/合规政策加入：先验收后付款；小额货90%+10%质保金；质保≥12个月；签收≠验收完；办公设备原则上不找小规模纳税人；无合规发票可拒付。上述改写只是建议稿，最终以双方协商为准。（原文摘句未核验，改写稿已隐藏）"
+            "风险等级": "",
+            "这条在查啥": "",
+            "问题是啥": "",
+            "建议怎么改": ""
           }
         },
         {
           "file": "zibo-trade-secret-compilation.pdf",
           "item_id": "signature",
           "item_name": "签署与印章",
-          "seconds": 12.7,
-          "ok": true,
-          "parse_ok": true,
-          "fields_filled": 4,
-          "quote_verified": false,
-          "evidence_verification": "unverified",
-          "honest_decline": false,
+          "seconds": 0.5,
+          "ok": false,
+          "parse_ok": false,
+          "fields_filled": 0,
+          "quote_verified": null,
+          "evidence_verification": null,
+          "honest_decline": true,
           "answer_text": {
-            "风险等级": "中",
-            "这条在查啥": "核查合同签署与印章要件是否完整，包括双方是否均需签字并盖章、签署栏是否明确法定代表人/授权代表及日期，以确保与合同生效条款一致。",
-            "问题是啥": "签署栏仅列“甲方： （盖章）”，乙方处未明确标注“（盖章）”，且“法定代表人/授权代表”未分别对应甲乙方并预留签字位置；与第十八条第1款“签字盖章”生效条件不匹配。可能造成签署主体不明、授权代表签署效力争议、合同是否成立/生效举证困难。中性立场下，主张合同成立的一方需证明双方已签字盖章，相对方可能以签署瑕疵抗辩，因此双方均可能承担不利后果。结合合规政策，签署主体不明也会影响后续验收、付款、发票开具及付款条件（先验收后付款、无合规发票可拒付等）的责任归属。",
-            "建议怎么改": "在签署栏分别列明甲方和乙方的盖章栏、法定代表人/授权代表签字栏及日期栏，确保与“签字盖章”生效条件一致；签署时核验授权文件。不改变原条款其他内容。（原文摘句未核验，改写稿已隐藏）"
+            "风险等级": "",
+            "这条在查啥": "",
+            "问题是啥": "",
+            "建议怎么改": ""
           }
         }
       ],
-      "report": {
-        "http": 200,
-        "bytes": 40854,
-        "is_docx": true
-      },
-      "text_chars_preview": 500,
-      "scenario": "extra-non-contract",
-      "text_chars_full": 45758,
       "unsupported_probe": {
         "file": "zibo-trade-secret-compilation.pdf",
         "item_id": "term",
@@ -1447,7 +1432,14 @@
         "ok": false,
         "fabricated_quote": false,
         "model_quote_preview": ""
-      }
+      },
+      "report": {
+        "http": 200,
+        "bytes": 39775,
+        "is_docx": true
+      },
+      "text_chars_full": 45758,
+      "scenario": "extra-non-contract"
     }
   ]
 }
