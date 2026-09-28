@@ -222,21 +222,40 @@ def eval_contract(client: httpx.Client, base: str, path: Path, category: str) ->
 
 def summarize(results: list[dict], wall_seconds: float) -> dict:
     done = [r for r in results if r.get("status") == "done"]
-    asks = [a for r in results for a in (r.get("asks") or []) if a.get("ok")]
+    # P1（外审 #86）：失败请求进分母——先筛 ok 再统计会把失败藏掉
+    # （像只统计交卷的人）。attempted = 全部尝试，failed = 异常/非 ok 请求
+    asks_all = [a for r in results for a in (r.get("asks") or [])]
+    ok_asks = [a for a in asks_all if a.get("ok")]
     reports = [r.get("report") or {} for r in results]
     return {
         "contracts_total": len(results),
         "contracts_done": len(done),
-        "ask_total": len(asks),
-        "ask_parse_ok": sum(1 for a in asks if a.get("parse_ok")),
-        "ask_fields_filled_avg": (round(sum(a.get("fields_filled") or 0 for a in asks) / len(asks), 1)
-                                  if asks else None),
-        "ask_honest_decline": sum(1 for a in asks if a.get("honest_decline")),
-        "ask_quote_verified": sum(1 for a in asks if a.get("quote_verified")),
+        "ask_attempted": len(asks_all),
+        "ask_ok": len(ok_asks),
+        "ask_failed": len(asks_all) - len(ok_asks),
+        "ask_parse_ok": sum(1 for a in ok_asks if a.get("parse_ok")),
+        "ask_fields_filled_avg": (round(sum(a.get("fields_filled") or 0 for a in ok_asks)
+                                        / len(ok_asks), 1)
+                                  if ok_asks else None),
+        "ask_honest_decline": sum(1 for a in ok_asks if a.get("honest_decline")),
+        "ask_quote_verified": sum(1 for a in ok_asks if a.get("quote_verified")),
         "claim_id_rates": [r["metrics"].get("claim_id_rate") for r in done if r.get("metrics")],
         "report_ok": sum(1 for x in reports if x.get("is_docx")),
         "wall_seconds": round(wall_seconds, 1),
     }
+
+
+def select_contract_files(fixtures_dir: Path, manifest: dict,
+                          include_all: bool = False) -> tuple[list[Path], list[Path]]:
+    """P1（外审 #86）：manifest 是唯一「正式合同」名册——不在名册里的文件
+    （如资料汇编 PDF）默认不跑，防止混进合同统计；--all 才作为额外场景
+    （extra-non-contract）附带执行，单独落 contracts_extra，不入七问汇总。"""
+    supported = (".docx", ".doc", ".pdf", ".txt")
+    on_disk = sorted(p for p in fixtures_dir.iterdir() if p.suffix.lower() in supported)
+    in_manifest = [fixtures_dir / name for name in sorted(manifest)
+                   if (fixtures_dir / name).exists()]
+    extras = [p for p in on_disk if p not in in_manifest]
+    return in_manifest, (extras if include_all else [])
 
 
 def main() -> None:
@@ -246,23 +265,29 @@ def main() -> None:
     ap.add_argument("--out", default="docs/m65/run.json")
     ap.add_argument("--auth-file", default=r"F:\合同审查Agent\.deploy-credentials.txt")
     ap.add_argument("--limit", type=int, default=0, help="只跑前 N 份（0=全部）")
+    ap.add_argument("--all", action="store_true",
+                    help="附带执行 manifest 外文件（非合同场景，单独落 contracts_extra，不入七问汇总）")
     args = ap.parse_args()
 
     fixtures = ROOT / args.fixtures
     manifest_path = fixtures / "manifest.json"
     manifest = (json.loads(io.open(manifest_path, encoding="utf-8").read())
                 if manifest_path.exists() else {})
-    files = sorted(p for p in fixtures.iterdir()
-                   if p.suffix.lower() in (".docx", ".doc", ".pdf", ".txt"))
+    files, extra_files = select_contract_files(fixtures, manifest, include_all=args.all)
+    missing = [n for n in sorted(manifest) if not (fixtures / n).exists()]
+    for name in missing:
+        print(f"[m65] WARN: manifest 内文件缺失磁盘：{name}", file=sys.stderr)
     if args.limit:
         files = files[: args.limit]
+        extra_files = extra_files[: args.limit]
     if not files:
-        print(f"FATAL: {fixtures} 无合同文件", file=sys.stderr)
+        print(f"FATAL: {fixtures} 无 manifest 名册内合同文件", file=sys.stderr)
         sys.exit(2)
 
     auth = load_auth_header(Path(args.auth_file))
     headers = {"Authorization": auth}
     results: list[dict] = []
+    extras: list[dict] = []
     wall0 = time.time()
     with httpx.Client(headers=headers) as client:
         # 连通性预检（不打凭据日志）
@@ -279,14 +304,27 @@ def main() -> None:
                   f" | claim_id率 {m.get('claim_id_rate')} | quality={m.get('quality_available')}"
                   f" | asks={len(rec.get('asks') or [])}", flush=True)
             results.append(rec)
+        # manifest 外文件 = 非合同场景（资料汇编等），只留档不进七问汇总
+        for p in extra_files:
+            print(f"[m65][extra] {p.name}（非合同场景，不入汇总）...", flush=True)
+            rec = eval_contract(client, args.base, p, detect_category(p.name, manifest))
+            rec["scenario"] = "extra-non-contract"
+            extras.append(rec)
+            m = rec.get("metrics") or {}
+            print(f"      status={rec.get('status')} 需关注 {m.get('attention_items')}/{m.get('items_total')}",
+                  flush=True)
     wall = time.time() - wall0
 
     out = {"base": args.base, "files": [p.name for p in files],
            "summary": summarize(results, wall), "contracts": results}
+    if extras:
+        out["contracts_extra"] = extras
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     io.open(out_path, "w", encoding="utf-8").write(json.dumps(out, ensure_ascii=False, indent=2))
     print(f"[m65] summary: {json.dumps(out['summary'], ensure_ascii=False)}")
+    if extras:
+        print(f"[m65] extras（不入汇总）: {[e['file'] for e in extras]}")
     print(f"saved -> {out_path}")
 
 
