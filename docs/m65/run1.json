@@ -199,8 +199,8 @@
         "item_name": "协议期限（这份协议管多久）",
         "seconds": 0.0,
         "ok": false,
-        "fabricated_quote": false,
-        "model_quote_preview": ""
+        "verdict": "guardrail_refused",
+        "guardrail_error": "仅支持对「需关注」条目追问。"
       },
       "report": {
         "http": 200,
@@ -375,8 +375,8 @@
         "item_name": "交付与验收",
         "seconds": 0.0,
         "ok": false,
-        "fabricated_quote": false,
-        "model_quote_preview": ""
+        "verdict": "guardrail_refused",
+        "guardrail_error": "仅支持对「需关注」条目追问。"
       },
       "report": {
         "http": 200,
@@ -533,8 +533,8 @@
         "item_name": "标的",
         "seconds": 0.0,
         "ok": false,
-        "fabricated_quote": false,
-        "model_quote_preview": ""
+        "verdict": "guardrail_refused",
+        "guardrail_error": "仅支持对「需关注」条目追问。"
       },
       "report": {
         "http": 200,
@@ -710,8 +710,8 @@
         "item_name": "签署与印章",
         "seconds": 0.0,
         "ok": false,
-        "fabricated_quote": false,
-        "model_quote_preview": ""
+        "verdict": "guardrail_refused",
+        "guardrail_error": "仅支持对「需关注」条目追问。"
       },
       "report": {
         "http": 200,
@@ -1056,8 +1056,8 @@
         "item_name": "价款与支付",
         "seconds": 0.0,
         "ok": false,
-        "fabricated_quote": false,
-        "model_quote_preview": ""
+        "verdict": "guardrail_refused",
+        "guardrail_error": "仅支持对「需关注」条目追问。"
       },
       "report": {
         "http": 200,
@@ -1233,8 +1233,8 @@
         "item_name": "协议期限（这份协议管多久）",
         "seconds": 0.0,
         "ok": false,
-        "fabricated_quote": false,
-        "model_quote_preview": ""
+        "verdict": "guardrail_refused",
+        "guardrail_error": "仅支持对「需关注」条目追问。"
       },
       "report": {
         "http": 200,

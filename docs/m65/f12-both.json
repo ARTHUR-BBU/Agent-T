@@ -1,0 +1,391 @@
+[
+  {
+    "type": "F1",
+    "file": "business-cooperation-nda-guangdong.docx",
+    "item": "协议期限（这份协议管多久）",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F1",
+    "file": "business-cooperation-nda-guangdong.docx",
+    "item": "知识产权归属（成果/秘密相关权利归谁）",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "知识产权",
+      "专利",
+      "版权"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "food-procurement-xinjiang-2025.docx",
+    "item": "标的",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "标的",
+      "材料名称"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "food-procurement-xinjiang-2025.docx",
+    "item": "价款与支付",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "支付",
+      "付款",
+      "价款",
+      "货款",
+      "结算"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "food-procurement-xinjiang-2025.docx",
+    "item": "期限",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "合同期限",
+      "供货服务期"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "food-procurement-xinjiang-2025.docx",
+    "item": "保密",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F1",
+    "file": "food-procurement-xinjiang-2025.docx",
+    "item": "知识产权归属",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F2",
+    "file": "gov-procurement-goods-mof-2024.docx",
+    "item": "违约责任",
+    "verdict": "误报嫌疑（原文对等）",
+    "anchor_matched": true,
+    "signal_hits": [
+      "任何一方",
+      "双方",
+      "各自"
+    ],
+    "quote_head": "…能克服的客观情况。 18.2 任何一方对由于不可抗力造成的部分或全部不能履行合同不承担违约责任。但迟延履行后发生不可抗"
+  },
+  {
+    "type": "F1",
+    "file": "school-uniform-procurement-guangzhou.docx",
+    "item": "价款与支付",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "支付",
+      "付款",
+      "价款",
+      "货款"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "school-uniform-procurement-guangzhou.docx",
+    "item": "保密",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F1",
+    "file": "trade-secret-nda-guangdong.docx",
+    "item": "协议期限（这份协议管多久）",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "有效期"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "trade-secret-nda-guangdong.docx",
+    "item": "知识产权归属（成果/秘密相关权利归谁）",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "知识产权",
+      "专利",
+      "版权"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "agri-produce-sale-samr-2025.docx",
+    "item": "标的",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "品名"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "agri-produce-sale-samr-2025.docx",
+    "item": "价款与支付",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "支付",
+      "付款",
+      "价款",
+      "货款"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "agri-produce-sale-samr-2025.docx",
+    "item": "期限",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F1",
+    "file": "agri-produce-sale-samr-2025.docx",
+    "item": "知识产权归属",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F2",
+    "file": "agri-produce-sale-samr-2025.docx",
+    "item": "违约责任",
+    "verdict": "误报嫌疑（原文对等）",
+    "anchor_matched": true,
+    "signal_hits": [
+      "任何一方",
+      "双方"
+    ],
+    "quote_head": "…造成的损失；并应当在    日内向对方提供不可抗力发生的证明材料，以部分或者全部免除相应的违约责任。 （三）双方可以根"
+  },
+  {
+    "type": "F1",
+    "file": "cement-sale-gf-2008.docx",
+    "item": "标的",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F1",
+    "file": "cement-sale-gf-2008.docx",
+    "item": "价款与支付",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "结算"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "cement-sale-gf-2008.docx",
+    "item": "期限",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F1",
+    "file": "cement-sale-gf-2008.docx",
+    "item": "保密",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F1",
+    "file": "cement-sale-gf-2008.docx",
+    "item": "知识产权归属",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F1",
+    "file": "construction-work-contract-2017.docx",
+    "item": "价款与支付",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "支付",
+      "付款",
+      "价款",
+      "报酬",
+      "结算"
+    ]
+  },
+  {
+    "type": "F2",
+    "file": "construction-work-contract-2017.docx",
+    "item": "违约责任",
+    "verdict": "误报嫌疑（原文对等）",
+    "anchor_matched": true,
+    "signal_hits": [
+      "任何一方",
+      "双方",
+      "各自"
+    ],
+    "quote_head": "…大的损失承担责任。 因合同一方迟延履行合同义务，在迟延履行期间遭遇不可抗力的，不免除其违约责任。 17.4 因不可抗力"
+  },
+  {
+    "type": "F1",
+    "file": "data-processing-service-2025.docx",
+    "item": "标的",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F1",
+    "file": "data-processing-service-2025.docx",
+    "item": "期限",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "有效期"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "energy-hosting-service-2026.docx",
+    "item": "标的",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "标的"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "energy-hosting-service-2026.docx",
+    "item": "价款与支付",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "支付",
+      "付款",
+      "服务费",
+      "结算"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "mandate-contract-samr-2025.docx",
+    "item": "标的",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F1",
+    "file": "mandate-contract-samr-2025.docx",
+    "item": "价款与支付",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "支付",
+      "付款",
+      "报酬"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "mandate-contract-samr-2025.docx",
+    "item": "期限",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F2",
+    "file": "mandate-contract-samr-2025.docx",
+    "item": "违约责任",
+    "verdict": "误报嫌疑（原文对等）",
+    "anchor_matched": true,
+    "signal_hits": [
+      "任何一方",
+      "双方"
+    ],
+    "quote_head": "…造成的损失；并应当在    日内向对方提供不可抗力发生的证明材料，以部分或者全部免除相应的违约责任。 （三）双方可以根"
+  },
+  {
+    "type": "F1",
+    "file": "raw-milk-purchase-2016.docx",
+    "item": "标的",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F1",
+    "file": "raw-milk-purchase-2016.docx",
+    "item": "价款与支付",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "支付",
+      "付款",
+      "货款",
+      "结算"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "raw-milk-purchase-2016.docx",
+    "item": "期限",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "履行期限",
+      "有效期"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "raw-milk-purchase-2016.docx",
+    "item": "保密",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F1",
+    "file": "raw-milk-purchase-2016.docx",
+    "item": "知识产权归属",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  },
+  {
+    "type": "F1",
+    "file": "work-contract-gf-2000.docx",
+    "item": "标的",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "承揽项目"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "work-contract-gf-2000.docx",
+    "item": "价款与支付",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "支付",
+      "报酬",
+      "结算"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "work-contract-gf-2000.docx",
+    "item": "期限",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "交付期限"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "work-contract-gf-2000.docx",
+    "item": "保密",
+    "verdict": "漏报嫌疑",
+    "signal_hits": [
+      "保密"
+    ]
+  },
+  {
+    "type": "F1",
+    "file": "work-contract-gf-2000.docx",
+    "item": "知识产权归属",
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
+  }
+]

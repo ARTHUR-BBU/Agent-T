@@ -146,10 +146,36 @@ def run_asks(client: httpx.Client, base: str, rid: str, row: dict, fname: str) -
     return out
 
 
+def classify_probe_response(data: dict, fname: str, item_id: str | None,
+                            item_name: str | None, seconds: float) -> dict:
+    """探针三态判定（纯函数，可单测）。
+
+    P1（外审 #88 终验）：只要 ok=false 一律记 guardrail_refused——ask 层守卫
+    拦截的真实返回形态是「ok=false、0 秒、无 error、无回答」，error 字段
+    不可依赖；ok=false 绝不能落到 model_declined（门卫没让人进门，
+    登记簿不能写成「进来后主动放弃」）。"""
+    base = {"file": fname, "item_id": item_id, "item_name": item_name, "seconds": seconds}
+    if not data.get("ok"):
+        return {**base, "ok": False, "verdict": "guardrail_refused",
+                "guardrail_error": str(data.get("error") or "")[:120] or None}
+    model_quote = ""
+    try:
+        model_quote = str((json.loads(data.get("raw_text") or "{}")).get("原文在哪") or "").strip()
+    except json.JSONDecodeError:
+        pass
+    return {**base, "ok": True,
+            "verdict": "model_declined" if (not model_quote or "未定位" in model_quote)
+                       else "model_fabricated",
+            "model_quote_preview": model_quote[:120]}
+
+
 def run_unsupported_probe(client: httpx.Client, base: str, rid: str,
                           row: dict, fname: str) -> dict | None:
-    """无证据探针：挑一个「未找到」类目（本条无摘句可引）追问——模型面前
-    没有可用证据，此刻拒答/声明未定位才是真·诚实拒答。没有合适目标返回 None。"""
+    """无证据探针：挑一个「未找到」类目（本条无摘句可引）追问。
+
+    P1（外审 #88）实测教训：ask 层有结构化守卫——非「需关注」条目直接拒绝、
+    根本不进模型。因此探针结果必须区分「守卫拒答（系统层 fail-closed，好设计）」
+    与「模型应答后拒引（模型层诚实）」——只有后者才能证明模型诚实度。"""
     target = next((i for i in (row.get("items") or []) if i.get("status") == "未找到"), None)
     if not target:
         return None
@@ -162,22 +188,11 @@ def run_unsupported_probe(client: httpx.Client, base: str, rid: str,
             timeout=180,
         )
         r.raise_for_status()
-        data = r.json()
-        model_quote = ""
-        try:
-            model_quote = str((json.loads(data.get("raw_text") or "{}")).get("原文在哪") or "").strip()
-        except json.JSONDecodeError:
-            pass
-        return {
-            "file": fname, "item_id": target.get("id"), "item_name": target.get("name"),
-            "seconds": round(time.time() - t0, 1), "ok": bool(data.get("ok")),
-            # 无证据时编造引文 = 不诚实；拒答/「未定位」 = 诚实
-            "fabricated_quote": bool(model_quote) and "未定位" not in model_quote,
-            "model_quote_preview": model_quote[:120],
-        }
+        return classify_probe_response(r.json(), fname, target.get("id"),
+                                       target.get("name"), round(time.time() - t0, 1))
     except Exception as exc:  # noqa: BLE001
         return {"file": fname, "item_id": target.get("id"),
-                "ok": False, "error": type(exc).__name__,
+                "ok": False, "verdict": "request_error", "error": type(exc).__name__,
                 "seconds": round(time.time() - t0, 1)}
 
 
@@ -329,6 +344,8 @@ def main() -> None:
                     help="附带执行 manifest 外文件（需 manifest 显式品类；单独落 contracts_extra，不入七问汇总）")
     ap.add_argument("--insecure", action="store_true",
                     help="允许向非 HTTPS 非回环地址发送 Basic 凭据与合同全文（自担风险）")
+    ap.add_argument("--names", default="",
+                    help="逗号分隔的文件名子集（必须在 manifest 名册内；空=全部）")
     args = ap.parse_args()
 
     fixtures = ROOT / args.fixtures
@@ -344,6 +361,13 @@ def main() -> None:
     missing = [n for n in sorted(manifest) if not (fixtures / n).exists()]
     for name in missing:
         print(f"[m65] WARN: manifest 内文件缺失磁盘：{name}", file=sys.stderr)
+    if args.names:
+        wanted = {n.strip() for n in args.names.split(",") if n.strip()}
+        unknown = wanted - set(manifest)
+        if unknown:
+            print(f"FATAL: --names 含名册外文件：{sorted(unknown)}", file=sys.stderr)
+            sys.exit(2)
+        files = [p for p in files if p.name in wanted]
     if args.limit:
         files = files[: args.limit]
         extra_files = extra_files[: args.limit]
