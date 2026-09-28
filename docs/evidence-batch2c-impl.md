@@ -89,7 +89,7 @@ derive_claims_view(mini_row: dict) -> tuple[dict, list, list]:
     2. normalize_review_evidence(copy, warnings)   # 旧票据补定位/降级/清 ID
     3. annotate_review_claims(normalized)          # claim_id / claim_content_hash / evidence_refs
     4. 一致性检测（对带 decision 的对象）→ 组装 consistency / consistency_reasons
-    → 返回 (派生视图, warnings)
+    → 返回 (派生视图, 归一化迁移警告, 主张迁移警告)
 ```
 
 - 写路径（confirm/dispute/adopt）与全部主张消费出口共用；禁止跳 normalize、禁止检测另起炉灶（T-D2 + 变异）。
