@@ -1,0 +1,190 @@
+{
+  "base": "http://59.110.13.13:8080",
+  "files": [
+    "docx_table_order.docx"
+  ],
+  "summary": {
+    "contracts_total": 1,
+    "contracts_done": 1,
+    "ask_total": 1,
+    "ask_parse_ok": 1,
+    "ask_fields_filled_avg": 4.0,
+    "ask_honest_decline": 0,
+    "ask_quote_verified": 0,
+    "claim_id_rates": [
+      0.08
+    ],
+    "report_ok": 1,
+    "wall_seconds": 79.8
+  },
+  "contracts": [
+    {
+      "file": "docx_table_order.docx",
+      "category": "procurement",
+      "review_id": "fac49e7c3ba0",
+      "status": "done",
+      "error": null,
+      "metrics": {
+        "items_total": 12,
+        "attention_items": 2,
+        "scorecard_available": true,
+        "scorecard_total": 16,
+        "claim_id_rate": 0.08,
+        "evidence_verification_dist": {
+          "verified": 1,
+          "missing": 11
+        },
+        "broken_ref_count": 0,
+        "unique_evidence": 23,
+        "quality_available": true,
+        "quality_reason": null,
+        "quality_observations": 7,
+        "facts": 5,
+        "objections_available": true,
+        "objections_count": 0,
+        "completion": "fully_complete"
+      },
+      "items_detail": [
+        {
+          "id": "subject",
+          "name": "主体",
+          "status": "需关注",
+          "note": "仅见公司名称，未见法定代表人、住所或统一社会信用代码等完整主体信息",
+          "quote": "采购合同 第一条 标的：乙方供应办公设备一批。 第二条 付款安排如下： 期次\t金额 首付款\t合同总价百分之三…",
+          "claim_id": "cl-d9ca11ce528f",
+          "evidence_verification": "verified"
+        },
+        {
+          "id": "subject_matter",
+          "name": "标的",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "payment",
+          "name": "价款与支付",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "term",
+          "name": "期限",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "breach",
+          "name": "违约责任",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "confidentiality",
+          "name": "保密",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "ip",
+          "name": "知识产权归属",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "jurisdiction",
+          "name": "管辖与争议",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "termination",
+          "name": "解除/终止",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "unfair_terms",
+          "name": "格式条款/明显单方不公平",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "governing_law",
+          "name": "适用法律",
+          "status": "需关注",
+          "note": "全文检索未找到适用法律条款（未写明适用哪国/哪地法律），管辖依据不完整",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        },
+        {
+          "id": "signature",
+          "name": "签署与印章",
+          "status": "未找到",
+          "note": "未在合同中找到相关约定",
+          "quote": "",
+          "claim_id": "",
+          "evidence_verification": "missing"
+        }
+      ],
+      "verify": {
+        "available": true,
+        "questions_total": 8,
+        "pending": 8
+      },
+      "asks": [
+        {
+          "file": "docx_table_order.docx",
+          "item_id": "subject",
+          "item_name": "主体",
+          "seconds": 5.1,
+          "ok": true,
+          "parse_ok": true,
+          "fields_filled": 4,
+          "quote_verified": false,
+          "evidence_verification": "unverified",
+          "honest_decline": false,
+          "answer_text": {
+            "风险等级": "高",
+            "这条在查啥": "查合同双方的主体信息是否完整、可识别、可追责：甲方是谁、乙方是谁，是否载明法定代表人、住所（地址）、统一社会信用代码等足以锁定主体的要素，以及签约人是否有权代表。这是合同能否成立、送达能否生效、诉讼能否列对当事人的前提。",
+            "问题是啥": "第一，合同全文只有「甲方」「乙方」两个代号，连公司名称都未出现（规则引擎备注所述「仅见公司名称，未见法定代表人、住所或统一社会信用代码」在本采样文本中更严——名称本身亦未见），主体无法锁定。第二，无住所/送达地址，日后通知、催告、诉讼文书送达地址不明，可能导致送达不能或程序拖延。第三，无统一社会信用代码/法定代表人，无法核验对方是否真实存续、是否具有相应经营范围与开票资格。第四，结合本合同采购办公设备的背景：若对方为小规模纳税人，按贵方采购合规政策「办公设备原则上不找小规模纳税人」，且无合规发票可拒付，主体信息缺失将直接导致无法事前判断其纳税人身份与开票能力。第五，签约人身份、授权文件亦无从核对，存在无权代理、越权签署的争议空间。此处仅为风险提示，不构成对该条效力的判断，也不表示该条可以按现状通过。",
+            "建议怎么改": "在合同首部（第一条之前）增加「合同双方」条款，逐项填列甲方与乙方：名称（与营业执照一致）、统一社会信用代码、法定代表人、住所/联系地址、联系人及电话、开户行及账号、纳税人身份及可开具的发票类型；并加一句签约代表授权确认。同时把「乙方供应办公设备一批」的表述具体化，避免主体与标的双重不确定。注意：不得因补充主体信息而改变第二、三、四条已约定的付款比例与验收期限，除本「需关注」风险点外其余原意保留。若对方为小规模纳税人，按政策该采购方向本身需另行评估是否符合贵方合规要求，此点由贵方内部决策，本条改写不作实质义务的新增。（原文摘句未核验，改写稿已隐藏）"
+          }
+        }
+      ],
+      "report": {
+        "http": 200,
+        "bytes": 38558,
+        "is_docx": true
+      },
+      "text_chars_preview": 109
+    }
+  ]
+}
