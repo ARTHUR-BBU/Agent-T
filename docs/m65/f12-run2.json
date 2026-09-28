@@ -39,6 +39,7 @@
     "file": "agri-produce-sale-samr-2025.docx",
     "item": "违约责任",
     "verdict": "误报嫌疑（原文对等）",
+    "anchor_matched": true,
     "signal_hits": [
       "任何一方",
       "双方"
@@ -100,6 +101,7 @@
     "file": "construction-work-contract-2017.docx",
     "item": "违约责任",
     "verdict": "误报嫌疑（原文对等）",
+    "anchor_matched": true,
     "signal_hits": [
       "任何一方",
       "双方",
@@ -174,6 +176,7 @@
     "file": "mandate-contract-samr-2025.docx",
     "item": "违约责任",
     "verdict": "误报嫌疑（原文对等）",
+    "anchor_matched": true,
     "signal_hits": [
       "任何一方",
       "双方"

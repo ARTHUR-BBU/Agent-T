@@ -10,12 +10,8 @@
     "type": "F1",
     "file": "business-cooperation-nda-guangdong.docx",
     "item": "知识产权归属（成果/秘密相关权利归谁）",
-    "verdict": "漏报嫌疑",
-    "signal_hits": [
-      "知识产权",
-      "专利",
-      "版权"
-    ]
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
   },
   {
     "type": "F1",
@@ -109,12 +105,8 @@
     "type": "F1",
     "file": "trade-secret-nda-guangdong.docx",
     "item": "知识产权归属（成果/秘密相关权利归谁）",
-    "verdict": "漏报嫌疑",
-    "signal_hits": [
-      "知识产权",
-      "专利",
-      "版权"
-    ]
+    "verdict": "真缺失（倾向）",
+    "signal_hits": []
   },
   {
     "type": "F1",
