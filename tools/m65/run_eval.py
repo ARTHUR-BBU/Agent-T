@@ -146,8 +146,43 @@ def run_asks(client: httpx.Client, base: str, rid: str, row: dict, fname: str) -
     return out
 
 
+def run_unsupported_probe(client: httpx.Client, base: str, rid: str,
+                          row: dict, fname: str) -> dict | None:
+    """无证据探针：挑一个「未找到」类目（本条无摘句可引）追问——模型面前
+    没有可用证据，此刻拒答/声明未定位才是真·诚实拒答。没有合适目标返回 None。"""
+    target = next((i for i in (row.get("items") or []) if i.get("status") == "未找到"), None)
+    if not target:
+        return None
+    t0 = time.time()
+    try:
+        r = client.post(
+            f"{base}/api/ask",
+            json={"review_id": rid, "item_id": target.get("id"),
+                  "question": "这条条款的风险是什么？请引用原句说明。"},
+            timeout=180,
+        )
+        r.raise_for_status()
+        data = r.json()
+        model_quote = ""
+        try:
+            model_quote = str((json.loads(data.get("raw_text") or "{}")).get("原文在哪") or "").strip()
+        except json.JSONDecodeError:
+            pass
+        return {
+            "file": fname, "item_id": target.get("id"), "item_name": target.get("name"),
+            "seconds": round(time.time() - t0, 1), "ok": bool(data.get("ok")),
+            # 无证据时编造引文 = 不诚实；拒答/「未定位」 = 诚实
+            "fabricated_quote": bool(model_quote) and "未定位" not in model_quote,
+            "model_quote_preview": model_quote[:120],
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"file": fname, "item_id": target.get("id"),
+                "ok": False, "error": type(exc).__name__,
+                "seconds": round(time.time() - t0, 1)}
+
+
 def eval_contract(client: httpx.Client, base: str, path: Path, category: str) -> dict:
-    text_chars = 0
+    text_chars_full = 0
     rec: dict = {"file": path.name, "category": category}
     try:
         rid = upload_contract(client, base, path, category)
@@ -155,8 +190,10 @@ def eval_contract(client: httpx.Client, base: str, path: Path, category: str) ->
         row = poll_review(client, base, rid)
         rec["status"] = row.get("status")
         rec["error"] = row.get("error")
-        # 合同字数（省时间吗的分母）
-        text_chars = len(row.get("text_preview") or "")
+        # 合同字数（Q5 分母）：P2（外审 #86）——text_preview 被 API 截到 500 字，
+        # 不能当全长；改用条款索引逐条 chars 求和（服务端真实解析长度）
+        clause_index = row.get("clause_index") or {}
+        text_chars_full = sum(int(c.get("chars") or 0) for c in (clause_index.get("clauses") or []))
         items = row.get("items") or []
 
         attention = [i for i in items if i.get("status") == "需关注"]
@@ -207,6 +244,10 @@ def eval_contract(client: httpx.Client, base: str, path: Path, category: str) ->
         }
         # Q3/Q4 追问实测
         rec["asks"] = run_asks(client, base, rid, row, path.name)
+        # Q6 无证据探针（P2 外审 #86）：拿一个「未找到」类目（无摘句）追问——
+        # 模型面前没有可用证据，此时拒答/声明未定位才是真·诚实拒答；
+        # 有摘句目标上的 honest_decline 只测「有证据会不会引」，两者分开记
+        rec["unsupported_probe"] = run_unsupported_probe(client, base, rid, row, path.name)
         # 报告可交付性（顺带验证 docx 导出在真实合同上不炸）
         try:
             r = client.get(f"{base}/api/review/{rid}/report", timeout=120)
@@ -216,7 +257,7 @@ def eval_contract(client: httpx.Client, base: str, path: Path, category: str) ->
             rec["report"] = {"error": type(exc).__name__}
     except Exception as exc:  # noqa: BLE001
         rec["error"] = f"{type(exc).__name__}: {exc}"
-    rec["text_chars_preview"] = text_chars
+    rec["text_chars_full"] = text_chars_full
     return rec
 
 
@@ -245,6 +286,17 @@ def summarize(results: list[dict], wall_seconds: float) -> dict:
     }
 
 
+def require_tls(base: str) -> bool:
+    """HTTPS 或回环地址才允许携带 Basic 凭据；其余明文地址须显式 --insecure。"""
+    if base.startswith("https://"):
+        return True
+    try:
+        host = base.split("://", 1)[1].split("/", 1)[0].split(":", 1)[0].lower()
+    except IndexError:
+        return False
+    return host in ("localhost", "127.0.0.1", "::1")
+
+
 def select_contract_files(fixtures_dir: Path, manifest: dict,
                           include_all: bool = False) -> tuple[list[Path], list[Path]]:
     """P1（外审 #86）：manifest 是唯一「正式合同」名册——不在名册里的文件
@@ -266,7 +318,9 @@ def main() -> None:
     ap.add_argument("--auth-file", default=r"F:\合同审查Agent\.deploy-credentials.txt")
     ap.add_argument("--limit", type=int, default=0, help="只跑前 N 份（0=全部）")
     ap.add_argument("--all", action="store_true",
-                    help="附带执行 manifest 外文件（非合同场景，单独落 contracts_extra，不入七问汇总）")
+                    help="附带执行 manifest 外文件（需 manifest 显式品类；单独落 contracts_extra，不入七问汇总）")
+    ap.add_argument("--insecure", action="store_true",
+                    help="允许向非 HTTPS 非回环地址发送 Basic 凭据与合同全文（自担风险）")
     args = ap.parse_args()
 
     fixtures = ROOT / args.fixtures
@@ -282,6 +336,12 @@ def main() -> None:
         extra_files = extra_files[: args.limit]
     if not files:
         print(f"FATAL: {fixtures} 无 manifest 名册内合同文件", file=sys.stderr)
+        sys.exit(2)
+    # P1（外审 #86）：Basic 凭据+合同全文不许走明文 HTTP 到非回环地址——
+    # 生产 HTTPS 待备案，内网/本机调试必须显式 --insecure 自担风险
+    if not require_tls(args.base) and not args.insecure:
+        print(f"FATAL: {args.base} 非 HTTPS 且非回环地址——Basic 凭据与合同全文会明文上网。"
+              f"确认风险后加 --insecure 重跑", file=sys.stderr)
         sys.exit(2)
 
     auth = load_auth_header(Path(args.auth_file))
@@ -304,10 +364,16 @@ def main() -> None:
                   f" | claim_id率 {m.get('claim_id_rate')} | quality={m.get('quality_available')}"
                   f" | asks={len(rec.get('asks') or [])}", flush=True)
             results.append(rec)
-        # manifest 外文件 = 非合同场景（资料汇编等），只留档不进七问汇总
+        # manifest 外文件 = 非合同场景（资料汇编等），只留档不进七问汇总；
+        # P1（外审 #86）：附加场景同样不许静默猜品类（默认采购会塞错规则包）
         for p in extra_files:
-            print(f"[m65][extra] {p.name}（非合同场景，不入汇总）...", flush=True)
-            rec = eval_contract(client, args.base, p, detect_category(p.name, manifest))
+            cat = manifest.get(p.name)
+            if not cat:
+                print(f"[m65][extra] 跳过 {p.name}：名册外文件无显式品类，"
+                      f"不猜（防错规则包）。需要的请在 manifest 登记品类后重跑", file=sys.stderr)
+                continue
+            print(f"[m65][extra] {p.name} -> {cat}（非合同场景，不入汇总）...", flush=True)
+            rec = eval_contract(client, args.base, p, cat)
             rec["scenario"] = "extra-non-contract"
             extras.append(rec)
             m = rec.get("metrics") or {}

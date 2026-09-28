@@ -117,6 +117,16 @@ def test_detect_category_manifest_wins_over_filename_hint():
     assert m65.detect_category("采购合同.docx", {"采购合同.docx": "nda"}) == "nda"
 
 
+# ---------- require_tls：Basic 凭据不许默认走明文公网（P1 外审 #86） ----------
+
+def test_require_tls_allows_https_and_loopback_only():
+    assert m65.require_tls("https://example.com") is True
+    assert m65.require_tls("http://localhost:8080") is True
+    assert m65.require_tls("http://127.0.0.1:8080") is True
+    # 生产 HTTP 公网地址默认拒绝——须显式 --insecure
+    assert m65.require_tls("http://59.110.13.13:8080") is False
+
+
 def test_detect_category_fallback_hints_and_default():
     assert m65.detect_category("设备租赁.docx", {}) == "lease"
     assert m65.detect_category("trade-secret-nda-x.docx", {}) == "nda"

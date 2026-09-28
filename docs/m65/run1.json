@@ -198,7 +198,17 @@
         "bytes": 39583,
         "is_docx": true
       },
-      "text_chars_preview": 500
+      "text_chars_preview": 500,
+      "text_chars_full": 2765,
+      "unsupported_probe": {
+        "file": "business-cooperation-nda-guangdong.docx",
+        "item_id": "agreement_term",
+        "item_name": "协议期限（这份协议管多久）",
+        "seconds": 0.0,
+        "ok": false,
+        "fabricated_quote": false,
+        "model_quote_preview": ""
+      }
     },
     {
       "file": "equipment-lease-construction-2000.docx",
@@ -365,7 +375,17 @@
         "bytes": 39692,
         "is_docx": true
       },
-      "text_chars_preview": 500
+      "text_chars_preview": 500,
+      "text_chars_full": 1366,
+      "unsupported_probe": {
+        "file": "equipment-lease-construction-2000.docx",
+        "item_id": "delivery_acceptance",
+        "item_name": "交付与验收",
+        "seconds": 0.0,
+        "ok": false,
+        "fabricated_quote": false,
+        "model_quote_preview": ""
+      }
     },
     {
       "file": "food-procurement-xinjiang-2025.docx",
@@ -514,7 +534,17 @@
         "bytes": 39854,
         "is_docx": true
       },
-      "text_chars_preview": 500
+      "text_chars_preview": 500,
+      "text_chars_full": 6740,
+      "unsupported_probe": {
+        "file": "food-procurement-xinjiang-2025.docx",
+        "item_id": "subject_matter",
+        "item_name": "标的",
+        "seconds": 0.0,
+        "ok": false,
+        "fabricated_quote": false,
+        "model_quote_preview": ""
+      }
     },
     {
       "file": "gov-procurement-goods-mof-2024.docx",
@@ -682,7 +712,17 @@
         "bytes": 40844,
         "is_docx": true
       },
-      "text_chars_preview": 500
+      "text_chars_preview": 500,
+      "text_chars_full": 10616,
+      "unsupported_probe": {
+        "file": "gov-procurement-goods-mof-2024.docx",
+        "item_id": "signature",
+        "item_name": "签署与印章",
+        "seconds": 0.0,
+        "ok": false,
+        "fabricated_quote": false,
+        "model_quote_preview": ""
+      }
     },
     {
       "file": "house-lease-gf-2025-2614.docx",
@@ -850,7 +890,9 @@
         "bytes": 40925,
         "is_docx": true
       },
-      "text_chars_preview": 500
+      "text_chars_preview": 500,
+      "text_chars_full": 8903,
+      "unsupported_probe": null
     },
     {
       "file": "school-uniform-procurement-guangzhou.docx",
@@ -1018,7 +1060,17 @@
         "bytes": 39527,
         "is_docx": true
       },
-      "text_chars_preview": 500
+      "text_chars_preview": 500,
+      "text_chars_full": 4148,
+      "unsupported_probe": {
+        "file": "school-uniform-procurement-guangzhou.docx",
+        "item_id": "payment",
+        "item_name": "价款与支付",
+        "seconds": 0.0,
+        "ok": false,
+        "fabricated_quote": false,
+        "model_quote_preview": ""
+      }
     },
     {
       "file": "trade-secret-nda-guangdong.docx",
@@ -1186,7 +1238,17 @@
         "bytes": 39419,
         "is_docx": true
       },
-      "text_chars_preview": 500
+      "text_chars_preview": 500,
+      "text_chars_full": 4951,
+      "unsupported_probe": {
+        "file": "trade-secret-nda-guangdong.docx",
+        "item_id": "agreement_term",
+        "item_name": "协议期限（这份协议管多久）",
+        "seconds": 0.0,
+        "ok": false,
+        "fabricated_quote": false,
+        "model_quote_preview": ""
+      }
     }
   ],
   "contracts_extra": [
@@ -1375,7 +1437,17 @@
         "is_docx": true
       },
       "text_chars_preview": 500,
-      "scenario": "extra-non-contract"
+      "scenario": "extra-non-contract",
+      "text_chars_full": 45758,
+      "unsupported_probe": {
+        "file": "zibo-trade-secret-compilation.pdf",
+        "item_id": "term",
+        "item_name": "期限",
+        "seconds": 0.0,
+        "ok": false,
+        "fabricated_quote": false,
+        "model_quote_preview": ""
+      }
     }
   ]
 }
