@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""F-1/F-2 第一批修复 · 金标对抗断言（原型 38 条正式迁移，CI 直接执行）。
+"""F-1/F-2 第一批修复 · 金标对抗断言（原型 50 条正式迁移，CI 直接执行）。
 
 数据源：tools/m65/f12_regex_prototype.py 的 _CASES（单一权威）——
 施工时生产引擎实现必须让本测试持续全绿；任何词表改动先改原型表再迁移。
@@ -31,9 +31,17 @@ def test_date_branch_covers_full_range() -> None:
     proto._date_span_check()
 
 
-def test_stress_repeat_hits_linear() -> None:
-    """300 处重复命中：窗口化搜索下判定正确（性能边界功能性下限）。"""
+def test_stress_repeat_hits() -> None:
+    """300 处重复命中：窗口化搜索下判定正确（功能性下限；时间上限断言留生产验收）。"""
     proto._stress_repeat_hits()
+
+
+def test_hit_start_derived_from_authority() -> None:
+    """禁行起点必须从单一权威表派生（外审 v1.6 阻断2：不许手写第二份词表）。"""
+    derived = r"(?:" + "|".join(dict.fromkeys(start for _, start, _ in proto._HIT_ALTS)) + r")"
+    assert proto.HIT_START == derived
+    for _, start, _ in proto._HIT_ALTS:
+        assert start in proto.HIT_START, f"起点 token 缺失: {start}"
 
 
 def test_hit_neg_flags_wired() -> None:

@@ -55,8 +55,9 @@ _HIT_NEG_FLAGS = [neg for _, _, neg in _HIT_ALTS]
 # ============ F-2 对等豁免链：同句硬边界 = 。\n\r（分号不断链） ============
 _QUANT = r"(?:任何一方|双方均?|各自|彼此|遇有不可抗力的一方)"
 _EXCUSE = r"(?:不可抗力|情势变更|政府行为|自然灾害|疫情)"
-_HIT_START = r"(?:不承担违约|无需承担|不得向|不负违约金|不得主张|违约责任由|不得追究|放弃|豁免|免除)"
-_NOHIT = r"(?:(?!" + _HIT_START + r")[^。\n\r])"
+# 禁行起点从单一权威表派生（外审 v1.6 阻断2：不再手写第二份词表）
+HIT_START = r"(?:" + "|".join(dict.fromkeys(start for _, start, _ in _HIT_ALTS)) + r")"
+_NOHIT = r"(?:(?!" + HIT_START + r")[^。\n\r])"
 _EXEMPT_WINDOW = 320
 EXEMPT = re.compile(r"(?:" + _QUANT + _NOHIT + r"{0,150}" + _EXCUSE + _NOHIT + r"{0,80}"
                     + r"(?:" + "|".join("(" + a + ")" for a, _, _ in _HIT_ALTS) + r"))")
@@ -90,14 +91,22 @@ _AMOUNT = (r"(?:" + _CLAUSE_HEAD + _NOFORB + r"{0,30}"
 PAYMENT_PASS = re.compile(_PAIR + r"|" + _AMOUNT)
 
 # ============ term：采购与 NDA 词表真分列 + 白名单化（无泛「期限」） ============
-# 逐词说明见设计稿 §三③：金标期限语义域按品类各自成立，本批无共享词
+# 逐词说明见设计稿 §三③：金标期限语义域按品类各自成立，本批无共享词；
+# 生产基线保留表达零回退（外审 v1.6 阻断1：数字/中文数字日内完成交付族、
+# 本协议自…止、自签署之日起X年——后两者锚定「协议」，保密期限冒充仍被拒）
 _PROC_WORDS = r"(?:合同期限|履行期限|交付期限|供货服务期|供货期|服务期|租赁期限|租期|工期)"
 _NDA_WORDS = r"(?:协议期限|(?:合同|协议)有效期)"
+_PROC_BASELINE = (r"(?:\d+日内|\d+天内"
+                  r"|[一二三四五六七八九十]+个工作日内[^。，；,;\n\r]{0,8}(?:完成|交付|送货|到场|送装)"
+                  r"|工作日内[^。，；,;\n\r]{0,10}(?:完成|交付|送货|到场|送装)"
+                  r"|内完成(?:交付|送货|到场|送装))")
+_NDA_BASELINE = (r"(?:协议[^。，；,;\n\r]{0,6}自[^。]{0,15}日起?[^。]{0,15}至[^。]{0,15}止"
+                 r"|协议[^。，；,;\n\r]{0,4}自[^。]{0,10}起[^。]{0,8}(?:\d+|[一二三四五六七八九十]+)(?:年|个月|日))")
 _HEAD = r"(?:^|[。；，,;\n\r])[^。，；,;\n\r]{0,12}"
 _DATE_PROC = re.compile(_HEAD + _PROC_WORDS + r"[^。，；,;\n\r]{0,6}自[^。]{0,15}日起?[^。]{0,15}至[^。]{0,15}止")
 _DATE_NDA = re.compile(_HEAD + _NDA_WORDS + r"[^。，；,;\n\r]{0,6}自[^。]{0,15}日起?[^。]{0,15}至[^。]{0,15}止")
-TERM_PASS_PROC = re.compile(_HEAD + _PROC_WORDS)
-TERM_PASS_NDA = re.compile(_HEAD + _NDA_WORDS)
+TERM_PASS_PROC = re.compile(_HEAD + r"(?:" + _PROC_WORDS + r"|" + _PROC_BASELINE + r")")
+TERM_PASS_NDA = re.compile(_HEAD + r"(?:" + _NDA_WORDS + r"|" + _NDA_BASELINE + r")")
 
 # ============ signature pass 正向入口（配对窗口维持 [^。]，跨换行签署栏不受影响） ============
 SIGNATURE_PASS = re.compile(
@@ -145,14 +154,18 @@ _CASES: list[tuple[str, str, object, object]] = [
     ("赔偿上限反例", "赔偿总额以合同总价为限", PAYMENT_PASS.search, False),
     ("注册资本反例", "注册资本人民币 100 万元", PAYMENT_PASS.search, False),
     ("违约金金额反例", "乙方违约的，违约金金额为 5 万元", PAYMENT_PASS.search, False),
-    # --- term 采购（独立词表 + 交叉反例 v1.6 阻断2）
+    # --- term 采购（独立词表 + 交叉反例 + 基线零回退 v1.7 阻断1）
     ("采购合同期限日期正例", "合同期限自2026年1月1日起至2028年12月31日止", TERM_PASS_PROC.search, True),
     ("采购履行期限正例", "乙方履行期限为2026年6月30日", TERM_PASS_PROC.search, True),
     ("采购不收NDA词(交叉反例)", "本协议有效期一年", TERM_PASS_PROC.search, False),
-    # --- term NDA（独立词表 + 交叉反例）
+    ("基线数字日内(回退修复)", "甲方应在30日内完成交付", TERM_PASS_PROC.search, True),
+    ("基线中文数字工作日(回退修复)", "乙方应在十个工作日内完成交付", TERM_PASS_PROC.search, True),
+    # --- term NDA（独立词表 + 交叉反例 + 基线零回退）
     ("保密+协议同句", "保密期限三年，本协议有效期一年", TERM_PASS_NDA.search, True),
     ("本协议期限为三年", "本协议期限为三年", TERM_PASS_NDA.search, True),
     ("协议有效期正例", "本协议有效期一年", TERM_PASS_NDA.search, True),
+    ("基线日期区间无标签(回退修复)", "本协议自2026年1月1日起至2028年12月31日止", TERM_PASS_NDA.search, True),
+    ("基线自签署之日起(回退修复)", "本协议自签署之日起三年", TERM_PASS_NDA.search, True),
     ("NDA不收采购词(交叉反例)", "交付期限为三十日", TERM_PASS_NDA.search, False),
     ("保密期限日期区间(复现#3)", "保密期限自2026年1月1日起至2028年12月31日止", TERM_PASS_NDA.search, False),
     ("产品有效期冒充", "产品有效期不少于18个月", TERM_PASS_NDA.search, False),
