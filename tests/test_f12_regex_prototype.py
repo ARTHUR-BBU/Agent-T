@@ -43,7 +43,9 @@ def test_hit_neg_flags_wired() -> None:
     # 否定敏感命中（免除族）：前置否定 → 不构成命中
     assert proto.f2_verdicts("该约定不会免除其违约责任") == []
     # 非否定敏感命中（不承担违约族）：否定上下文检查跳过，命中照常记录
-    assert proto.f2_verdicts("任何一方不承担违约责任")[0][1] == "豁免"
+    # （本句无免责事由 → 豁免链不成立 → 触发需关注，证明否定检查确实被跳过：
+    #   若误做否定检查，「任何一方不」前缀会被误判否定而吞掉命中）
+    assert proto.f2_verdicts("任何一方不承担违约责任")[0][1] == "触发需关注"
 
 
 def test_double_negative_not_protected() -> None:
