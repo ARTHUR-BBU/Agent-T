@@ -1,9 +1,9 @@
-# F-1/F-2 修复第一批 · 任务设计稿（v1.9.1 工程闭环版，待审——v1.0~v1.9 全部作废，核心算法不动）
+# F-1/F-2 修复第一批 · 任务设计稿（v1.9.2 最小修正版，待审——核心算法与生产接入设计维持 v1.9.1 不动）
 
 > 2026-10-07 · 开发狗起草 · 依据：老钱金标 v2（docs/m65/f12-golden-ruling.md）+ 外审 v1.5 变异验证三阻断一黄项
 > **纪律：本设计过审前 YAML 一字不动**；原型脚本随版入库：tools/m65/f12_regex_prototype.py（**60/60 ALL GREEN**），断言已迁入 tests/test_f12_regex_prototype.py（CI pytest 直接执行）
 > v1.9→v1.9.1 工程闭环（外审两阻断，核心算法不动）：
-> ①五条历史事故样例改用公开入口 `term_proc_pass`（此前调 `_TERM_PROC.search` 只证明「无白名单标签」，不保护完整判定链）+ 结构断言（采购期限案例禁止调用内部零件）+ 护栏参与证明（候选正则确实命中 + 票头核对确实拦下，三条带动作冒充双断言）+ 生产匹配器契约预演 `match_procurement_term`（命中对象四键：matched/start/end/evidence/hit_type）
+> ①五条历史事故样例改用公开入口 `term_proc_pass`（此前调 `_TERM_PROC.search` 只证明「无白名单标签」，不保护完整判定链）+ 结构断言（采购期限案例独立成表 `_PROC_TERM_CASES`，全部 `fn is term_proc_pass` 逐条把关——绑定的 .search 方法每次访问生成新对象，`is` 抓不到违规，故改查 `__self__` 主人）+ **烟雾报警器元测试**（故意注入内部调用案例，检测器必须点名）+ 护栏参与证明（候选正则确实命中 + 票头核对确实拦下，三条带动作冒充双断言）+ 生产匹配器契约预演 `match_procurement_term`（命中对象五字段：matched/start/end/evidence/hit_type）
 > ②设计稿补两步匹配器生产接入：YAML `pass: - matcher: procurement_term`（注册表名白名单，禁动态导入）+ MATCHERS 注册表 + 命中对象四处复用（状态/quote/hits/兜底）+ 禁止 item.id 特例分支
 > ③记账：复现章节 46 断言+5 函数 → 60 场景断言+6 个 pytest 函数；施工流程 46→60
 > v1.8→v1.9 修订摘要（外审三阻断，采纳「票头核对」两步法推荐）：
@@ -89,12 +89,14 @@ payment 漏报 9→0；term 漏报 5→0；F-2 误报 4→0；signature 误报�
 MATCHERS = {"procurement_term": match_procurement_term}   # 预注册表，代码内维护
 ```
 
-**匹配器返回命中对象**（不是裸布尔——一次匹配，四处复用）：
+**匹配器返回命中对象**（不是裸布尔——一次匹配，四处复用；**五字段**，外审 v1.9.2 勘误）：
 
 ```python
 {"matched": bool, "start": int|None, "end": int|None,
  "evidence": str, "hit_type": "whitelist" | "unlabeled_numeric" | "none"}
 ```
+
+施工类型要求：生产实现用 `TypedDict`（或 frozen dataclass）强类型化，禁止生产代码到处使用无约束 `dict`；匹配器注册表遇到未知名字必须在**加载配置阶段明确报错**（不能静默返回不匹配）；同一次匹配结果沿当前检查项调用链传递，**禁止跨请求全局缓存**。
 
 **调用与复用方式**：
 - 状态判定：`hit["matched"]` → pass
@@ -127,6 +129,11 @@ MATCHERS = {"procurement_term": match_procurement_term}   # 预注册表，代�
 ## 七、验证方案（维持）
 
 设计过审 → 施工（YAML hit_alternatives + matcher 注册表结构 + 引擎编译函数/可选键）→ pytest 60 断言切换为调用生产匹配器 + 默认行为零变化变异证明 → 17 份真实合同全量重跑（payment 9→0、term 5→0、F-2 4→0、signature→0；subject 4+保密 1 挂账；零回退）→ 全量测试 + 生产长文本性能验收（时间上限在此补）→ 生产终验。
+
+## 七b、独立挂账（外审 v1.9.2 要求如实记账）
+
+- **E2E `href=None` 偶发失败**：v1.9.1 CI 首跑 `test_full_review_flow_renders_results` 导出按钮 href 未出现，同提交重跑成功——记为「疑似 flake」**不能记为已修复**；今日该家族已 4 次不同用例各挂一次，建议单开「E2E 稳定性专项」排查根因（时序/等待策略），不阻断本设计审批
+- 生产长文本性能时间上限、17 份合同回归：施工阶段验收（见 §七）
 
 ## 八、明确不做（维持）
 

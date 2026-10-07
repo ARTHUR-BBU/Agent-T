@@ -37,11 +37,31 @@ def test_stress_repeat_hits() -> None:
     proto._stress_repeat_hits()
 
 
+def _internal_caller_names(cases: list) -> list[str]:
+    """检测器：找出绕开公开入口、直接调用内部零件的案例名。"""
+    internal_parts = (proto._TERM_PROC, proto._PROC_BASELINE)
+    offenders = []
+    for name, _t, fn, _w in cases:
+        owner = getattr(fn, "__self__", None)
+        if owner in internal_parts or fn in internal_parts:
+            offenders.append(name)
+    return offenders
+
+
 def test_proc_term_cases_use_public_entry() -> None:
-    """结构断言（外审 v1.9.1 阻断1）：采购期限案例必须统一调用公开判定入口，
-    禁止直接调用 _TERM_PROC.search 等内部零件——内部零件回归不保护完整入口。"""
-    offenders = [name for name, _t, fn, _w in proto._CASES if fn is proto._TERM_PROC.search]
+    """结构断言（外审 v1.9.1 阻断1）：采购期限案例必须统一调用公开判定入口
+    term_proc_pass（独立成表、整函数身份比较——绑定的 .search 方法每次访问
+    生成新对象，`is` 抓不到违规，只有检查 __self__ 主人或整函数才可靠）。"""
+    offenders = _internal_caller_names(proto._PROC_TERM_CASES)
     assert not offenders, f"以下案例绕开公开入口: {offenders}"
+    assert all(fn is proto.term_proc_pass for _, _t, fn, _w in proto._PROC_TERM_CASES)
+
+
+def test_internal_call_detector_actually_fires() -> None:
+    """烟雾报警器测试（元测试反证）：故意注入违规案例，检测器必须点名它——
+    守门员装好后必须用测试烟确认真的会响。"""
+    bad_case = ("故意违规", "任意文本", proto._TERM_PROC.search, False)
+    assert _internal_caller_names([bad_case]) == ["故意违规"]
 
 
 def test_guardrail_participates() -> None:
@@ -54,7 +74,7 @@ def test_guardrail_participates() -> None:
 
 
 def test_matcher_contract() -> None:
-    """生产匹配器契约预演：一次匹配多处复用，命中对象四键齐备、类型可区分。"""
+    """生产匹配器契约预演：一次匹配多处复用，命中对象**五字段**齐备、类型可区分。"""
     hit_wl = proto.match_procurement_term("合同期限自2026年1月1日起至2028年12月31日止")
     assert hit_wl["matched"] and hit_wl["hit_type"] == "whitelist"
     assert hit_wl["evidence"] and hit_wl["start"] is not None and hit_wl["end"] is not None

@@ -154,7 +154,10 @@ SIGNATURE_PASS = re.compile(
     r"|(?:法定代表人|授权代表|委托代理人)\s*[:：][^。]{0,20}(?:（盖章）|\(盖章\))")
 
 # ============ 断言集 ============
-_CASES: list[tuple[str, str, object, object]] = [
+# 采购期限样例独立成表：全部必须调用公开判定入口 term_proc_pass（结构断言用
+# `fn is term_proc_pass` 逐条把关；外审 v1.9.1 阻断——绑定的 .search 方法
+# 每次访问生成新对象，`is` 比较抓不到违规，只有整函数身份比较可靠）
+_OTHER_CASES: list[tuple[str, str, object, object]] = [
     # --- F-2 历轮回归
     ("调换顺序(复现#1)", "任何一方因不可抗力不承担违约责任；乙方逾期交付的，免除乙方全部违约责任",
      f2_verdicts, [("不承担违约", "豁免"), ("免除乙方全部违约", "触发需关注")]),
@@ -194,12 +197,6 @@ _CASES: list[tuple[str, str, object, object]] = [
     ("赔偿上限反例", "赔偿总额以合同总价为限", PAYMENT_PASS.search, False),
     ("注册资本反例", "注册资本人民币 100 万元", PAYMENT_PASS.search, False),
     ("违约金金额反例", "乙方违约的，违约金金额为 5 万元", PAYMENT_PASS.search, False),
-    # --- term 采购（独立词表 + 交叉反例 + 基线零回退 v1.7 阻断1）
-    ("采购合同期限日期正例", "合同期限自2026年1月1日起至2028年12月31日止", _TERM_PROC.search, True),
-    ("采购履行期限正例", "乙方履行期限为2026年6月30日", _TERM_PROC.search, True),
-    ("采购不收NDA词(交叉反例)", "本协议有效期一年", _TERM_PROC.search, False),
-    ("基线数字日内(回退修复)", "甲方应在30日内完成交付", term_proc_pass, True),
-    ("基线中文数字工作日(回退修复)", "乙方应在十个工作日内完成交付", term_proc_pass, True),
     # --- term NDA（独立词表 + 交叉反例 + 基线零回退）
     ("保密+协议同句", "保密期限三年，本协议有效期一年", TERM_PASS_NDA.search, True),
     ("本协议期限为三年", "本协议期限为三年", TERM_PASS_NDA.search, True),
@@ -211,24 +208,36 @@ _CASES: list[tuple[str, str, object, object]] = [
     ("产品有效期冒充", "产品有效期不少于18个月", TERM_PASS_NDA.search, False),
     ("异议期限不算协议期限", "异议期限为七个工作日", TERM_PASS_NDA.search, False),
     ("付款期限不算协议期限(v1.6阻断3)", "付款期限为三十日", TERM_PASS_NDA.search, False),
-    ("索赔期限不算交付期限(v1.6阻断3)", "索赔期限为十日", _TERM_PROC.search, False),
-    ("两个工作日正例(v1.9)", "乙方应在两个工作日内完成交付", term_proc_pass, True),
-    ("两天内送货正例(v1.9)", "乙方应在两天内完成送货", term_proc_pass, True),
-    ("整改+验收冒充(v1.9阻断1)", "整改期限为5天内完成验收", term_proc_pass, False),
-    ("索赔+交付材料冒充(v1.9阻断1)", "索赔期限为10日内完成交付索赔材料", term_proc_pass, False),
-    ("举证+送货冒充(v1.9阻断1)", "举证期限为7日内完成送货证明提交", term_proc_pass, False),
     # --- 冒充期限回归组（v1.8 阻断：阿拉伯/中文数字双覆盖，单调增长不许删）
-    ("付款期限30日内冒充", "付款期限为30日内", term_proc_pass, False),
-    ("索赔期限10日内冒充", "索赔期限为10日内", term_proc_pass, False),
-    ("整改期限5天内冒充", "整改期限为5天内", term_proc_pass, False),
-    ("举证期限7日内冒充", "举证期限为7日内", term_proc_pass, False),
-    ("索赔完成冒充", "索赔期限为十个工作日内完成索赔", term_proc_pass, False),
-    # --- signature
     ("盖章+落款组合正例", "供方（盖章）：法定代表人：____", SIGNATURE_PASS.search, True),
     ("签署跨换行不受影响(阻断1附验)", "供方（盖章）：\n法定代表人：____", SIGNATURE_PASS.search, True),
     ("仅盖章孤行反例", "甲方（盖章）", SIGNATURE_PASS.search, False),
     ("主体介绍无盖章反例", "甲方：某科技有限公司，法定代表人：张三，住所地：北京市海淀区。", SIGNATURE_PASS.search, False),
 ]
+
+# 采购期限样例独立成表：全部必须调用公开判定入口 term_proc_pass——
+# 结构断言用 `fn is term_proc_pass` 逐条把关（绑定的 .search 方法每次访问
+# 生成新对象，`is` 比较抓不到违规——外审 v1.9.1 唯一阻断的根因）
+_PROC_TERM_CASES: list[tuple[str, str, object, object]] = [
+    ("采购合同期限标签正例", "合同期限自2026年1月1日起至2028年12月31日止", term_proc_pass, True),
+    ("采购履行期限标签正例", "乙方履行期限为2026年6月30日", term_proc_pass, True),
+    ("采购不收NDA词(交叉反例)", "本协议有效期一年", term_proc_pass, False),
+    ("基线数字日内(回退修复)", "甲方应在30日内完成交付", term_proc_pass, True),
+    ("基线中文数字工作日(回退修复)", "乙方应在十个工作日内完成交付", term_proc_pass, True),
+    ("索赔期限不算交付期限(v1.6阻断3)", "索赔期限为十日", term_proc_pass, False),
+    ("两个工作日正例(v1.9)", "乙方应在两个工作日内完成交付", term_proc_pass, True),
+    ("两天内送货正例(v1.9)", "乙方应在两天内完成送货", term_proc_pass, True),
+    ("整改+验收冒充(v1.9阻断1)", "整改期限为5天内完成验收", term_proc_pass, False),
+    ("索赔+交付材料冒充(v1.9阻断1)", "索赔期限为10日内完成交付索赔材料", term_proc_pass, False),
+    ("举证+送货冒充(v1.9阻断1)", "举证期限为7日内完成送货证明提交", term_proc_pass, False),
+    ("付款期限30日内冒充", "付款期限为30日内", term_proc_pass, False),
+    ("索赔期限10日内冒充", "索赔期限为10日内", term_proc_pass, False),
+    ("整改期限5天内冒充", "整改期限为5天内", term_proc_pass, False),
+    ("举证期限7日内冒充", "举证期限为7日内", term_proc_pass, False),
+    ("索赔完成冒充", "索赔期限为十个工作日内完成索赔", term_proc_pass, False),
+]
+
+_CASES: list[tuple[str, str, object, object]] = _PROC_TERM_CASES + _OTHER_CASES
 
 
 def _date_span_check() -> None:
