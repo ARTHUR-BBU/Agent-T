@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 
 _PROTO = Path(__file__).resolve().parents[1] / "tools" / "m65" / "f12_regex_prototype.py"
@@ -34,6 +35,33 @@ def test_date_branch_covers_full_range() -> None:
 def test_stress_repeat_hits() -> None:
     """300 处重复命中：窗口化搜索下判定正确（功能性下限；时间上限断言留生产验收）。"""
     proto._stress_repeat_hits()
+
+
+def test_proc_term_cases_use_public_entry() -> None:
+    """结构断言（外审 v1.9.1 阻断1）：采购期限案例必须统一调用公开判定入口，
+    禁止直接调用 _TERM_PROC.search 等内部零件——内部零件回归不保护完整入口。"""
+    offenders = [name for name, _t, fn, _w in proto._CASES if fn is proto._TERM_PROC.search]
+    assert not offenders, f"以下案例绕开公开入口: {offenders}"
+
+
+def test_guardrail_participates() -> None:
+    """护栏参与证明：候选入口确实命中、票头核对确实拦下（防候选未命中的假绿）。"""
+    for text in ("整改期限为5天内完成验收",
+                 "索赔期限为10日内完成交付索赔材料",
+                 "举证期限为7日内完成送货证明提交"):
+        assert re.search(proto._PROC_BASELINE, text), "候选入口未命中（护栏空转）"
+        assert not proto.term_proc_pass(text), "票头核对未拦截"
+
+
+def test_matcher_contract() -> None:
+    """生产匹配器契约预演：一次匹配多处复用，命中对象四键齐备、类型可区分。"""
+    hit_wl = proto.match_procurement_term("合同期限自2026年1月1日起至2028年12月31日止")
+    assert hit_wl["matched"] and hit_wl["hit_type"] == "whitelist"
+    assert hit_wl["evidence"] and hit_wl["start"] is not None and hit_wl["end"] is not None
+    hit_num = proto.match_procurement_term("甲方应在30日内完成交付")
+    assert hit_num["matched"] and hit_num["hit_type"] == "unlabeled_numeric"
+    miss = proto.match_procurement_term("付款期限为30日内")
+    assert miss["matched"] is False and miss["hit_type"] == "none"
 
 
 def test_hit_start_derived_from_authority() -> None:

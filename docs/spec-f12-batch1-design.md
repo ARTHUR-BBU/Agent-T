@@ -1,7 +1,11 @@
-# F-1/F-2 修复第一批 · 任务设计稿（v1.9，待审——v1.0~v1.8 全部作废）
+# F-1/F-2 修复第一批 · 任务设计稿（v1.9.1 工程闭环版，待审——v1.0~v1.9 全部作废，核心算法不动）
 
 > 2026-10-07 · 开发狗起草 · 依据：老钱金标 v2（docs/m65/f12-golden-ruling.md）+ 外审 v1.5 变异验证三阻断一黄项
 > **纪律：本设计过审前 YAML 一字不动**；原型脚本随版入库：tools/m65/f12_regex_prototype.py（**60/60 ALL GREEN**），断言已迁入 tests/test_f12_regex_prototype.py（CI pytest 直接执行）
+> v1.9→v1.9.1 工程闭环（外审两阻断，核心算法不动）：
+> ①五条历史事故样例改用公开入口 `term_proc_pass`（此前调 `_TERM_PROC.search` 只证明「无白名单标签」，不保护完整判定链）+ 结构断言（采购期限案例禁止调用内部零件）+ 护栏参与证明（候选正则确实命中 + 票头核对确实拦下，三条带动作冒充双断言）+ 生产匹配器契约预演 `match_procurement_term`（命中对象四键：matched/start/end/evidence/hit_type）
+> ②设计稿补两步匹配器生产接入：YAML `pass: - matcher: procurement_term`（注册表名白名单，禁动态导入）+ MATCHERS 注册表 + 命中对象四处复用（状态/quote/hits/兜底）+ 禁止 item.id 特例分支
+> ③记账：复现章节 46 断言+5 函数 → 60 场景断言+6 个 pytest 函数；施工流程 46→60
 > v1.8→v1.9 修订摘要（外审三阻断，采纳「票头核对」两步法推荐）：
 > ①出现采购动作仍洗白无关期限（整改/索赔/举证期限+完成验收/交付/送货）→ 无标签数字期限入口加**票头核对**：分句内存在 ××期限 且不以其结尾命中采购白名单 → 拒绝；不再枚举付款/索赔/整改黑名单
 > ②中文数字缺「两」致基线回退（两个工作日/两天）→ 统一权威数字子模式 `_NUMBER = (?:\d+|[零〇一二两三四五六七八九十百千万]+)`，期限/日期/基线规则共用一份（正反例不再两套数字表）
@@ -69,7 +73,37 @@ payment 漏报 9→0；term 漏报 5→0；F-2 误报 4→0；signature 误报�
 
 配对窗口维持 [^。]（跨换行签署栏不受 F-2 边界收紧影响，阻断①附验通过）。
 
-## 四、权力边界声明（维持）
+### ④b 采购期限两步判定的生产接入（外审 v1.9.1 阻断2：白名单匹配器注册表）
+
+**YAML 结构**（term 检查项 pass 节点引用预注册匹配器名，禁止从配置动态导入模块/函数路径）：
+
+```yaml
+- id: term
+  pass:
+    - matcher: procurement_term   # 只允许引用引擎 MATCHERS 注册表中预注册的名字
+```
+
+**引擎侧**（app/services/checklist.py）：
+
+```python
+MATCHERS = {"procurement_term": match_procurement_term}   # 预注册表，代码内维护
+```
+
+**匹配器返回命中对象**（不是裸布尔——一次匹配，四处复用）：
+
+```python
+{"matched": bool, "start": int|None, "end": int|None,
+ "evidence": str, "hit_type": "whitelist" | "unlabeled_numeric" | "none"}
+```
+
+**调用与复用方式**：
+- 状态判定：`hit["matched"]` → pass
+- quote/hits/证据区间：`hit["start"/"end"/"evidence"]`——`_rule_matches`/`_pass_matches`/`_extract_hits_from_rule`/`_extract_quote_from_rule` 共用这一次匹配结果，不再各自重扫
+- `hit_type` 进证据留痕（whitelist=标签路径 / unlabeled_numeric=无标签数字路径），供后续误报来源分析
+- **禁止**在 run_checklist 里按 `item.id == "term"` 写特例分支——两步判定全部封装在匹配器内部
+- 原型函数 `match_procurement_term`（tools/m65/f12_regex_prototype.py）即生产实现的契约预演；施工后 60 条断言切换为调用生产匹配器，原型降级为设计参考
+
+
 
 纯规则工程 + 引擎可选键/新结构（默认行为不变）。四层语义候选通道宪法边界不动；档位唯一来源 = 规则引擎 + 人工决定记录。
 
@@ -88,11 +122,11 @@ payment 漏报 9→0；term 漏报 5→0；F-2 误报 4→0；signature 误报�
 | signature ×4 | 组合/跨换行/孤行/主体介绍 |
 | 附加 | 日期区间覆盖断言；300 命中压力 |
 
-复现：`python -X utf8 tools/m65/f12_regex_prototype.py`（失败非零退出）**或直接 pytest（CI 已含，46 断言+5 函数）**。试跑为设计期原型；生产语义以施工+变异验证为准。
+复现：`python -X utf8 tools/m65/f12_regex_prototype.py`（失败非零退出）**或直接 pytest（CI 已含，60 场景断言+6 个 pytest 函数）**。试跑为设计期原型；生产语义以施工+变异验证为准。
 
 ## 七、验证方案（维持）
 
-设计过审 → 施工（YAML hit_alternatives 结构 + 引擎编译函数/可选键）→ pytest 46 断言切换为调用生产编译函数 + 默认行为零变化变异证明 → 17 份真实合同全量重跑（payment 9→0、term 5→0、F-2 4→0、signature→0；subject 4+保密 1 挂账；零回退）→ 全量测试 + 生产长文本性能验收（时间上限在此补）→ 生产终验。
+设计过审 → 施工（YAML hit_alternatives + matcher 注册表结构 + 引擎编译函数/可选键）→ pytest 60 断言切换为调用生产匹配器 + 默认行为零变化变异证明 → 17 份真实合同全量重跑（payment 9→0、term 5→0、F-2 4→0、signature→0；subject 4+保密 1 挂账；零回退）→ 全量测试 + 生产长文本性能验收（时间上限在此补）→ 生产终验。
 
 ## 八、明确不做（维持）
 

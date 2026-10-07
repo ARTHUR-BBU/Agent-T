@@ -124,19 +124,29 @@ def _clause_of(text: str, start: int, end: int) -> str:
     return text[lo + 1:hi]
 
 
-def term_proc_pass(text: str) -> bool:
-    """采购期限两步判定（外审 v1.9 推荐修法）：
-    第一步 白名单标签直接通过；第二步 无标签数字期限→采购动作链候选，
-    再核对分句「票头」——分句内存在 ××期限 且不属于采购白名单 → 拒绝。"""
-    if _TERM_PROC.search(text):
-        return True
-    for m in re.finditer(_PROC_BASELINE, text):
-        clause = _clause_of(text, m.start(), m.end())
+def match_procurement_term(text: str) -> dict:
+    """生产匹配器契约预演（注册表名 procurement_term）：
+    一次匹配，返回命中对象——状态判定/quote/hits/全文兜底四处复用同一结果，
+    不允许同一规则被扫三遍（外审 v1.9.1 阻断2）。YAML 只能引用预注册名，
+    禁止从配置动态导入模块或函数路径。"""
+    m = _TERM_PROC.search(text)
+    if m:
+        return {"matched": True, "start": m.start(), "end": m.end(),
+                "evidence": m.group(), "hit_type": "whitelist"}
+    for m2 in re.finditer(_PROC_BASELINE, text):
+        clause = _clause_of(text, m2.start(), m2.end())
         bad_head = any(not any(name.endswith(w) for w in _PROC_NAME_LIST)
                        for name in _TERM_NAME_SPAN.findall(clause))
         if not bad_head:
-            return True
-    return False
+            return {"matched": True, "start": m2.start(), "end": m2.end(),
+                    "evidence": m2.group(), "hit_type": "unlabeled_numeric"}
+    return {"matched": False, "start": None, "end": None,
+            "evidence": "", "hit_type": "none"}
+
+
+def term_proc_pass(text: str) -> bool:
+    """公开判定入口（测试与生产统一走此入口，不许测内部零件）。"""
+    return match_procurement_term(text)["matched"]
 
 # ============ signature pass 正向入口（配对窗口维持 [^。]，跨换行签署栏不受影响） ============
 SIGNATURE_PASS = re.compile(
@@ -208,11 +218,11 @@ _CASES: list[tuple[str, str, object, object]] = [
     ("索赔+交付材料冒充(v1.9阻断1)", "索赔期限为10日内完成交付索赔材料", term_proc_pass, False),
     ("举证+送货冒充(v1.9阻断1)", "举证期限为7日内完成送货证明提交", term_proc_pass, False),
     # --- 冒充期限回归组（v1.8 阻断：阿拉伯/中文数字双覆盖，单调增长不许删）
-    ("付款期限30日内冒充", "付款期限为30日内", _TERM_PROC.search, False),
-    ("索赔期限10日内冒充", "索赔期限为10日内", _TERM_PROC.search, False),
-    ("整改期限5天内冒充", "整改期限为5天内", _TERM_PROC.search, False),
-    ("举证期限7日内冒充", "举证期限为7日内", _TERM_PROC.search, False),
-    ("索赔完成冒充", "索赔期限为十个工作日内完成索赔", _TERM_PROC.search, False),
+    ("付款期限30日内冒充", "付款期限为30日内", term_proc_pass, False),
+    ("索赔期限10日内冒充", "索赔期限为10日内", term_proc_pass, False),
+    ("整改期限5天内冒充", "整改期限为5天内", term_proc_pass, False),
+    ("举证期限7日内冒充", "举证期限为7日内", term_proc_pass, False),
+    ("索赔完成冒充", "索赔期限为十个工作日内完成索赔", term_proc_pass, False),
     # --- signature
     ("盖章+落款组合正例", "供方（盖章）：法定代表人：____", SIGNATURE_PASS.search, True),
     ("签署跨换行不受影响(阻断1附验)", "供方（盖章）：\n法定代表人：____", SIGNATURE_PASS.search, True),
@@ -236,6 +246,16 @@ def _stress_repeat_hits() -> None:
     t = "乙方逾期交付的，免除乙方全部违约责任。" * 300
     v = f2_verdicts(t)
     assert len(v) == 300 and all(x[1] == "触发需关注" for x in v), "压力样本判定错误"
+
+
+def _guardrail_participates() -> None:
+    """护栏参与证明（外审 v1.9.1）：候选正则确实命中、票头核对确实拦下——
+    防「候选根本没匹配所以碰巧通过」的假绿。"""
+    for name, text in (("整改+验收", "整改期限为5天内完成验收"),
+                       ("索赔+交付材料", "索赔期限为10日内完成交付索赔材料"),
+                       ("举证+送货", "举证期限为7日内完成送货证明提交")):
+        assert _PROC_BASELINE.search(text), f"{name}: 候选入口未命中（护栏空转）"
+        assert not term_proc_pass(text), f"{name}: 票头核对未拦截"
 
 
 def main() -> None:
