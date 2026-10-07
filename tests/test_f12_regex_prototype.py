@@ -36,6 +36,16 @@ def test_stress_repeat_hits_linear() -> None:
     proto._stress_repeat_hits()
 
 
+def test_hit_neg_flags_wired() -> None:
+    """neg_sensitive 三元组字段必须控制行为（外审 #91 黄项）：逐 alt 编译+旗标接线。"""
+    assert proto._HIT_NEG_FLAGS == [neg for _, _, neg in proto._HIT_ALTS]
+    assert any(proto._HIT_NEG_FLAGS) and not all(proto._HIT_NEG_FLAGS)
+    # 否定敏感命中（免除族）：前置否定 → 不构成命中
+    assert proto.f2_verdicts("该约定不会免除其违约责任") == []
+    # 非否定敏感命中（不承担违约族）：否定上下文检查跳过，命中照常记录
+    assert proto.f2_verdicts("任何一方不承担违约责任")[0][1] == "豁免"
+
+
 def test_double_negative_not_protected() -> None:
     """双重否定（不得不放弃）不构成保护——专防保护面再次过宽。"""
     t1 = "乙方不得不放弃追究"
