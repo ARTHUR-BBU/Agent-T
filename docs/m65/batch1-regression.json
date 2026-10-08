@@ -4,13 +4,13 @@
       "file": "gov-procurement-goods-mof-2024.docx",
       "category": "procurement",
       "diffs": {
-        "term": {
-          "was": "通过",
-          "now": "未找到"
-        },
         "breach": {
           "was": "需关注",
           "now": "通过"
+        },
+        "term": {
+          "was": "通过",
+          "now": "未找到"
         }
       },
       "extra_flips": {},
@@ -34,6 +34,10 @@
       "file": "school-uniform-procurement-guangzhou.docx",
       "category": "procurement",
       "diffs": {
+        "term": {
+          "was": "通过",
+          "now": "未找到"
+        },
         "payment": {
           "was": "未找到",
           "now": "通过"
@@ -44,7 +48,7 @@
         "subject": "通过",
         "subject_matter": "通过",
         "payment": "通过",
-        "term": "通过",
+        "term": "未找到",
         "breach": "通过",
         "confidentiality": "未找到",
         "ip": "通过",
@@ -63,10 +67,6 @@
         "payment": {
           "was": "未找到",
           "now": "通过"
-        },
-        "term": {
-          "was": "未找到",
-          "now": "通过"
         }
       },
       "extra_flips": {},
@@ -74,7 +74,7 @@
         "subject": "通过",
         "subject_matter": "未找到",
         "payment": "通过",
-        "term": "通过",
+        "term": "未找到",
         "breach": "通过",
         "confidentiality": "未找到",
         "ip": "未找到",
@@ -188,16 +188,16 @@
       "file": "agri-produce-sale-samr-2025.docx",
       "category": "procurement",
       "diffs": {
-        "payment": {
-          "was": "未找到",
-          "now": "通过"
-        },
         "breach": {
           "was": "需关注",
           "now": "通过"
         },
         "signature": {
           "was": "需关注",
+          "now": "通过"
+        },
+        "payment": {
+          "was": "未找到",
           "now": "通过"
         }
       },
@@ -269,12 +269,16 @@
       "file": "construction-work-contract-2017.docx",
       "category": "procurement",
       "diffs": {
-        "payment": {
-          "was": "未找到",
-          "now": "通过"
-        },
         "breach": {
           "was": "需关注",
+          "now": "通过"
+        },
+        "term": {
+          "was": "通过",
+          "now": "未找到"
+        },
+        "payment": {
+          "was": "未找到",
           "now": "通过"
         }
       },
@@ -283,7 +287,7 @@
         "subject": "通过",
         "subject_matter": "通过",
         "payment": "通过",
-        "term": "通过",
+        "term": "未找到",
         "breach": "通过",
         "confidentiality": "通过",
         "ip": "通过",
@@ -299,12 +303,16 @@
       "file": "energy-hosting-service-2026.docx",
       "category": "procurement",
       "diffs": {
-        "payment": {
-          "was": "未找到",
-          "now": "通过"
-        },
         "signature": {
           "was": "需关注",
+          "now": "通过"
+        },
+        "term": {
+          "was": "通过",
+          "now": "未找到"
+        },
+        "payment": {
+          "was": "未找到",
           "now": "通过"
         }
       },
@@ -313,7 +321,7 @@
         "subject": "通过",
         "subject_matter": "未找到",
         "payment": "通过",
-        "term": "通过",
+        "term": "未找到",
         "breach": "通过",
         "confidentiality": "通过",
         "ip": "通过",
@@ -332,10 +340,6 @@
         "payment": {
           "was": "未找到",
           "now": "通过"
-        },
-        "term": {
-          "was": "未找到",
-          "now": "通过"
         }
       },
       "extra_flips": {},
@@ -343,7 +347,7 @@
         "subject": "通过",
         "subject_matter": "未找到",
         "payment": "通过",
-        "term": "通过",
+        "term": "未找到",
         "breach": "通过",
         "confidentiality": "未找到",
         "ip": "未找到",
@@ -405,20 +409,16 @@
       "file": "mandate-contract-samr-2025.docx",
       "category": "procurement",
       "diffs": {
-        "payment": {
-          "was": "未找到",
-          "now": "通过"
-        },
-        "term": {
-          "was": "未找到",
-          "now": "通过"
-        },
         "breach": {
           "was": "需关注",
           "now": "通过"
         },
         "signature": {
           "was": "需关注",
+          "now": "通过"
+        },
+        "payment": {
+          "was": "未找到",
           "now": "通过"
         }
       },
@@ -427,7 +427,7 @@
         "subject": "通过",
         "subject_matter": "未找到",
         "payment": "通过",
-        "term": "通过",
+        "term": "未找到",
         "breach": "通过",
         "confidentiality": "通过",
         "ip": "通过",
@@ -446,10 +446,6 @@
         "payment": {
           "was": "未找到",
           "now": "通过"
-        },
-        "term": {
-          "was": "未找到",
-          "now": "通过"
         }
       },
       "extra_flips": {},
@@ -457,7 +453,7 @@
         "subject": "通过",
         "subject_matter": "未找到",
         "payment": "通过",
-        "term": "通过",
+        "term": "未找到",
         "breach": "未找到",
         "confidentiality": "未找到",
         "ip": "未找到",

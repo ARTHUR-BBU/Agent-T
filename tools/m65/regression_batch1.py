@@ -32,8 +32,20 @@ from tools.m65.analyze_f12 import _full_text  # noqa: E402
 # 17 份官方语料是本批回归的固定盘点（金标裁决材料集）；新增合同必须
 # 显式改这个数并同步 run1/run2 基线——防「悄悄少了合同也全绿」
 EXPECTED_CONTRACTS = 17
-# 本批授权观察的检查项（状态变化人工对照金标裁决）；此外任何翻转都击穿门禁
+# 本批授权观察的检查项（粗口径，供汇总展示）；此外任何翻转都击穿门禁
 AUTHORIZED_TARGET = frozenset({"payment", "term", "breach", "signature"})
+# P2 锚定精确白名单（用户补充⑤）：term 整体放行太宽——写死到
+# 「哪份合同的哪个项允许从什么翻成什么」。term 其余翻转、其余合同、
+# 所有非靶向项：任何变化均击穿门禁。
+# 4 份均经老钱口径验尸实锤为「标签在、值空白」的范本留白（spec-p2 §一改账）：
+# school=「自生效之日起＿年」、gov=期限在专用条款留空、construction=「工期总日历＿天」、
+# energy=服务期限栏空白。mandate 基线本即未找到，无翻转（施工卡汇报误计，已勘正）。
+AUTHORIZED_FLIPS = frozenset({
+    ("school-uniform-procurement-guangzhou.docx", "term", "通过", "未找到"),
+    ("gov-procurement-goods-mof-2024.docx", "term", "通过", "未找到"),
+    ("construction-work-contract-2017.docx", "term", "通过", "未找到"),
+    ("energy-hosting-service-2026.docx", "term", "通过", "未找到"),
+})
 
 
 def _baseline() -> dict[str, dict[str, str]]:
@@ -75,7 +87,15 @@ def run_regression(out_path: str | None) -> tuple[int, dict]:
         # 「检查项被删/改名后基线独有的键」——删除无关项也全绿的盲区
         diffs = {k: (old.get(k), now.get(k))
                  for k in old.keys() | now.keys() if old.get(k) != now.get(k)}
-        extra = {k: v for k, v in diffs.items() if k not in AUTHORIZED_TARGET}
+        extra = {}
+        for k, v in diffs.items():
+            if k not in AUTHORIZED_TARGET:
+                extra[k] = v
+                continue
+            # 精确白名单（P2 补充⑤）仅约束 term：翻转必须命中 (file,item,was,now) 四元组；
+            # payment/breach/signature 维持粗口径（历史授权翻转对照 run 基线）
+            if k == "term" and (fname, k, v[0], v[1]) not in AUTHORIZED_FLIPS:
+                extra[k] = v
         flipped_non_target += len(extra)
         rows.append({
             "file": fname, "category": category,
