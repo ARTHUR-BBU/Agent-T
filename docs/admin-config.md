@@ -55,6 +55,8 @@
 |--------|----------------|
 | 同义/近义组 | YAML 里 `rules.need_attention` / `pass` 的 `any_of`、`unless` |
 | 匹配逻辑 | `app/services/checklist.py`（`any_of` / `all_of` / `unless` / `none_of`） |
+| 复合匹配器 | YAML 写 `matcher: 注册名`（如 `procurement_term`），引擎在 `_MATCHERS` 注册表查找；未知名字加载配置时直接报错，YAML 禁止写模块/函数路径 |
+| 逐条豁免判定 | `hit_alternatives`（每条三元组 `pattern`/`start_token`/`neg_sensitive`）+ `unless_window`——breach 对等豁免门专用，见 F-2 设计稿 |
 | 对抗样例回归 | `fixtures/procurement_*.txt` + `tests/test_procurement_*.py` |
 
 要点：
