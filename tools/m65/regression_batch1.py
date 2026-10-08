@@ -127,6 +127,21 @@ def run_regression(out_path: str | None) -> tuple[int, dict]:
     print("=" * 70)
     print(f"靶向四项之外翻转数（零回退红线，非 0 即退出码 1）: {flipped_non_target}")
 
+    # 授权翻转正向断言（外审 P2 #94 销项③）：白名单翻转必须**确实发生**——
+    # 只拦非法翻转的话，未来回归把四份合同改回「通过」会产生零 diff 溜过门禁。
+    # live 现状必须等于授权的 now 状态（term=未找到）。
+    live = {r["file"]: r["live"] for r in rows}
+    authorize_fail = 0
+    for fname, item_id, _was, now in sorted(AUTHORIZED_FLIPS):
+        actual = live.get(fname, {}).get(item_id)
+        if actual != now:
+            authorize_fail += 1
+            print(f"🔴 授权翻转缺失：{fname} {item_id} 现状 {actual} ≠ 授权终态 {now}"
+                  f"（回归回退了锚定口径，门禁拦截）")
+        else:
+            print(f"✅ 授权翻转在场: {fname[:40]} {item_id} = {now}")
+    flipped_non_target += authorize_fail
+
     report = {"rows": rows, "flipped_non_target": flipped_non_target}
     if out_path:
         Path(out_path).write_text(

@@ -69,7 +69,9 @@ _PROC_BASELINE = (
     _PROC_NUMBER + r"(?:日内|天内|个工作日内)"
     r"[^。，；,;\n\r]{0,20}(?:完成交付|完成送货|完成安装|完成验收|交付|送货|到场|送装|到货)"
 )
-_PROC_LABELED = re.compile(r"(?:^|[。；，,;\n\r])[^。，；,;\n\r]{0,12}" + _PROC_TERM_COMPOUNDS)
+# label 捕获组（外审 P2 #94 销项②）：锚定窗口从标签本体起算——_HEAD 前缀
+# 里的「2026年版」等不得为空白标签背书实质证据
+_PROC_LABELED = re.compile(r"(?:^|[。；，,;\n\r])[^。，；,;\n\r]{0,12}(?P<label>" + _PROC_TERM_COMPOUNDS + r")")
 _PROC_NAME_SPAN = re.compile(r"[一-龥]{0,4}期限")
 
 # ---- P2 期限实质锚定（老钱裁定 2026-10-08 + 签字 2026-10-09，spec-p2-term-anchoring.md）----
@@ -146,10 +148,11 @@ def _match_procurement_term(text: str) -> MatchResult:
     """
     classified: list[tuple[str, int, int, str]] = []  # (分类, start, end, 引句)
     for m in _PROC_LABELED.finditer(text):
-        window = _clause_window(text, m.start())
+        # 窗口从标签本体起（外审 P2 #94 销项②：_HEAD 前缀日期不得背书空白标签）
+        window = _clause_window(text, m.start("label"))
         cls = _classify_label_clause(window)
         quote = window[:40]
-        classified.append((cls, m.start(), m.start() + len(window), quote))
+        classified.append((cls, m.start("label"), m.start("label") + len(window), quote))
     has_unlabeled: tuple[int, int, str] | None = None
     for m2 in re.finditer(_PROC_BASELINE, text):
         clause = _clause_of(text, m2.start(), m2.end())
@@ -545,6 +548,8 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
                 "hits": _hits_for_rule(text, rule, evidence),
                 "evidence_start": evidence["start"],
                 "evidence_end": evidence["end"],
+                # P2 期限锚定：有实质期限但另有独立空白条款 → 非阻断旗标透传
+                "blank_flag": bool(evidence.get("blank_flag")),
                 "rule_id": f"{item['id']}#p{n}",
                 "rule_class": _rule_class(rule, item),
             }
@@ -622,7 +627,9 @@ def _first_unprotected_occurrence(text: str, rule: dict[str, Any]) -> Optional[d
         if require and res.hit_type not in require:
             return None
         return {"start": res.start, "end": res.end, "text": res.evidence,
-                "pattern": f"matcher:{rule['matcher']}", "hit_type": res.hit_type}
+                "pattern": f"matcher:{rule['matcher']}", "hit_type": res.hit_type,
+                # 非阻断空白旗标（P2）：pass 分支透传到 item 结果
+                "blank_flag": res.blank_flag}
     if "hit_alternatives" in rule:
         return _first_unprotected_hit_alt(text, rule)
     top = {k: rule[k] for k in ("pattern", "any_of", "all_of") if k in rule}

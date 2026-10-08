@@ -87,3 +87,13 @@ def test_gate_blocks_contract_count_drift(monkeypatch) -> None:
     monkeypatch.setattr(reg, "_load_manifest", lambda: drifted)
     rc, _ = reg.run_regression(None)
     assert rc == 1
+
+def test_gate_requires_authorized_flip_present() -> None:
+    """授权翻转正向断言（外审 P2 #94 销项③）：四份白名单合同的 term 必须
+    为未找到——未来回归把它们改回「通过」产生零 diff 时，门禁的正向检查
+    也会拦（run_regression 对 AUTHORIZED_FLIPS 逐条核对 live 终态）。"""
+    rc, report = reg.run_regression(None)
+    assert rc == 0
+    for fname, item_id, _was, now in reg.AUTHORIZED_FLIPS:
+        row = next(r for r in report["rows"] if r["file"] == fname)
+        assert row["live"][item_id] == now, f"{fname} {item_id} 应为 {now}"

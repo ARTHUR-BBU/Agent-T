@@ -106,7 +106,7 @@ _NDA_BASELINE = (r"(?:协议[^。，；,;\n\r]{0,6}自[^。]{0,15}日起?[^。]{
 _HEAD = r"(?:^|[。；，,;\n\r])[^。，；,;\n\r]{0,12}"
 _DATE_PROC = re.compile(_HEAD + _PROC_WORDS + r"[^。，；,;\n\r]{0,6}自[^。]{0,15}日起?[^。]{0,15}至[^。]{0,15}止")
 _DATE_NDA = re.compile(_HEAD + _NDA_WORDS + r"[^。，；,;\n\r]{0,6}自[^。]{0,15}日起?[^。]{0,15}至[^。]{0,15}止")
-_TERM_PROC = re.compile(_HEAD + r"(?:" + _PROC_WORDS + r")")
+_TERM_PROC = re.compile(_HEAD + r"(?P<label>" + _PROC_WORDS + r")")
 TERM_PASS_NDA = re.compile(_HEAD + r"(?:" + _NDA_WORDS + r"|" + _NDA_BASELINE + r")")
 
 # 采购白名单期限名（票头核对用：分句内发现的 ××期限 必须以其结尾命中本表才算采购归属）
@@ -172,9 +172,10 @@ def match_procurement_term(text: str) -> dict:
     pending > anchored/unlabeled > blank > none。"""
     classified: list[tuple[str, int, int, str]] = []
     for m in _TERM_PROC.finditer(text):
-        window = _clause_window(text, m.start())
+        # 窗口从标签本体起（外审 P2 #94 销项②：_HEAD 前缀日期不得背书空白标签）
+        window = _clause_window(text, m.start("label"))
         cls = _classify_label_clause(window)
-        classified.append((cls, m.start(), m.start() + len(window), window[:40]))
+        classified.append((cls, m.start("label"), m.start("label") + len(window), window[:40]))
     has_unlabeled: tuple[int, int, str] | None = None
     for m2 in re.finditer(_PROC_BASELINE, text):
         clause = _clause_of(text, m2.start(), m2.end())
@@ -324,6 +325,7 @@ _PROC_TERM_CASES: list[tuple[str, str, object, object]] = [
     ("混合占位(X2相邻反例)", "交付期限：2026＿年 5 月前", term_proc_pass, False),
     ("正文单空格不误判(相邻反例守卫)", "履行期限：乙方应在交付后 3 日内结清余款", term_proc_pass, True),
     ("无标签数字链路存量保护(老钱签字前置)", "乙方应在30日内完成交付", term_proc_pass, True),
+    ("前缀日期不背书空白标签(外审P2销项②)", "2026年版合同期限：", term_proc_pass, False),
 ]
 
 _CASES: list[tuple[str, str, object, object]] = _PROC_TERM_CASES + _OTHER_CASES

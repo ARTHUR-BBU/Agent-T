@@ -94,6 +94,9 @@ class ChecklistItemResult(BaseModel):
     claim_content_hash: str = ""  # 内容指纹（说明文字漂移检测）
     evidence_refs: list[EvidenceEdgeInfo] = Field(default_factory=list)
     evidence: Optional[EvidenceRefInfo] = None
+    # P2 期限锚定（老钱裁定）：非阻断空白旗标——有实质期限但另有独立空白
+    # 占位条款时为 True（前端提示「检测到期限条款但时长留白」）；默认 False
+    blank_flag: bool = False
 
 
 class BlindCandidate(BaseModel):
