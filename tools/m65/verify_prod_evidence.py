@@ -42,7 +42,12 @@ def _status_digest(status_map: dict[str, str]) -> str:
 
 
 def _load_credentials(path: Path) -> tuple[str, tuple[str, str]]:
-    """读凭据文件 → (BASE_URL, basic auth)。只进内存。"""
+    """读凭据文件 → (BASE_URL, basic auth)。只进内存。
+
+    URL 保全红线（外审 P1）：保留凭据文件的完整 URL（只去末尾 /），
+    不得重写协议或端口——隐式降级到 http://host:8080 会在启用 HTTPS/
+    反向代理/非默认端口时连错服务，并以明文发送 Basic Auth。
+    只接受 http/https，其他协议立即失败。"""
     cred: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         if "=" in line:
@@ -52,8 +57,27 @@ def _load_credentials(path: Path) -> tuple[str, tuple[str, str]]:
     missing = [k for k in _CRED_KEYS if k not in cred]
     if missing:
         raise ValueError(f"凭据文件缺键: {missing}")
-    host = cred["url"].replace("https://", "").replace("http://", "").split(":")[0]
-    return f"http://{host}:8080", (cred["user"], cred["password"])
+    url = cred["url"].strip().rstrip("/")
+    if not (url.startswith("http://") or url.startswith("https://")):
+        raise ValueError("凭据 url 协议必须是 http:// 或 https://（拒绝隐式降级或陌生协议）")
+    return url, (cred["user"], cred["password"])
+
+
+def live_refetch(entries: list[dict], base: str, auth: tuple[str, str],
+                 fails: list[str]) -> dict[str, dict[str, str]]:
+    """逐条 GET 生产审查记录，返回 file -> 状态表；异常记入 fails。"""
+    live: dict[str, dict[str, str]] = {}
+    for e in entries:
+        r = requests.get(f"{base}/api/review/{e['review_id']}", auth=auth, timeout=60)
+        if r.status_code != 200:
+            fails.append(f"{e['filename']}: 在线复核 HTTP {r.status_code}")
+            continue
+        d = r.json()
+        if d.get("status") != "done":
+            fails.append(f"{e['filename']}: 生产现状 status={d.get('status')} ≠ done")
+            continue
+        live[e["filename"]] = {i["id"]: i["status"] for i in d["items"]}
+    return live
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -94,23 +118,17 @@ def main(argv: list[str] | None = None) -> int:
     if pkg.get("deploy_version") != DEPLOY_VERSION:
         fails.append(f"证据包版本 {pkg.get('deploy_version')} ≠ {DEPLOY_VERSION}")
 
-    # --live：在线复核准备（凭据只进内存）
+    # --live：在线复核准备（凭据只进内存；URL 原样使用不降级）
     live_status: dict[str, dict[str, str]] = {}
     if args.live:
         if not args.credentials:
             fails.append("--live 需要 --credentials 凭据文件路径")
         else:
-            base, auth = _load_credentials(Path(args.credentials))
-            for e in entries:
-                r = requests.get(f"{base}/api/review/{e['review_id']}", auth=auth, timeout=60)
-                if r.status_code != 200:
-                    fails.append(f"{e['filename']}: 在线复核 HTTP {r.status_code}")
-                    continue
-                d = r.json()
-                if d.get("status") != "done":
-                    fails.append(f"{e['filename']}: 生产现状 status={d.get('status')} ≠ done")
-                    continue
-                live_status[e["filename"]] = {i["id"]: i["status"] for i in d["items"]}
+            try:
+                base, auth = _load_credentials(Path(args.credentials))
+                live_status = live_refetch(entries, base, auth, fails)
+            except ValueError as exc:
+                fails.append(str(exc))
 
     ok = 0
     for e in entries:
