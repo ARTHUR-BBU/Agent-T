@@ -96,7 +96,7 @@ PAYMENT_PASS = re.compile(_PAIR + r"|" + _AMOUNT)
 # v1.9（外审）：①统一权威数字子模式 _NUMBER（阿拉伯+中文含「两」，正反例共用一份）；
 # ②无标签数字期限入口加「票头核对」——分句内存在 ××期限 且不属于采购白名单
 #   （付款期限/索赔期限/整改期限/举证期限…）→ 拒绝，不再枚举黑名单。
-_PROC_WORDS = r"(?:合同期限|履行期限|交付期限|供货服务期|供货期|服务期|租赁期限|租期|工期)"
+_PROC_WORDS = r"(?:合同期限|履行期限|履行期|交付期限|供货服务期|供货期|服务期|租赁期限|租期|工期|委托期限)"
 _NDA_WORDS = r"(?:协议期限|(?:合同|协议)有效期)"
 _NUMBER = r"(?:\d+|[零〇一二两三四五六七八九十百千万]+)"
 _PROC_BASELINE = (_NUMBER + r"(?:日内|天内|个工作日内)"
@@ -110,8 +110,8 @@ _TERM_PROC = re.compile(_HEAD + r"(?:" + _PROC_WORDS + r")")
 TERM_PASS_NDA = re.compile(_HEAD + r"(?:" + _NDA_WORDS + r"|" + _NDA_BASELINE + r")")
 
 # 采购白名单期限名（票头核对用：分句内发现的 ××期限 必须以其结尾命中本表才算采购归属）
-_PROC_NAME_LIST = ("合同期限", "履行期限", "交付期限", "供货服务期", "供货期",
-                   "服务期", "租赁期限", "租期", "工期")
+_PROC_NAME_LIST = ("合同期限", "履行期限", "履行期", "交付期限", "供货服务期", "供货期",
+                   "服务期", "租赁期限", "租期", "工期", "委托期限")
 _TERM_NAME_SPAN = re.compile(r"[一-龥]{0,4}期限")
 _CLAUSE_SEPS = "。；，,;\n\r"
 
@@ -149,8 +149,10 @@ def term_proc_pass(text: str) -> bool:
     return match_procurement_term(text)["matched"]
 
 # ============ signature pass 正向入口（配对窗口维持 [^。]，跨换行签署栏不受影响） ============
+# 正向不锚左括号与角色后冒号（17 份回归实证三形态：签名/盖章）、
+# （盖章）：\n法定代表人 / 委托代理人（签名）：、（盖章）\n法定代表人/授权代表:）
 SIGNATURE_PASS = re.compile(
-    r"(?:（盖章）|\(盖章\))[^。]{0,30}(?:法定代表人|授权代表|委托代理人)\s*[:：]"
+    r"盖章\)?[^。]{0,40}(?:法定代表人|授权代表|委托代理人)"
     r"|(?:法定代表人|授权代表|委托代理人)\s*[:：][^。]{0,20}(?:（盖章）|\(盖章\))")
 
 # ============ 断言集 ============
@@ -211,6 +213,8 @@ _OTHER_CASES: list[tuple[str, str, object, object]] = [
     # --- 冒充期限回归组（v1.8 阻断：阿拉伯/中文数字双覆盖，单调增长不许删）
     ("盖章+落款组合正例", "供方（盖章）：法定代表人：____", SIGNATURE_PASS.search, True),
     ("签署跨换行不受影响(阻断1附验)", "供方（盖章）：\n法定代表人：____", SIGNATURE_PASS.search, True),
+    ("角色斜杠落款行(energy形态)", "甲方（盖章）：\n法定代表人 / 委托代理人（签名）：\n日期：", SIGNATURE_PASS.search, True),
+    ("签名斜杠盖章落款(agri形态)", "甲方（签名/盖章）：               乙方（签名/盖章）：\n法定代表人：                      法定代表人：", SIGNATURE_PASS.search, True),
     ("仅盖章孤行反例", "甲方（盖章）", SIGNATURE_PASS.search, False),
     ("主体介绍无盖章反例", "甲方：某科技有限公司，法定代表人：张三，住所地：北京市海淀区。", SIGNATURE_PASS.search, False),
 ]
@@ -235,6 +239,10 @@ _PROC_TERM_CASES: list[tuple[str, str, object, object]] = [
     ("整改期限5天内冒充", "整改期限为5天内", term_proc_pass, False),
     ("举证期限7日内冒充", "举证期限为7日内", term_proc_pass, False),
     ("索赔完成冒充", "索赔期限为十个工作日内完成索赔", term_proc_pass, False),
+    # --- 17 份真实合同回归（批1施工验收）暴露的三面
+    ("合同履行期标签(school-uniform)", "合同履行期自生效之日起三年，至2028年12月31日止", term_proc_pass, True),
+    ("委托期限标签(mandate坐实)", "第三条 委托期限", term_proc_pass, True),
+    ("担保期限不算交付期限(gov范本)", "履约担保期限：合同签订后30日内", term_proc_pass, False),
 ]
 
 _CASES: list[tuple[str, str, object, object]] = _PROC_TERM_CASES + _OTHER_CASES

@@ -59,7 +59,7 @@ def _register_matcher(name: str) -> Callable[[Callable[[str], MatchResult]], Cal
 # ---- procurement_term：采购期限两步判定（金标 v2，原型 v1.9.2 移植） ----
 # 词表单一权威 = tools/m65/f12_regex_prototype.py（原型为设计期演示入口，
 # 施工后正式测试调用本生产匹配器；两处口径以本文件为准，原型表迁移对齐）
-_PROC_TERM_COMPOUNDS = r"(?:合同期限|履行期限|交付期限|供货服务期|供货期|服务期|租赁期限|租期|工期)"
+_PROC_TERM_COMPOUNDS = r"(?:合同期限|履行期限|履行期|交付期限|供货服务期|供货期|服务期|租赁期限|租期|工期|委托期限)"
 _PROC_NUMBER = r"(?:\d+|[零〇一二两三四五六七八九十百千万]+)"
 _PROC_BASELINE = (
     _PROC_NUMBER + r"(?:日内|天内|个工作日内)"
@@ -67,8 +67,8 @@ _PROC_BASELINE = (
 )
 _PROC_LABELED = re.compile(r"(?:^|[。；，,;\n\r])[^。，；,;\n\r]{0,12}" + _PROC_TERM_COMPOUNDS)
 _PROC_NAME_SPAN = re.compile(r"[一-龥]{0,4}期限")
-_PROC_NAME_LIST = ("合同期限", "履行期限", "交付期限", "供货服务期", "供货期",
-                   "服务期", "租赁期限", "租期", "工期")
+_PROC_NAME_LIST = ("合同期限", "履行期限", "履行期", "交付期限", "供货服务期", "供货期",
+                   "服务期", "租赁期限", "租期", "工期", "委托期限")
 _CLAUSE_SEPS = "。；，,;\n\r"
 
 
@@ -157,7 +157,9 @@ def _first_unprotected_hit_alt(text: str, rule: dict[str, Any]) -> Optional[dict
             continue
         w0 = max(0, s - window - 20)
         w1 = min(len(text), e + window + 20)
-        anchored = any(w0 + mm.start() <= s and w0 + mm.end() >= e
+        # finditer 带 pos/endpos 时 match.span() 已是全文绝对索引，
+        # 不得再叠 w0（叠了=窗口化一深就永不锚定，豁免门整体失效）
+        anchored = any(mm.start() <= s and mm.end() >= e
                        for mm in chain.finditer(text, w0, w1))
         # unless 显式保护（文本级，如「免责事由但迟延履行…不免除」的句内否定变体）
         lo, hi = max(0, s - int(rule.get("unless_window") or 60)), min(len(text), e + 20)
