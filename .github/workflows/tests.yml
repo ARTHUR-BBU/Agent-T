@@ -54,3 +54,8 @@ jobs:
           GROK_API_KEY: ""
           PRECHECK_LIVE: ""
         run: python -m pytest -q --ignore=tests/test_precheck_corpus.py
+      # F-12 施工批1：17 份真实合同回归进 required 门禁（外审验收整改卡②）——
+      # 零回退红线只有非零退出码才能拦坏提交（回归报告是证据，不是门禁）；
+      # 明细写 $RUNNER_TEMP 防测试运行污染受版本控制的工作树
+      - name: 17 份真实合同回归门禁（零回退红线）
+        run: python -X utf8 tools/m65/regression_batch1.py --out "$RUNNER_TEMP/batch1-regression.json"
