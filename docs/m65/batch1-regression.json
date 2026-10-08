@@ -14,6 +14,20 @@
         }
       },
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "subject_matter": "通过",
+        "payment": "通过",
+        "term": "未找到",
+        "breach": "通过",
+        "confidentiality": "通过",
+        "ip": "通过",
+        "jurisdiction": "通过",
+        "termination": "通过",
+        "unfair_terms": "通过",
+        "governing_law": "通过",
+        "signature": "未找到"
+      },
       "breach_note": "条款基本可接受"
     },
     {
@@ -26,6 +40,20 @@
         }
       },
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "subject_matter": "通过",
+        "payment": "通过",
+        "term": "通过",
+        "breach": "通过",
+        "confidentiality": "未找到",
+        "ip": "通过",
+        "jurisdiction": "通过",
+        "termination": "通过",
+        "unfair_terms": "通过",
+        "governing_law": "需关注",
+        "signature": "需关注"
+      },
       "breach_note": "条款基本可接受"
     },
     {
@@ -42,6 +70,20 @@
         }
       },
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "subject_matter": "未找到",
+        "payment": "通过",
+        "term": "通过",
+        "breach": "通过",
+        "confidentiality": "未找到",
+        "ip": "未找到",
+        "jurisdiction": "通过",
+        "termination": "通过",
+        "unfair_terms": "未找到",
+        "governing_law": "需关注",
+        "signature": "通过"
+      },
       "breach_note": "条款基本可接受"
     },
     {
@@ -49,6 +91,22 @@
       "category": "lease",
       "diffs": {},
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "lessor_title": "通过",
+        "lease_term": "通过",
+        "delivery_acceptance": "通过",
+        "use_restriction": "通过",
+        "rent_payment": "通过",
+        "deposit": "通过",
+        "early_termination": "通过",
+        "renovation": "通过",
+        "maintenance": "通过",
+        "subletting": "通过",
+        "jurisdiction": "通过",
+        "governing_law": "本类不适用",
+        "signature": "通过"
+      },
       "breach_note": ""
     },
     {
@@ -56,6 +114,22 @@
       "category": "lease",
       "diffs": {},
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "lessor_title": "通过",
+        "lease_term": "需关注",
+        "delivery_acceptance": "未找到",
+        "use_restriction": "通过",
+        "rent_payment": "通过",
+        "deposit": "通过",
+        "early_termination": "通过",
+        "renovation": "未找到",
+        "maintenance": "未找到",
+        "subletting": "通过",
+        "jurisdiction": "通过",
+        "governing_law": "本类不适用",
+        "signature": "通过"
+      },
       "breach_note": ""
     },
     {
@@ -68,6 +142,20 @@
         }
       },
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "confidentiality_scope": "通过",
+        "payment": "本类不适用",
+        "agreement_term": "未找到",
+        "confidentiality_duration": "通过",
+        "breach": "通过",
+        "unfair_terms": "通过",
+        "ip": "未找到",
+        "jurisdiction": "通过",
+        "termination": "通过",
+        "governing_law": "通过",
+        "signature": "通过"
+      },
       "breach_note": "条款基本可接受"
     },
     {
@@ -80,6 +168,20 @@
         }
       },
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "confidentiality_scope": "通过",
+        "payment": "本类不适用",
+        "agreement_term": "未找到",
+        "confidentiality_duration": "通过",
+        "breach": "通过",
+        "unfair_terms": "通过",
+        "ip": "未找到",
+        "jurisdiction": "通过",
+        "termination": "未找到",
+        "governing_law": "通过",
+        "signature": "通过"
+      },
       "breach_note": "条款基本可接受"
     },
     {
@@ -100,6 +202,20 @@
         }
       },
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "subject_matter": "未找到",
+        "payment": "通过",
+        "term": "未找到",
+        "breach": "通过",
+        "confidentiality": "通过",
+        "ip": "未找到",
+        "jurisdiction": "通过",
+        "termination": "通过",
+        "unfair_terms": "未找到",
+        "governing_law": "通过",
+        "signature": "通过"
+      },
       "breach_note": "条款基本可接受"
     },
     {
@@ -107,6 +223,20 @@
       "category": "procurement",
       "diffs": {},
       "extra_flips": {},
+      "live": {
+        "subject": "未找到",
+        "subject_matter": "未找到",
+        "payment": "未找到",
+        "term": "未找到",
+        "breach": "未找到",
+        "confidentiality": "未找到",
+        "ip": "未找到",
+        "jurisdiction": "通过",
+        "termination": "未找到",
+        "unfair_terms": "未找到",
+        "governing_law": "需关注",
+        "signature": "未找到"
+      },
       "breach_note": "未在合同中找到相关约定"
     },
     {
@@ -119,6 +249,20 @@
         }
       },
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "subject_matter": "未找到",
+        "payment": "需关注",
+        "term": "未找到",
+        "breach": "通过",
+        "confidentiality": "通过",
+        "ip": "通过",
+        "jurisdiction": "通过",
+        "termination": "通过",
+        "unfair_terms": "未找到",
+        "governing_law": "需关注",
+        "signature": "通过"
+      },
       "breach_note": "条款基本可接受"
     },
     {
@@ -135,6 +279,20 @@
         }
       },
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "subject_matter": "通过",
+        "payment": "通过",
+        "term": "通过",
+        "breach": "通过",
+        "confidentiality": "通过",
+        "ip": "通过",
+        "jurisdiction": "通过",
+        "termination": "通过",
+        "unfair_terms": "未找到",
+        "governing_law": "通过",
+        "signature": "通过"
+      },
       "breach_note": "条款基本可接受"
     },
     {
@@ -151,6 +309,20 @@
         }
       },
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "subject_matter": "未找到",
+        "payment": "通过",
+        "term": "通过",
+        "breach": "通过",
+        "confidentiality": "通过",
+        "ip": "通过",
+        "jurisdiction": "通过",
+        "termination": "通过",
+        "unfair_terms": "通过",
+        "governing_law": "需关注",
+        "signature": "通过"
+      },
       "breach_note": "条款基本可接受"
     },
     {
@@ -167,6 +339,20 @@
         }
       },
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "subject_matter": "未找到",
+        "payment": "通过",
+        "term": "通过",
+        "breach": "通过",
+        "confidentiality": "未找到",
+        "ip": "未找到",
+        "jurisdiction": "通过",
+        "termination": "未找到",
+        "unfair_terms": "未找到",
+        "governing_law": "需关注",
+        "signature": "通过"
+      },
       "breach_note": "条款基本可接受"
     },
     {
@@ -174,6 +360,22 @@
       "category": "lease",
       "diffs": {},
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "lessor_title": "通过",
+        "lease_term": "通过",
+        "delivery_acceptance": "未找到",
+        "use_restriction": "通过",
+        "rent_payment": "通过",
+        "deposit": "通过",
+        "early_termination": "通过",
+        "renovation": "通过",
+        "maintenance": "通过",
+        "subletting": "通过",
+        "jurisdiction": "通过",
+        "governing_law": "本类不适用",
+        "signature": "需关注"
+      },
       "breach_note": ""
     },
     {
@@ -181,6 +383,22 @@
       "category": "lease",
       "diffs": {},
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "lessor_title": "需关注",
+        "lease_term": "通过",
+        "delivery_acceptance": "通过",
+        "use_restriction": "通过",
+        "rent_payment": "需关注",
+        "deposit": "通过",
+        "early_termination": "需关注",
+        "renovation": "未找到",
+        "maintenance": "通过",
+        "subletting": "通过",
+        "jurisdiction": "通过",
+        "governing_law": "本类不适用",
+        "signature": "通过"
+      },
       "breach_note": ""
     },
     {
@@ -205,6 +423,20 @@
         }
       },
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "subject_matter": "未找到",
+        "payment": "通过",
+        "term": "通过",
+        "breach": "通过",
+        "confidentiality": "通过",
+        "ip": "通过",
+        "jurisdiction": "通过",
+        "termination": "通过",
+        "unfair_terms": "通过",
+        "governing_law": "通过",
+        "signature": "通过"
+      },
       "breach_note": "条款基本可接受"
     },
     {
@@ -221,6 +453,20 @@
         }
       },
       "extra_flips": {},
+      "live": {
+        "subject": "通过",
+        "subject_matter": "未找到",
+        "payment": "通过",
+        "term": "通过",
+        "breach": "未找到",
+        "confidentiality": "未找到",
+        "ip": "未找到",
+        "jurisdiction": "通过",
+        "termination": "未找到",
+        "unfair_terms": "未找到",
+        "governing_law": "需关注",
+        "signature": "未找到"
+      },
       "breach_note": "未在合同中找到相关约定"
     }
   ],

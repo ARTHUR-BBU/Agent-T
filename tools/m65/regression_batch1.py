@@ -58,20 +58,24 @@ def main() -> int:
             "file": fname, "category": category,
             "diffs": {k: {"was": v[0], "now": v[1]} for k, v in diffs.items()},
             "extra_flips": extra,
+            "live": now,
             "breach_note": next((i.get("note") or "" for i in result["items"]
                                  if i["id"] == "breach"), ""),
         })
 
-    # 指标汇总：靶向四项按「基线状态 + diff」还原修复后全景
-    def _status_map(r: dict) -> dict[str, tuple[str | None, str]]:
-        return {k: (v["was"], v["now"]) for k, v in r["diffs"].items()}
+    # 指标汇总：全量 live 状态统计（小智娘 P2-1 整改——只数「翻转行」会把
+    # 未翻转的持续未找到漏计成假 0；live 状态按当前判定全量取）
+    live = {r["file"]: r["live"] for r in rows}
 
-    pay_now = sum(1 for r in rows
-                  for k, (was, now) in _status_map(r).items()
-                  if k == "payment" and now == "未找到")
-    term_now = [(r["file"], was, now) for r in rows
-                for k, (was, now) in _status_map(r).items()
-                if k == "term" and now == "未找到"]
+    pay_now = sorted(f for f, m in live.items() if m.get("payment") == "未找到")
+    term_now = sorted(f for f, m in live.items() if m.get("term") == "未找到")
+    breach_att = sorted(f for f, m in live.items() if m.get("breach") == "需关注")
+    sig_att = sorted(f for f, m in live.items() if m.get("signature") == "需关注")
+    print("=" * 70)
+    print(f"payment 未找到（live 全量，待逐份定性）: {len(pay_now)} {pay_now}")
+    print(f"term 未找到（live 全量，待逐份定性）: {len(term_now)} {term_now}")
+    print(f"breach 需关注（live 全量）: {len(breach_att)} {breach_att}")
+    print(f"signature 需关注（live 全量）: {len(sig_att)} {sig_att}")
     print("=" * 70)
     for r in rows:
         if r["diffs"]:
@@ -79,8 +83,6 @@ def main() -> int:
             for k, v in r["diffs"].items():
                 print(f"   {k}: {v['was']} -> {v['now']}")
     print("=" * 70)
-    print(f"payment 未找到（修复后，金标要求 0）: {pay_now}")
-    print(f"term 未找到（修复后，仅允许真缺失）: {term_now or '无'}")
     print(f"靶向四项之外翻转数（零回退红线，应为 0）: {flipped_non_target}")
 
     if args.out:

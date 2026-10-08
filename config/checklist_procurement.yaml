@@ -248,7 +248,6 @@ items:
               start_token: "豁免"
               neg_sensitive: true
           unless_window: 300
-          unless_anchor: true
           note: 单方免除乙方违约责任，权利义务严重不对等
           class: hardline
       pass:
