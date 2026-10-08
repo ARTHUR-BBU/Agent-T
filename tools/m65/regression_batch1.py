@@ -71,7 +71,10 @@ def run_regression(out_path: str | None) -> tuple[int, dict]:
         result = run_checklist(text, category)
         now = {i["id"]: i["status"] for i in result["items"]}
         old = base.get(fname, {})
-        diffs = {k: (old.get(k), now[k]) for k in now if old.get(k) != now[k]}
+        # 键取基线∪当前的并集（外审 PR #92 销项整改）：只遍历 now 会漏掉
+        # 「检查项被删/改名后基线独有的键」——删除无关项也全绿的盲区
+        diffs = {k: (old.get(k), now.get(k))
+                 for k in old.keys() | now.keys() if old.get(k) != now.get(k)}
         extra = {k: v for k, v in diffs.items() if k not in AUTHORIZED_TARGET}
         flipped_non_target += len(extra)
         rows.append({

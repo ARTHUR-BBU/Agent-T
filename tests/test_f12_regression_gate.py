@@ -51,6 +51,30 @@ def test_gate_blocks_missing_baseline_coverage(tmp_path: Path, monkeypatch) -> N
     assert rc == 1
 
 
+def test_gate_blocks_deleted_item_key(tmp_path: Path, monkeypatch) -> None:
+    """检查项被删/改名（基线有、live 无）→ 门禁必须响（外审 PR #92 销项：
+    diffs 只遍历 now 的键会漏掉基线独有键——删除无关项也全绿的盲区）。"""
+    real = reg._baseline()
+    tampered = copy.deepcopy(real)
+    # 删掉某基线记录里一个授权靶向外的键，模拟引擎侧该项消失
+    for items in tampered.values():
+        if "jurisdiction" in items:
+            del items["jurisdiction"]
+            break
+    orig_run = reg.run_checklist
+
+    def filtered(text, category):
+        r = orig_run(text, category)
+        r["items"] = [i for i in r["items"] if i["id"] != "jurisdiction"]
+        return r
+
+    monkeypatch.setattr(reg, "_baseline", lambda: tampered)
+    monkeypatch.setattr(reg, "run_checklist", filtered)
+    rc, report = reg.run_regression(None)
+    assert rc == 1, "删除检查项后门禁未拦截（键并集盲区）"
+    assert report["flipped_non_target"] >= 1
+
+
 def test_gate_blocks_contract_count_drift(monkeypatch) -> None:
     """语料盘点数漂移（少一份合同）→ 门禁必须响——盘点变化必须显式
     更新 EXPECTED_CONTRACTS，防悄悄少了合同也全绿。"""
