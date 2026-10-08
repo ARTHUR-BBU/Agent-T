@@ -148,13 +148,49 @@ items:
     description: 违约责任是否约定、可执行
     rules:
       need_attention:
-        - any_of:
-            - "不得追究.{0,10}违约"
-            - "放弃追究"
-            - "免除违约责任|免除.{0,8}违约"
-            - "不承担违约|无需承担违约"
-            - "豁免违约责任"
-            - "违约责任由.{0,10}自行承担"
+        # F-2 对等豁免门（金标 v2，同采购 breach；NDA 子集并入统一家族）
+        - hit_alternatives:
+            - pattern: "不得追究.{0,10}违约"
+              start_token: "不得追究"
+              neg_sensitive: false
+            - pattern: "甲方不得追究|不得追究乙方"
+              start_token: "不得追究"
+              neg_sensitive: false
+            - pattern: "放弃追究"
+              start_token: "放弃"
+              neg_sensitive: true
+            - pattern: "放弃.{0,6}追究"
+              start_token: "放弃"
+              neg_sensitive: true
+            - pattern: "免除违约责任"
+              start_token: "免除"
+              neg_sensitive: true
+            - pattern: "免除.{0,8}违约"
+              start_token: "免除"
+              neg_sensitive: true
+            - pattern: "不承担违约"
+              start_token: "不承担违约"
+              neg_sensitive: false
+            - pattern: "无需承担违约"
+              start_token: "无需承担"
+              neg_sensitive: false
+            - pattern: "不得向.{0,8}主张违约"
+              start_token: "不得向"
+              neg_sensitive: false
+            - pattern: "不负违约金义务"
+              start_token: "不负违约金"
+              neg_sensitive: false
+            - pattern: "不得主张违约金"
+              start_token: "不得主张"
+              neg_sensitive: false
+            - pattern: "违约责任由.{0,10}自行承担"
+              start_token: "违约责任由"
+              neg_sensitive: false
+            - pattern: "豁免违约责任"
+              start_token: "豁免"
+              neg_sensitive: true
+          unless_window: 300
+          unless_anchor: true
           note: 单方免除或放弃追究违约责任，权利义务不对等
           class: hardline
       pass:
@@ -309,6 +345,8 @@ items:
               - "签字/盖章|签字并加盖"
               - "授权代表.{0,6}签字"
               - "签字栏|签名栏"
+              # F-4 等价组扩两行（金标 v2：盖章栏+法人落款行=完整签署要件）
+              - "法定代表人[:：]|授权代表[:：]|委托代理人[:：]"
       pass:
         - any_of:
             - "（签字.{0,4}盖章"
@@ -316,6 +354,9 @@ items:
             - "签字并加盖"
             - "签字确认并盖章"
             - "签字盖章后生效"
+            # F-4 等价组（金标 v2：盖章栏+法人/授权代表落款行=完整签署要件）
+            - "(?:（盖章）|\\(盖章\\))[^。]{0,30}(?:法定代表人|授权代表|委托代理人)\\s*[:：]"
+            - "(?:法定代表人|授权代表|委托代理人)\\s*[:：][^。]{0,20}(?:（盖章）|\\(盖章\\))"
       not_found:
         - pattern: "盖章|签字|签署|公章|印章"
 

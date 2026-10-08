@@ -112,3 +112,80 @@ def test_double_negative_not_protected() -> None:
     assert proto._negated(t1, t1.index("放弃")) is False
     assert proto._negated(t2, t2.index("放弃")) is True
     assert proto._negated(t3, t3.index("免除")) is True
+
+
+def test_all_cases_green_via_production_engine() -> None:
+    """施工收口（设计稿 v1.9.2 十步之⑥）：60 条场景全部切到生产引擎入口重放。
+    term→生产 procurement_term 匹配器；F-2→生产 hit_alternatives 豁免门；
+    payment/NDA期限/signature→生产加载配置的 pass 规则。原型绿≠生产绿，
+    本测试保证原型表（单一权威）与生产实现判定永远一致。"""
+    import app.services.checklist as checklist
+
+    proc = checklist.load_checklist("procurement")
+    nda = checklist.load_checklist("nda")
+
+    def _rules(cfg: dict, iid: str, phase: str) -> list:
+        for it in cfg["items"]:
+            if it.get("id") == iid:
+                return list(((it.get("rules") or {}).get(phase)) or [])
+        raise AssertionError(f"配置缺检查项 {iid}")
+
+    pay_pass = _rules(proc, "payment", "pass")
+    nda_term_pass = _rules(nda, "agreement_term", "pass")
+    sig_pass = _rules(proc, "signature", "pass")
+    breach_na = [r for r in _rules(nda, "breach", "need_attention")
+                 if "hit_alternatives" in r]
+    assert len(breach_na) == 1, "breach 豁免门规则应恰好一条"
+
+    failed: list[str] = []
+    for name, text, fn, want in proto._CASES:
+        if fn is proto.term_proc_pass:
+            got = bool(checklist._match_procurement_term(text).matched)
+        elif fn is proto.f2_verdicts:
+            expect_fire = any(v == "触发需关注" for _, v in want)
+            hit = checklist._first_unprotected_hit_alt(text, breach_na[0])
+            if bool(hit) != expect_fire:
+                failed.append(f"{name}: 生产豁免门 hit={hit!r} 期望触发={expect_fire}")
+            continue
+        elif fn == proto.PAYMENT_PASS.search:
+            got = any(checklist._rule_matches(text, r) for r in pay_pass)
+        elif fn == proto.TERM_PASS_NDA.search:
+            got = any(checklist._rule_matches(text, r) for r in nda_term_pass)
+        elif fn == proto.SIGNATURE_PASS.search:
+            got = any(checklist._rule_matches(text, r) for r in sig_pass)
+        else:
+            failed.append(f"{name}: 未识别的案例入口 {fn!r}")
+            continue
+        if bool(got) != bool(want):
+            failed.append(f"{name}: 生产判定={got} 期望={want}")
+    assert not failed, "生产入口重放失败：" + "；".join(failed)
+
+
+def test_unknown_matcher_fails_closed_at_load(tmp_path) -> None:
+    """施工十步之③：未知 matcher 必须在配置加载阶段明确报错（fail-closed），
+    错误信息含配置文件/检查项/matcher 名；禁止静默不匹配。"""
+    import pytest
+
+    import app.services.checklist as checklist
+
+    bad_cfg = {
+        "label": "坏配置",
+        "items": [
+            {"id": "term", "name": "期限",
+             "rules": {"pass": [{"matcher": "no_such_matcher"}]}},
+        ],
+    }
+    with pytest.raises(ValueError) as ei:
+        checklist._validate_matchers(tmp_path / "checklist_bad.yaml", bad_cfg)
+    msg = str(ei.value)
+    assert "no_such_matcher" in msg and "term" in msg and "checklist_bad.yaml" in msg
+    # 三元组缺字段同责 fail-closed
+    bad_alt = {
+        "items": [
+            {"id": "breach", "name": "违约责任",
+             "rules": {"need_attention": [{"hit_alternatives": [{"pattern": "免除违约"}]}]}},
+        ],
+    }
+    with pytest.raises(ValueError) as ei2:
+        checklist._validate_matchers(tmp_path / "checklist_bad2.yaml", bad_alt)
+    assert "breach" in str(ei2.value) and "hit_alternatives" in str(ei2.value)
