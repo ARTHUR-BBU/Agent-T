@@ -65,3 +65,17 @@ def test_unknown_protocol_rejected(tmp_path: Path) -> None:
     """非 http/https 协议立即失败，绝不携带凭据发起请求。"""
     with pytest.raises(ValueError, match="http"):
         vpe._load_credentials(_cred_file(tmp_path, "ftp://host:21"))
+
+
+def test_docstring_matches_deploy_version() -> None:
+    """防回退（外审 PR #97 勘正）：脚本使用说明必须与执行逻辑一致——
+    docstring 必须包含当前 DEPLOY_VERSION 和对应证据包文件名，
+    防止版本推进后说明仍指向旧包让复核人拿错证据。"""
+    doc = vpe.__doc__ or ""
+    assert vpe.DEPLOY_VERSION in doc, (
+        f"docstring 缺当前部署版本 {vpe.DEPLOY_VERSION}——说明与执行逻辑脱节")
+    expected_pkg = f"prod-evidence-{vpe.DEPLOY_VERSION}.json"
+    assert expected_pkg in doc, (
+        f"docstring 缺当前证据包名 {expected_pkg}——复核人会拿错包")
+    # 旧版本号不得残留在说明里（版本推进后 old 版即归档，非当前核验对象）
+    assert "9dd8377" not in doc, "docstring 仍残留旧版本 9dd8377"
