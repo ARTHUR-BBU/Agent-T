@@ -50,6 +50,13 @@ def _conf(text: str) -> dict:
         ("第四条 办法及保密要求。", "未找到", False),
         # 未找到无旗标档：无任何保密信号
         ("本合同一式两份", "未找到", False),
+        # 外审 P1-1：分隔空格不得被正则回溯当内容吞（「保密要求：  \n」曾误判通过）
+        ("保密要求：  \n", "未找到", True),
+        # P1-1 防误伤：冒号后空格+实义内容照常通过
+        ("保密要求： 乙方负有保密义务", "通过", False),
+        # 外审 P1-2：空白格占位后跨列内容不得误连（保密要求\\t\\t验收标准…曾误判通过）
+        ("保密要求\t\t验收标准\t合格", "未找到", True),
+        ("保密要求\t\t合格", "未找到", True),
     ],
 )
 def test_confidentiality_three_tiers(text: str, exp_status: str, exp_flag: bool) -> None:
@@ -141,6 +148,16 @@ def test_table_blank_cell_flagged_end_to_end() -> None:
     text = extract_text("t.docx", raw)
     item = _conf(text)
     assert item["status"] == "未找到"
+    assert item["blank_flag"] is True
+
+
+def test_cross_column_bleed_blocked_end_to_end() -> None:
+    """外审 P1-2 端到端：左格标签+中格空白+右格无关内容——跨列内容不得
+    被当作紧邻格内容判通过（违反「按字段判断」红线）。"""
+    raw = _build_docx([[["保密要求", "", "验收标准：合格"]]])
+    text = extract_text("t.docx", raw)
+    item = _conf(text)
+    assert item["status"] == "未找到", f"跨列内容被误连: {text!r}"
     assert item["blank_flag"] is True
 
 

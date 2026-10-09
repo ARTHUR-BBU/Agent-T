@@ -135,13 +135,11 @@ def _iter_docx_blocks(doc):
 def _table_text_parts(table) -> list[str]:
     parts: list[str] = []
     for row in table.rows:
-        cells = []
-        for cell in row.cells:
-            t = cell.text.strip()
-            if t:
-                cells.append(t)
-        if cells:
-            # 同行单元格用制表符连接，保留表内列关系
+        cells = [c.text.strip() for c in row.cells]
+        if any(cells):
+            # 同行单元格用制表符连接，保留表内列关系；空白格保留空占位
+            # （A2 外审 P1-2：丢弃空白格会把「保密要求｜空白｜验收标准」
+            #  连成「保密要求\t验收标准」，跨列内容被误当作紧邻格内容）
             parts.append("\t".join(cells))
     return parts
 

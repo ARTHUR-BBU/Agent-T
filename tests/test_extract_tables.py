@@ -76,9 +76,13 @@ def test_merged_cell_text_not_lost() -> None:
     assert "合同标的及验收标准一览" in text, "合并单元格文本丢失"
 
 
-# ---------- 4. 空白格：不产出噪音、不中断同行内容连接 ----------
+# ---------- 4. 空白格：保留空占位，跨列内容不被误连（外审 P1-2） ----------
 
-def test_blank_cells_do_not_break_row_joins() -> None:
+def test_blank_cells_keep_placeholder_no_cross_column_bleed() -> None:
+    """空白格保留空占位（连续 tab）：列关系不塌缩，跨列内容不得被误连成
+    紧邻格内容。外审 P1-2 实锤：丢占位会把「保密要求｜空白｜验收标准」
+    连成「保密要求\\t验收标准」，验收标准被误当保密内容。"""
+
     def build(doc) -> None:
         t = doc.add_table(rows=1, cols=3)
         t.cell(0, 0).text = "保密要求"
@@ -87,9 +91,10 @@ def test_blank_cells_do_not_break_row_joins() -> None:
 
     text = extract_text("t.docx", _docx_bytes(build))
     assert "保密要求" in text and "双方不得向第三方披露" in text
-    # 同行内容仍在同一行（tab 连接未被空白格断开成噪音行）
     row_line = next(ln for ln in text.split("\n") if "保密要求" in ln)
-    assert "双方不得向第三方披露" in row_line
+    # 占位形态：保密要求 与紧邻格之间必须是连续 tab（空占位），不是直接内容
+    assert "保密要求\t\t" in row_line, f"空白格占位丢失（列关系塌缩）: {row_line!r}"
+    assert "双方不得向第三方披露" in row_line  # 同行连接仍保持
 
 
 # ---------- 5. 嵌套表：显式化当前边界（读不到=已知行为） ----------
