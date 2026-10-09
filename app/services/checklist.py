@@ -95,7 +95,7 @@ _PENDING_WORDS = re.compile(r"另行协商|另行约定|协商确定|待定|另�
 # 该 occurrence 不参与四分类（等同无此标签），其后的其他动作日期不得替空白
 # 期限栏背书。0 间隙是防误杀关键：「履行期限：…6个月内完成交付」的「：」隔断，
 # 不受排除。
-_NARRATIVE_SUFFIX = re.compile(r"(?:期间|之内|以内|[间内中])")
+_NARRATIVE_SUFFIX = re.compile(r"(?:期间|之内|以内|间内|[内间]|中(?!标|心|期|断|途))")
 
 
 def _clause_window(text: str, start: int) -> str:

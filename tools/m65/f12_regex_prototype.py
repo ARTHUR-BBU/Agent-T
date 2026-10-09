@@ -135,7 +135,7 @@ _PLACEHOLDER = re.compile(r"(?:[＿_]|[ 　]{2,})\s*(?:年|月|日|天|时|周)"
 _PENDING_WORDS = re.compile(r"另行协商|另行约定|协商确定|待定|另行确定|届时(?:另行)?(?:约定|确定|商定)")
 # 叙述形态排除门（老钱补裁 2026-10-10）：标签后 0 字符间隙紧接「内/期间/中」类
 # 后缀 = 时间背景状语，不参与四分类；0 间隙防误杀（「：」隔断不受排除）
-_NARRATIVE_SUFFIX = re.compile(r"(?:期间|之内|以内|[间内中])")
+_NARRATIVE_SUFFIX = re.compile(r"(?:期间|之内|以内|间内|[内间]|中(?!标|心|期|断|途))")
 
 
 def _clause_window(text: str, start: int) -> str:
@@ -339,6 +339,7 @@ _PROC_TERM_CASES: list[tuple[str, str, object, object]] = [
     ("服务期内动作日期(近邻反例)", "服务期内、每年的12月31日前完成年度审核", term_proc_pass, False),
     ("合同期限内动作日期(近邻反例)", "合同期限内完成全部供货", term_proc_pass, False),
     ("冒号隔断不受排除(守卫正例)", "履行期限：自交付之日起6个月内完成交付", term_proc_pass, True),
+    ("中标不撞排除门(外审#96销项)", "供货期中标通知书发出后30日内完成交付", term_proc_pass, True),
 ]
 
 _CASES: list[tuple[str, str, object, object]] = _PROC_TERM_CASES + _OTHER_CASES
