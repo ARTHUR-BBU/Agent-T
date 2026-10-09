@@ -2,7 +2,7 @@
 
 用法：
   python -X utf8 tools/m65/verify_prod_evidence.py \
-      --evidence "F:/合同审查Agent/audit-evidence/prod-evidence-9dd8377.json" \
+      --evidence "F:/合同审查Agent/audit-evidence/prod-evidence-3343f2d.json" \
       [--credentials "F:/合同审查Agent/.deploy-credentials.txt"]   # --live 必需
 
 核验口径（放行标准：零退出 + 输出 17/17 一致 + 生产版本明确）：
@@ -12,7 +12,7 @@
      重复凑数——只验数量会漏「少一份 + 重复一份仍 17 条」）
   2. 每条合同文件 SHA256 与本地 fixtures-real 实算一致（文件未漂移）
   3. 合同类型与 fixtures-real/manifest.json 一致
-  4. 部署版本 == DEPLOY_VERSION（9dd8377）
+  4. 部署版本 == DEPLOY_VERSION（3343f2d）
   5. 结果摘要指纹 == 按 batch1-regression.json 的 CI live 状态表规范 JSON
      重算的 SHA256（生产审查结果与 CI 门禁验证过的状态逐项一致）
   6. --live（可选）：读本地凭据文件连生产 API 逐条重取检查项状态，
