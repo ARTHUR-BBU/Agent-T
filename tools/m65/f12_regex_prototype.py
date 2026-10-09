@@ -133,6 +133,9 @@ _ANCHOR_E3_FROM = re.compile(r"(?:自|从)[^。；\n\r]{0,20}(?:之日)?起")
 _ANCHOR_E3_TO = re.compile(r"(?:至|止)")
 _PLACEHOLDER = re.compile(r"(?:[＿_]|[ 　]{2,})\s*(?:年|月|日|天|时|周)")
 _PENDING_WORDS = re.compile(r"另行协商|另行约定|协商确定|待定|另行确定|届时(?:另行)?(?:约定|确定|商定)")
+# 叙述形态排除门（老钱补裁 2026-10-10）：标签后 0 字符间隙紧接「内/期间/中」类
+# 后缀 = 时间背景状语，不参与四分类；0 间隙防误杀（「：」隔断不受排除）
+_NARRATIVE_SUFFIX = re.compile(r"(?:期间|之内|以内|[间内中])")
 
 
 def _clause_window(text: str, start: int) -> str:
@@ -172,6 +175,10 @@ def match_procurement_term(text: str) -> dict:
     pending > anchored/unlabeled > blank > none。"""
     classified: list[tuple[str, int, int, str]] = []
     for m in _TERM_PROC.finditer(text):
+        # 叙述形态排除门（老钱补裁）：标签后 0 间隙紧接「内/期间/中」= 时间背景
+        # 状语，跳过该 occurrence 继续扫（红线：排除后不得终止）
+        if _NARRATIVE_SUFFIX.match(text[m.end():m.end() + 4]):
+            continue
         # 窗口从标签本体起（外审 P2 #94 销项②：_HEAD 前缀日期不得背书空白标签）
         window = _clause_window(text, m.start("label"))
         cls = _classify_label_clause(window)
@@ -326,6 +333,12 @@ _PROC_TERM_CASES: list[tuple[str, str, object, object]] = [
     ("正文单空格不误判(相邻反例守卫)", "履行期限：乙方应在交付后 3 日内结清余款", term_proc_pass, True),
     ("无标签数字链路存量保护(老钱签字前置)", "乙方应在30日内完成交付", term_proc_pass, True),
     ("前缀日期不背书空白标签(外审P2销项②)", "2026年版合同期限：", term_proc_pass, False),
+    # --- 叙述形态排除门（老钱补裁 2026-10-10）
+    ("校服生产解析原文(叙述形态+空格占位)", "注：此表须于合同履行期内、每年的12月31日前双方签订执行，并由甲方报主管的教育部门。 合同履行期自生效之日起      年，至      年    月    日止", term_proc_pass, False),
+    ("叙述期间内保密句(近邻反例)", "在合同履行期间内均需保密", term_proc_pass, False),
+    ("服务期内动作日期(近邻反例)", "服务期内、每年的12月31日前完成年度审核", term_proc_pass, False),
+    ("合同期限内动作日期(近邻反例)", "合同期限内完成全部供货", term_proc_pass, False),
+    ("冒号隔断不受排除(守卫正例)", "履行期限：自交付之日起6个月内完成交付", term_proc_pass, True),
 ]
 
 _CASES: list[tuple[str, str, object, object]] = _PROC_TERM_CASES + _OTHER_CASES

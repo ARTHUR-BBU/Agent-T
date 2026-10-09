@@ -90,6 +90,12 @@ _ANCHOR_E3_TO = re.compile(r"(?:至|止)")
 _PLACEHOLDER = re.compile(r"(?:[＿_]|[ 　]{2,})\s*(?:年|月|日|天|时|周)")
 # 待定词（X1，仅 E1–E3 全不中时判定）
 _PENDING_WORDS = re.compile(r"另行协商|另行约定|协商确定|待定|另行确定|届时(?:另行)?(?:约定|确定|商定)")
+# 叙述形态排除门（老钱补裁 2026-10-10）：标签后 0 字符间隙紧接「内/期间/中」类
+# 后缀 = 时间背景状语（「合同履行期内」「履行期间内」），不是期限条款标题——
+# 该 occurrence 不参与四分类（等同无此标签），其后的其他动作日期不得替空白
+# 期限栏背书。0 间隙是防误杀关键：「履行期限：…6个月内完成交付」的「：」隔断，
+# 不受排除。
+_NARRATIVE_SUFFIX = re.compile(r"(?:期间|之内|以内|[间内中])")
 
 
 def _clause_window(text: str, start: int) -> str:
@@ -148,6 +154,11 @@ def _match_procurement_term(text: str) -> MatchResult:
     """
     classified: list[tuple[str, int, int, str]] = []  # (分类, start, end, 引句)
     for m in _PROC_LABELED.finditer(text):
+        # 叙述形态排除门（老钱补裁）：标签后 0 间隙紧接「内/期间/中」= 时间背景
+        # 状语，跳过该 occurrence 继续扫（红线：finditer 逐条扫，排除后不得终止，
+        # 否则叙述句在前、真条款在后的合同会新增漏报）
+        if _NARRATIVE_SUFFIX.match(text[m.end():m.end() + 4]):
+            continue
         # 窗口从标签本体起（外审 P2 #94 销项②：_HEAD 前缀日期不得背书空白标签）
         window = _clause_window(text, m.start("label"))
         cls = _classify_label_clause(window)
