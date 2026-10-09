@@ -401,5 +401,49 @@
       "breach_note": "未在合同中找到相关约定"
     }
   ],
-  "flipped_non_target": 0
+  "flipped_non_target": 0,
+  "authorized_seen": [
+    [
+      "construction-work-contract-2017.docx",
+      "term",
+      "通过",
+      "未找到"
+    ],
+    [
+      "energy-hosting-service-2026.docx",
+      "term",
+      "通过",
+      "未找到"
+    ],
+    [
+      "food-procurement-xinjiang-2025.docx",
+      "term",
+      "通过",
+      "未找到"
+    ],
+    [
+      "mandate-contract-samr-2025.docx",
+      "term",
+      "通过",
+      "未找到"
+    ],
+    [
+      "raw-milk-purchase-2016.docx",
+      "term",
+      "通过",
+      "未找到"
+    ],
+    [
+      "school-uniform-procurement-guangzhou.docx",
+      "term",
+      "通过",
+      "未找到"
+    ],
+    [
+      "work-contract-gf-2000.docx",
+      "term",
+      "通过",
+      "未找到"
+    ]
+  ]
 }

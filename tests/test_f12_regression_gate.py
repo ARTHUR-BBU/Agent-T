@@ -96,3 +96,23 @@ def test_snapshot_source_is_pinned() -> None:
     snap = reg._load_snapshot()
     assert snap["source_commit"] == "d575a10"
     assert len(snap["contracts"]) == reg.EXPECTED_CONTRACTS
+
+
+def test_authorized_flips_was_matches_snapshot_and_differs() -> None:
+    """白名单每条的 was 必须等于施工前快照状态且 was != now（外审二轮勘正：
+    gov 在快照中已是未找到，无 P2 翻转——把不存在的改账写进白名单=账目错误）。"""
+    snap = reg._load_snapshot()
+    for fname, item_id, was, now in reg.AUTHORIZED_FLIPS:
+        snap_status = snap["contracts"][fname]["status_map"][item_id]
+        assert snap_status == was, f"{fname} {item_id} 快照={snap_status} ≠ 白名单 was={was}"
+        assert was != now, f"{fname} {item_id} 白名单 was==now（不是翻转）"
+
+
+def test_gate_authorized_diffs_exactly_match_whitelist() -> None:
+    """总量测试（外审修复卡③）：实际授权翻转集合必须与白名单完全相等——
+    不多（白名单外翻转已拦）不少（缺席被正向断言拦），恰好这些改账。"""
+    rc, report = reg.run_regression(None, live_override=_p2_live())
+    assert rc == 0
+    seen = {tuple(t) for t in report["authorized_seen"]}
+    assert seen == set(reg.AUTHORIZED_FLIPS), (
+        f"实际授权翻转 {seen} ≠ 白名单 {set(reg.AUTHORIZED_FLIPS)}")

@@ -83,16 +83,12 @@ not_found: 维持现状
 
 ## 六、门禁精确化（用户补充⑤）
 
-`regression_batch1.py` 的 AUTHORIZED_TARGET 从集合放行改为**显式翻转白名单**：
+`regression_batch1.py` 的基准=**施工前快照**（docs/m65/pre-p2-snapshot.json，来源 d575a10 + 17 份合同文件哈希）：
 
-```
-AUTHORIZED_FLIPS = {
-  ("school-uniform-procurement-guangzhou.docx", "term", "通过", "未找到"),
-  ("mandate-contract-samr-2025.docx",           "term", "通过", "未找到"),
-}
-```
-
-仅这两份的 term 允许「通过→未找到」；其余 15 份 term 与**所有非靶向项**任何翻转均击穿门禁。payment/breach/signature 的授权维持现状语义（对比 run1/run2 基线的既有翻转表）。
+- payment/breach/signature 与全部其他项必须**逐项等于快照**（粗口径 AUTHORIZED_TARGET 已废除）
+- term 唯一例外：**7 份**授权翻转四元组（外审二轮勘正：gov 批1 时已修正，快照中即是未找到，P2 无翻转，不得计入）——school-uniform/construction/energy/food/raw-milk/work-contract/mandate
+- 正向断言：7 份 live 终态必须=未找到（防回归改回通过产生零 diff 溜过）
+- 总量审计：实际授权翻转集合必须与白名单**完全相等**（不多不少恰好这些改账）
 
 ## 七、测试族
 

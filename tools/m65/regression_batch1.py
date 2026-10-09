@@ -35,14 +35,14 @@ from tools.m65.analyze_f12 import _full_text  # noqa: E402
 EXPECTED_CONTRACTS = 17
 # P2 锚定精确白名单（用户补充⑤）：基准=施工前快照（pre-p2-snapshot.json，
 # d575a10）——term 整体放行太宽，写死到「哪份合同的哪个项允许从什么翻成什么」。
-# 8 份均经老钱口径验尸实锤为「标签在、值空白」的范本留白（spec-p2 §一改账）：
-# school=「自生效之日起＿年」、gov=期限在专用条款留空、construction=「工期总日历＿天」、
-# energy=服务期限栏空白、food=「供货服务期＿年」、raw-milk=「履行期限＿年＿月＿日」、
+# 7 份均经老钱口径验尸实锤为「标签在、值空白」的范本留白（spec-p2 §一改账）：
+# school=「自生效之日起＿年」、construction=「工期总日历＿天」、energy=服务期限栏
+# 空白、food=「供货服务期＿年」、raw-milk=「履行期限＿年＿月＿日」、
 # work-contract=承揽交付期限表格空白、mandate=「委托期限 自＿年＿月＿日至＿年＿月＿日止」。
+# （gov 不在列：批1 时已修正为未找到，快照中即是，P2 无翻转——外审二轮勘正）
 # 其余 10 份 term 与所有非期限项必须逐项等于快照。
 AUTHORIZED_FLIPS = frozenset({
     ("school-uniform-procurement-guangzhou.docx", "term", "通过", "未找到"),
-    ("gov-procurement-goods-mof-2024.docx", "term", "通过", "未找到"),
     ("construction-work-contract-2017.docx", "term", "通过", "未找到"),
     ("energy-hosting-service-2026.docx", "term", "通过", "未找到"),
     ("food-procurement-xinjiang-2025.docx", "term", "通过", "未找到"),
@@ -97,6 +97,7 @@ def run_regression(out_path: str | None, live_override: dict[str, dict[str, str]
 
     rows: list[dict] = []
     flipped_non_target = 0
+    authorized_seen: set[tuple[str, str, str | None, str | None]] = set()
     for fname, category in manifest.items():
         if live_override is not None:
             now = live_override[fname]
@@ -118,9 +119,12 @@ def run_regression(out_path: str | None, live_override: dict[str, dict[str, str]
                  for k in old.keys() | now.keys() if old.get(k) != now.get(k)}
         extra = {}
         for k, v in diffs.items():
-            # P2 唯一例外：四份授权 term 翻转四元组；payment/breach/signature
-            # 及全部其他项一律逐项等于快照（外审 PR #94 修复卡③）
-            if (fname, k, v[0], v[1]) not in AUTHORIZED_FLIPS:
+            quad = (fname, k, v[0], v[1])
+            # P2 唯一例外：白名单四元组；payment/breach/signature 及全部其他项
+            # 一律逐项等于快照（外审 PR #94 修复卡③）
+            if quad in AUTHORIZED_FLIPS:
+                authorized_seen.add(quad)
+            else:
                 extra[k] = v
         flipped_non_target += len(extra)
         rows.append({
@@ -166,8 +170,15 @@ def run_regression(out_path: str | None, live_override: dict[str, dict[str, str]
         else:
             print(f"✅ 授权翻转在场: {fname[:40]} {item_id} = {now}")
     flipped_non_target += authorize_fail
-
-    report = {"rows": rows, "flipped_non_target": flipped_non_target}
+    # 总量审计（外审修复卡③）：实际授权翻转集合必须与白名单完全相等——
+    # 既不许白名单外的翻转（上方已拦），也不许白名单内的翻转缺席（正向断言），
+    # 两者合起来=「不多不少恰好这些改账」
+    if authorized_seen != set(AUTHORIZED_FLIPS):
+        print(f"🔴 授权翻转集合与白名单不相等：实际 {sorted(authorized_seen)}"
+              f" ≠ 白名单 {sorted(AUTHORIZED_FLIPS)}")
+        flipped_non_target += 1
+    report = {"rows": rows, "flipped_non_target": flipped_non_target,
+              "authorized_seen": sorted(authorized_seen)}
     if out_path:
         Path(out_path).write_text(
             json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
