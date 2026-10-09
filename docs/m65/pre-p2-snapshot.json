@@ -1,0 +1,321 @@
+{
+ "说明": "P2 施工前 17 份状态快照（外审修复卡①：门禁逐项等于此快照，唯一例外=四份授权 term 翻转）",
+ "source_commit": "d575a10",
+ "source_file_sha256": "cec8fb541cdac7223d243439d03a248392b2308d8542e79dc8cc2c0c5ed9f190",
+ "contracts": {
+  "gov-procurement-goods-mof-2024.docx": {
+   "file_sha256": "1e95d7125018aded5794d0a4cf506063a718a5fc54a73c3dd74568cd78d0f0dc",
+   "category": "procurement",
+   "status_map": {
+    "subject": "通过",
+    "subject_matter": "通过",
+    "payment": "通过",
+    "term": "未找到",
+    "breach": "通过",
+    "confidentiality": "通过",
+    "ip": "通过",
+    "jurisdiction": "通过",
+    "termination": "通过",
+    "unfair_terms": "通过",
+    "governing_law": "通过",
+    "signature": "未找到"
+   }
+  },
+  "school-uniform-procurement-guangzhou.docx": {
+   "file_sha256": "12218512b8c7206c31db6ed34dd6b23686a40b98a37736c7964b7fd7651afcbe",
+   "category": "procurement",
+   "status_map": {
+    "subject": "通过",
+    "subject_matter": "通过",
+    "payment": "通过",
+    "term": "通过",
+    "breach": "通过",
+    "confidentiality": "未找到",
+    "ip": "通过",
+    "jurisdiction": "通过",
+    "termination": "通过",
+    "unfair_terms": "通过",
+    "governing_law": "需关注",
+    "signature": "需关注"
+   }
+  },
+  "food-procurement-xinjiang-2025.docx": {
+   "file_sha256": "b9c87d23a82f23cc22436c551355e3b794990abc60d17f48c5e24f23eb579efa",
+   "category": "procurement",
+   "status_map": {
+    "subject": "通过",
+    "subject_matter": "未找到",
+    "payment": "通过",
+    "term": "通过",
+    "breach": "通过",
+    "confidentiality": "未找到",
+    "ip": "未找到",
+    "jurisdiction": "通过",
+    "termination": "通过",
+    "unfair_terms": "未找到",
+    "governing_law": "需关注",
+    "signature": "通过"
+   }
+  },
+  "house-lease-gf-2025-2614.docx": {
+   "file_sha256": "b61d8b900d9841b9a60604723e37c7dee23accd082bd8fd8d92f0de486a39075",
+   "category": "lease",
+   "status_map": {
+    "subject": "通过",
+    "lessor_title": "通过",
+    "lease_term": "通过",
+    "delivery_acceptance": "通过",
+    "use_restriction": "通过",
+    "rent_payment": "通过",
+    "deposit": "通过",
+    "early_termination": "通过",
+    "renovation": "通过",
+    "maintenance": "通过",
+    "subletting": "通过",
+    "jurisdiction": "通过",
+    "governing_law": "本类不适用",
+    "signature": "通过"
+   }
+  },
+  "equipment-lease-construction-2000.docx": {
+   "file_sha256": "961bba7ce90c52e6a8c0a40b81690b11e629714c3ada79b4896be42c4daa4112",
+   "category": "lease",
+   "status_map": {
+    "subject": "通过",
+    "lessor_title": "通过",
+    "lease_term": "需关注",
+    "delivery_acceptance": "未找到",
+    "use_restriction": "通过",
+    "rent_payment": "通过",
+    "deposit": "通过",
+    "early_termination": "通过",
+    "renovation": "未找到",
+    "maintenance": "未找到",
+    "subletting": "通过",
+    "jurisdiction": "通过",
+    "governing_law": "本类不适用",
+    "signature": "通过"
+   }
+  },
+  "trade-secret-nda-guangdong.docx": {
+   "file_sha256": "12bb01dc842b450cd95a271bdcd9dc237da5d2344f2f2bfd3c2cc18695b47072",
+   "category": "nda",
+   "status_map": {
+    "subject": "通过",
+    "confidentiality_scope": "通过",
+    "payment": "本类不适用",
+    "agreement_term": "未找到",
+    "confidentiality_duration": "通过",
+    "breach": "通过",
+    "unfair_terms": "通过",
+    "ip": "未找到",
+    "jurisdiction": "通过",
+    "termination": "通过",
+    "governing_law": "通过",
+    "signature": "通过"
+   }
+  },
+  "business-cooperation-nda-guangdong.docx": {
+   "file_sha256": "e35731379de285009f6752c1b8bb44d650c801b4f6f6250a055429ec60d3fc24",
+   "category": "nda",
+   "status_map": {
+    "subject": "通过",
+    "confidentiality_scope": "通过",
+    "payment": "本类不适用",
+    "agreement_term": "未找到",
+    "confidentiality_duration": "通过",
+    "breach": "通过",
+    "unfair_terms": "通过",
+    "ip": "未找到",
+    "jurisdiction": "通过",
+    "termination": "未找到",
+    "governing_law": "通过",
+    "signature": "通过"
+   }
+  },
+  "agri-produce-sale-samr-2025.docx": {
+   "file_sha256": "d504a9b7a76cf0cb6bdbab7cd05ceabf6a87d8e08b26f6d313c453a252f886da",
+   "category": "procurement",
+   "status_map": {
+    "subject": "通过",
+    "subject_matter": "未找到",
+    "payment": "通过",
+    "term": "未找到",
+    "breach": "通过",
+    "confidentiality": "通过",
+    "ip": "未找到",
+    "jurisdiction": "通过",
+    "termination": "通过",
+    "unfair_terms": "未找到",
+    "governing_law": "通过",
+    "signature": "通过"
+   }
+  },
+  "cement-sale-gf-2008.docx": {
+   "file_sha256": "b0c4c44d677de2157e241af89ad153025d94d10e00262483e2ba7c303094949b",
+   "category": "procurement",
+   "status_map": {
+    "subject": "未找到",
+    "subject_matter": "未找到",
+    "payment": "未找到",
+    "term": "未找到",
+    "breach": "未找到",
+    "confidentiality": "未找到",
+    "ip": "未找到",
+    "jurisdiction": "通过",
+    "termination": "未找到",
+    "unfair_terms": "未找到",
+    "governing_law": "需关注",
+    "signature": "未找到"
+   }
+  },
+  "data-processing-service-2025.docx": {
+   "file_sha256": "403ff3d365a01bc572bd8ea37bf2b0fd75c17c7ba20c01284a5ddb0492bb90fe",
+   "category": "procurement",
+   "status_map": {
+    "subject": "通过",
+    "subject_matter": "未找到",
+    "payment": "需关注",
+    "term": "未找到",
+    "breach": "通过",
+    "confidentiality": "通过",
+    "ip": "通过",
+    "jurisdiction": "通过",
+    "termination": "通过",
+    "unfair_terms": "未找到",
+    "governing_law": "需关注",
+    "signature": "通过"
+   }
+  },
+  "construction-work-contract-2017.docx": {
+   "file_sha256": "490462c0b0d6b16d7081e99a7aa8c4c7131cd735a553b3cdcb30e20ed8a7d1d8",
+   "category": "procurement",
+   "status_map": {
+    "subject": "通过",
+    "subject_matter": "通过",
+    "payment": "通过",
+    "term": "通过",
+    "breach": "通过",
+    "confidentiality": "通过",
+    "ip": "通过",
+    "jurisdiction": "通过",
+    "termination": "通过",
+    "unfair_terms": "未找到",
+    "governing_law": "通过",
+    "signature": "通过"
+   }
+  },
+  "energy-hosting-service-2026.docx": {
+   "file_sha256": "bcb7b11d8501b1702bcebb018c4bd0adabc1b98ecdd2ed5edcbed6a597e6ce72",
+   "category": "procurement",
+   "status_map": {
+    "subject": "通过",
+    "subject_matter": "未找到",
+    "payment": "通过",
+    "term": "通过",
+    "breach": "通过",
+    "confidentiality": "通过",
+    "ip": "通过",
+    "jurisdiction": "通过",
+    "termination": "通过",
+    "unfair_terms": "通过",
+    "governing_law": "需关注",
+    "signature": "通过"
+   }
+  },
+  "raw-milk-purchase-2016.docx": {
+   "file_sha256": "9e06a79d9e83e4d370e7e6c4128c8b952078cb50d710fc7f08dfe20ae939fabc",
+   "category": "procurement",
+   "status_map": {
+    "subject": "通过",
+    "subject_matter": "未找到",
+    "payment": "通过",
+    "term": "通过",
+    "breach": "通过",
+    "confidentiality": "未找到",
+    "ip": "未找到",
+    "jurisdiction": "通过",
+    "termination": "未找到",
+    "unfair_terms": "未找到",
+    "governing_law": "需关注",
+    "signature": "通过"
+   }
+  },
+  "shanghai-residential-lease-2014.docx": {
+   "file_sha256": "3544c4024de8c37dbbb8548bce1248d505c454d0f1035e9f7a8bf11ee03c663e",
+   "category": "lease",
+   "status_map": {
+    "subject": "通过",
+    "lessor_title": "通过",
+    "lease_term": "通过",
+    "delivery_acceptance": "未找到",
+    "use_restriction": "通过",
+    "rent_payment": "通过",
+    "deposit": "通过",
+    "early_termination": "通过",
+    "renovation": "通过",
+    "maintenance": "通过",
+    "subletting": "通过",
+    "jurisdiction": "通过",
+    "governing_law": "本类不适用",
+    "signature": "需关注"
+   }
+  },
+  "zhejiang-vehicle-lease-2024.docx": {
+   "file_sha256": "596029723222aa69c38df026e1d0f50dc95ec2472b109fef1ff3e45a50f0bee6",
+   "category": "lease",
+   "status_map": {
+    "subject": "通过",
+    "lessor_title": "需关注",
+    "lease_term": "通过",
+    "delivery_acceptance": "通过",
+    "use_restriction": "通过",
+    "rent_payment": "需关注",
+    "deposit": "通过",
+    "early_termination": "需关注",
+    "renovation": "未找到",
+    "maintenance": "通过",
+    "subletting": "通过",
+    "jurisdiction": "通过",
+    "governing_law": "本类不适用",
+    "signature": "通过"
+   }
+  },
+  "mandate-contract-samr-2025.docx": {
+   "file_sha256": "58f7cd38beff837cee1a5b79b68a2da1058d596cc021f7fa5b66807875bcd9e6",
+   "category": "procurement",
+   "status_map": {
+    "subject": "通过",
+    "subject_matter": "未找到",
+    "payment": "通过",
+    "term": "通过",
+    "breach": "通过",
+    "confidentiality": "通过",
+    "ip": "通过",
+    "jurisdiction": "通过",
+    "termination": "通过",
+    "unfair_terms": "通过",
+    "governing_law": "通过",
+    "signature": "通过"
+   }
+  },
+  "work-contract-gf-2000.docx": {
+   "file_sha256": "0bf28408417f24456c7027ac1f7b4f718c2937493829857dce04764eba03640c",
+   "category": "procurement",
+   "status_map": {
+    "subject": "通过",
+    "subject_matter": "未找到",
+    "payment": "通过",
+    "term": "通过",
+    "breach": "未找到",
+    "confidentiality": "未找到",
+    "ip": "未找到",
+    "jurisdiction": "通过",
+    "termination": "未找到",
+    "unfair_terms": "未找到",
+    "governing_law": "需关注",
+    "signature": "未找到"
+   }
+  }
+ }
+}

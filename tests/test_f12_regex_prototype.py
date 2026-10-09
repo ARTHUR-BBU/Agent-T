@@ -74,12 +74,16 @@ def test_guardrail_participates() -> None:
 
 
 def test_matcher_contract() -> None:
-    """生产匹配器契约预演：一次匹配多处复用，命中对象**五字段**齐备、类型可区分。"""
+    """生产匹配器契约预演：一次匹配多处复用，命中对象字段齐备、类型可区分。"""
     hit_wl = proto.match_procurement_term("合同期限自2026年1月1日起至2028年12月31日止")
-    assert hit_wl["matched"] and hit_wl["hit_type"] == "whitelist"
+    assert hit_wl["matched"] and hit_wl["hit_type"] == "anchored"
     assert hit_wl["evidence"] and hit_wl["start"] is not None and hit_wl["end"] is not None
     hit_num = proto.match_procurement_term("甲方应在30日内完成交付")
     assert hit_num["matched"] and hit_num["hit_type"] == "unlabeled_numeric"
+    hit_pending = proto.match_procurement_term("委托期限：由双方另行协商确定")
+    assert hit_pending["matched"] and hit_pending["hit_type"] == "pending"
+    hit_blank = proto.match_procurement_term("第三条 委托期限")
+    assert hit_blank["matched"] and hit_blank["hit_type"] == "blank"
     miss = proto.match_procurement_term("付款期限为30日内")
     assert miss["matched"] is False and miss["hit_type"] == "none"
 
@@ -140,7 +144,9 @@ def test_all_cases_green_via_production_engine() -> None:
     failed: list[str] = []
     for name, text, fn, want in proto._CASES:
         if fn is proto.term_proc_pass:
-            got = bool(checklist._match_procurement_term(text).matched)
+            # P2 锚定口径：pass = matched 且 hit_type ∈ {anchored, unlabeled_numeric}
+            r = checklist._match_procurement_term(text)
+            got = bool(r.matched and r.hit_type in ("anchored", "unlabeled_numeric"))
         elif fn is proto.f2_verdicts:
             expect_fire = any(v == "触发需关注" for _, v in want)
             hit = checklist._first_unprotected_hit_alt(text, breach_na[0])
@@ -159,6 +165,30 @@ def test_all_cases_green_via_production_engine() -> None:
         if bool(got) != bool(want):
             failed.append(f"{name}: 生产判定={got} 期望={want}")
     assert not failed, "生产入口重放失败：" + "；".join(failed)
+
+
+def test_conflict_priority_matrix() -> None:
+    """冲突优先级表（老钱签字 §五）逐行验证：多条款并存时的汇总判定。"""
+    import app.services.checklist as checklist
+
+    def hit_type_of(text: str) -> tuple[str, bool]:
+        r = checklist._match_procurement_term(text)
+        return r.hit_type, r.blank_flag
+
+    # 行1：任一 pending → pending（最高优先，即使另有 anchored 条款）
+    assert hit_type_of("交付期限为2026年6月30日。委托期限：由双方另行协商确定") == ("pending", False)
+    # 行2：有 anchored；另有独立 blank 条款 → 通过 + 非阻断 blank_flag
+    assert hit_type_of("交付期限为2026年6月30日。第三条 委托期限") == ("anchored", True)
+    # 行2 变体：无标签数字链路 + 独立 blank → unlabeled_numeric + blank_flag
+    assert hit_type_of("乙方应在30日内完成交付。第三条 委托期限") == ("unlabeled_numeric", True)
+    # 行3：无实质，有 blank → blank（未找到+旗标）
+    assert hit_type_of("第三条 委托期限") == ("blank", False)
+    # 行4：全无标签且无数字链路 → none
+    assert hit_type_of("本合同经双方签署后生效。") == ("none", False)
+    # 老钱注释1：同窗 E 优先——时长已定仅起止待定 → anchored 不升级 pending
+    assert hit_type_of("委托期限3年，具体起止另行协商") == ("anchored", False)
+    # 老钱注释3（已知边界）：跨引用条款落 blank
+    assert hit_type_of("履行期限：详见附件") == ("blank", False)
 
 
 def test_unknown_matcher_fails_closed_at_load(tmp_path) -> None:

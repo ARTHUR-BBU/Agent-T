@@ -3,16 +3,7 @@
     {
       "file": "gov-procurement-goods-mof-2024.docx",
       "category": "procurement",
-      "diffs": {
-        "term": {
-          "was": "通过",
-          "now": "未找到"
-        },
-        "breach": {
-          "was": "需关注",
-          "now": "通过"
-        }
-      },
+      "diffs": {},
       "extra_flips": {},
       "live": {
         "subject": "通过",
@@ -34,9 +25,9 @@
       "file": "school-uniform-procurement-guangzhou.docx",
       "category": "procurement",
       "diffs": {
-        "payment": {
-          "was": "未找到",
-          "now": "通过"
+        "term": {
+          "was": "通过",
+          "now": "未找到"
         }
       },
       "extra_flips": {},
@@ -44,7 +35,7 @@
         "subject": "通过",
         "subject_matter": "通过",
         "payment": "通过",
-        "term": "通过",
+        "term": "未找到",
         "breach": "通过",
         "confidentiality": "未找到",
         "ip": "通过",
@@ -60,13 +51,9 @@
       "file": "food-procurement-xinjiang-2025.docx",
       "category": "procurement",
       "diffs": {
-        "payment": {
-          "was": "未找到",
-          "now": "通过"
-        },
         "term": {
-          "was": "未找到",
-          "now": "通过"
+          "was": "通过",
+          "now": "未找到"
         }
       },
       "extra_flips": {},
@@ -74,7 +61,7 @@
         "subject": "通过",
         "subject_matter": "未找到",
         "payment": "通过",
-        "term": "通过",
+        "term": "未找到",
         "breach": "通过",
         "confidentiality": "未找到",
         "ip": "未找到",
@@ -135,12 +122,7 @@
     {
       "file": "trade-secret-nda-guangdong.docx",
       "category": "nda",
-      "diffs": {
-        "signature": {
-          "was": "需关注",
-          "now": "通过"
-        }
-      },
+      "diffs": {},
       "extra_flips": {},
       "live": {
         "subject": "通过",
@@ -161,12 +143,7 @@
     {
       "file": "business-cooperation-nda-guangdong.docx",
       "category": "nda",
-      "diffs": {
-        "signature": {
-          "was": "需关注",
-          "now": "通过"
-        }
-      },
+      "diffs": {},
       "extra_flips": {},
       "live": {
         "subject": "通过",
@@ -187,20 +164,7 @@
     {
       "file": "agri-produce-sale-samr-2025.docx",
       "category": "procurement",
-      "diffs": {
-        "payment": {
-          "was": "未找到",
-          "now": "通过"
-        },
-        "breach": {
-          "was": "需关注",
-          "now": "通过"
-        },
-        "signature": {
-          "was": "需关注",
-          "now": "通过"
-        }
-      },
+      "diffs": {},
       "extra_flips": {},
       "live": {
         "subject": "通过",
@@ -242,12 +206,7 @@
     {
       "file": "data-processing-service-2025.docx",
       "category": "procurement",
-      "diffs": {
-        "signature": {
-          "was": "需关注",
-          "now": "通过"
-        }
-      },
+      "diffs": {},
       "extra_flips": {},
       "live": {
         "subject": "通过",
@@ -269,13 +228,9 @@
       "file": "construction-work-contract-2017.docx",
       "category": "procurement",
       "diffs": {
-        "payment": {
-          "was": "未找到",
-          "now": "通过"
-        },
-        "breach": {
-          "was": "需关注",
-          "now": "通过"
+        "term": {
+          "was": "通过",
+          "now": "未找到"
         }
       },
       "extra_flips": {},
@@ -283,7 +238,7 @@
         "subject": "通过",
         "subject_matter": "通过",
         "payment": "通过",
-        "term": "通过",
+        "term": "未找到",
         "breach": "通过",
         "confidentiality": "通过",
         "ip": "通过",
@@ -299,13 +254,9 @@
       "file": "energy-hosting-service-2026.docx",
       "category": "procurement",
       "diffs": {
-        "payment": {
-          "was": "未找到",
-          "now": "通过"
-        },
-        "signature": {
-          "was": "需关注",
-          "now": "通过"
+        "term": {
+          "was": "通过",
+          "now": "未找到"
         }
       },
       "extra_flips": {},
@@ -313,7 +264,7 @@
         "subject": "通过",
         "subject_matter": "未找到",
         "payment": "通过",
-        "term": "通过",
+        "term": "未找到",
         "breach": "通过",
         "confidentiality": "通过",
         "ip": "通过",
@@ -329,13 +280,9 @@
       "file": "raw-milk-purchase-2016.docx",
       "category": "procurement",
       "diffs": {
-        "payment": {
-          "was": "未找到",
-          "now": "通过"
-        },
         "term": {
-          "was": "未找到",
-          "now": "通过"
+          "was": "通过",
+          "now": "未找到"
         }
       },
       "extra_flips": {},
@@ -343,7 +290,7 @@
         "subject": "通过",
         "subject_matter": "未找到",
         "payment": "通过",
-        "term": "通过",
+        "term": "未找到",
         "breach": "通过",
         "confidentiality": "未找到",
         "ip": "未找到",
@@ -405,21 +352,9 @@
       "file": "mandate-contract-samr-2025.docx",
       "category": "procurement",
       "diffs": {
-        "payment": {
-          "was": "未找到",
-          "now": "通过"
-        },
         "term": {
-          "was": "未找到",
-          "now": "通过"
-        },
-        "breach": {
-          "was": "需关注",
-          "now": "通过"
-        },
-        "signature": {
-          "was": "需关注",
-          "now": "通过"
+          "was": "通过",
+          "now": "未找到"
         }
       },
       "extra_flips": {},
@@ -427,7 +362,7 @@
         "subject": "通过",
         "subject_matter": "未找到",
         "payment": "通过",
-        "term": "通过",
+        "term": "未找到",
         "breach": "通过",
         "confidentiality": "通过",
         "ip": "通过",
@@ -443,13 +378,9 @@
       "file": "work-contract-gf-2000.docx",
       "category": "procurement",
       "diffs": {
-        "payment": {
-          "was": "未找到",
-          "now": "通过"
-        },
         "term": {
-          "was": "未找到",
-          "now": "通过"
+          "was": "通过",
+          "now": "未找到"
         }
       },
       "extra_flips": {},
@@ -457,7 +388,7 @@
         "subject": "通过",
         "subject_matter": "未找到",
         "payment": "通过",
-        "term": "通过",
+        "term": "未找到",
         "breach": "未找到",
         "confidentiality": "未找到",
         "ip": "未找到",
@@ -470,5 +401,49 @@
       "breach_note": "未在合同中找到相关约定"
     }
   ],
-  "flipped_non_target": 0
+  "flipped_non_target": 0,
+  "authorized_seen": [
+    [
+      "construction-work-contract-2017.docx",
+      "term",
+      "通过",
+      "未找到"
+    ],
+    [
+      "energy-hosting-service-2026.docx",
+      "term",
+      "通过",
+      "未找到"
+    ],
+    [
+      "food-procurement-xinjiang-2025.docx",
+      "term",
+      "通过",
+      "未找到"
+    ],
+    [
+      "mandate-contract-samr-2025.docx",
+      "term",
+      "通过",
+      "未找到"
+    ],
+    [
+      "raw-milk-purchase-2016.docx",
+      "term",
+      "通过",
+      "未找到"
+    ],
+    [
+      "school-uniform-procurement-guangzhou.docx",
+      "term",
+      "通过",
+      "未找到"
+    ],
+    [
+      "work-contract-gf-2000.docx",
+      "term",
+      "通过",
+      "未找到"
+    ]
+  ]
 }

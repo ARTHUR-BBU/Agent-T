@@ -106,7 +106,7 @@ _NDA_BASELINE = (r"(?:协议[^。，；,;\n\r]{0,6}自[^。]{0,15}日起?[^。]{
 _HEAD = r"(?:^|[。；，,;\n\r])[^。，；,;\n\r]{0,12}"
 _DATE_PROC = re.compile(_HEAD + _PROC_WORDS + r"[^。，；,;\n\r]{0,6}自[^。]{0,15}日起?[^。]{0,15}至[^。]{0,15}止")
 _DATE_NDA = re.compile(_HEAD + _NDA_WORDS + r"[^。，；,;\n\r]{0,6}自[^。]{0,15}日起?[^。]{0,15}至[^。]{0,15}止")
-_TERM_PROC = re.compile(_HEAD + r"(?:" + _PROC_WORDS + r")")
+_TERM_PROC = re.compile(_HEAD + r"(?P<label>" + _PROC_WORDS + r")")
 TERM_PASS_NDA = re.compile(_HEAD + r"(?:" + _NDA_WORDS + r"|" + _NDA_BASELINE + r")")
 
 # 采购白名单期限名（票头核对用：分句内发现的 ××期限 必须以其结尾命中本表才算采购归属）
@@ -124,29 +124,95 @@ def _clause_of(text: str, start: int, end: int) -> str:
     return text[lo + 1:hi]
 
 
+# ---- P2 期限实质锚定（老钱裁定+签字 2026-10-09，与生产 checklist.py 同逻辑）----
+_ANCHOR_WINDOW = 60
+_ANCHOR_SEP = "。；"  # 跨换行取至句号/分号；60 字截断兜底
+_ANCHOR_E1 = re.compile(r"[\d零〇一二两三四五六七八九十百]+(?:年|个月|天|日|个工作日|小时|周)")
+_ANCHOR_E2 = re.compile(r"\d+\s*(?:年|月|日)")
+_ANCHOR_E3_FROM = re.compile(r"(?:自|从)[^。；\n\r]{0,20}(?:之日)?起")
+_ANCHOR_E3_TO = re.compile(r"(?:至|止)")
+_PLACEHOLDER = re.compile(r"(?:[＿_]|[ 　]{2,})\s*(?:年|月|日|天|时|周)")
+_PENDING_WORDS = re.compile(r"另行协商|另行约定|协商确定|待定|另行确定|届时(?:另行)?(?:约定|确定|商定)")
+
+
+def _clause_window(text: str, start: int) -> str:
+    """标签命中点起的锚定窗口：跨换行取至句号/分号，上限 60 字符。
+    起点跳过前导分隔符（_PROC_LABELED 的 _HEAD 含前导「。」等，不跳会空窗）。"""
+    i = start
+    while i < len(text) and text[i] in _ANCHOR_SEP:
+        i += 1
+    for j in range(i, min(len(text), i + _ANCHOR_WINDOW + 1)):
+        if text[j] in _ANCHOR_SEP:
+            return text[i:j]
+    return text[i:i + _ANCHOR_WINDOW]
+
+
+def _classify_label_clause(window: str) -> str:
+    """单个标签条款分类：anchored / pending / blank（老钱裁定 §三）。"""
+    has_placeholder = bool(_PLACEHOLDER.search(window))
+    e3 = (bool(_ANCHOR_E3_FROM.search(window)) and bool(_ANCHOR_E3_TO.search(window))
+          and not has_placeholder)
+    e1 = False
+    for m in _ANCHOR_E1.finditer(window):
+        if not _PLACEHOLDER.search(window[max(0, m.start() - 6):m.end()]):
+            e1 = True
+            break
+    if e1 or (not has_placeholder and _ANCHOR_E2.search(window)) or e3:
+        return "anchored"
+    if _PENDING_WORDS.search(window):
+        return "pending"
+    return "blank"
+
+
 def match_procurement_term(text: str) -> dict:
-    """生产匹配器契约预演（注册表名 procurement_term）：
+    """生产匹配器契约预演（注册表名 procurement_term，P2 四分类+unlabeled 存量保留）：
     一次匹配，返回命中对象——状态判定/quote/hits/全文兜底四处复用同一结果，
     不允许同一规则被扫三遍（外审 v1.9.1 阻断2）。YAML 只能引用预注册名，
-    禁止从配置动态导入模块或函数路径。"""
-    m = _TERM_PROC.search(text)
-    if m:
-        return {"matched": True, "start": m.start(), "end": m.end(),
-                "evidence": m.group(), "hit_type": "whitelist"}
+    禁止从配置动态导入模块或函数路径。汇总优先级（老钱签字 §五）：
+    pending > anchored/unlabeled > blank > none。"""
+    classified: list[tuple[str, int, int, str]] = []
+    for m in _TERM_PROC.finditer(text):
+        # 窗口从标签本体起（外审 P2 #94 销项②：_HEAD 前缀日期不得背书空白标签）
+        window = _clause_window(text, m.start("label"))
+        cls = _classify_label_clause(window)
+        classified.append((cls, m.start("label"), m.start("label") + len(window), window[:40]))
+    has_unlabeled: tuple[int, int, str] | None = None
     for m2 in re.finditer(_PROC_BASELINE, text):
         clause = _clause_of(text, m2.start(), m2.end())
         bad_head = any(not any(name.endswith(w) for w in _PROC_NAME_LIST)
                        for name in _TERM_NAME_SPAN.findall(clause))
         if not bad_head:
-            return {"matched": True, "start": m2.start(), "end": m2.end(),
-                    "evidence": m2.group(), "hit_type": "unlabeled_numeric"}
+            has_unlabeled = (m2.start(), m2.end(), m2.group())
+            break
+    pending = [c for c in classified if c[0] == "pending"]
+    anchored = [c for c in classified if c[0] == "anchored"]
+    blanks = [c for c in classified if c[0] == "blank"]
+    if pending:
+        cls, s, e, q = pending[0]
+        return {"matched": True, "start": s, "end": e, "evidence": q, "hit_type": "pending"}
+    if anchored or has_unlabeled:
+        if anchored:
+            _, s, e, q = anchored[0]
+            return {"matched": True, "start": s, "end": e, "evidence": q,
+                    "hit_type": "anchored"}
+        # 无标签数字链路：hit_type 保留原身份；坐标用链路命中本身
+        us, ue, uq = has_unlabeled  # type: ignore[misc]
+        return {"matched": True, "start": us, "end": ue, "evidence": uq,
+                "hit_type": "unlabeled_numeric"}
+    if blanks:
+        cls, s, e, q = blanks[0]
+        return {"matched": True, "start": s, "end": e, "evidence": q, "hit_type": "blank"}
     return {"matched": False, "start": None, "end": None,
             "evidence": "", "hit_type": "none"}
 
 
 def term_proc_pass(text: str) -> bool:
-    """公开判定入口（测试与生产统一走此入口，不许测内部零件）。"""
-    return match_procurement_term(text)["matched"]
+    """公开判定入口（测试与生产统一走此入口，不许测内部零件）。
+
+    P2 期限锚定口径（老钱裁定+签字 2026-10-09）：blank（空白占位）matched=True
+    但不算通过——只有 anchored/unlabeled_numeric 才通过。"""
+    r = match_procurement_term(text)
+    return bool(r["matched"] and r["hit_type"] in ("anchored", "unlabeled_numeric"))
 
 # ============ signature pass 正向入口（配对窗口维持 [^。]，跨换行签署栏不受影响） ============
 # 正向不锚左括号与角色后冒号（17 份回归实证三形态：签名/盖章）、
@@ -240,9 +306,26 @@ _PROC_TERM_CASES: list[tuple[str, str, object, object]] = [
     ("举证期限7日内冒充", "举证期限为7日内", term_proc_pass, False),
     ("索赔完成冒充", "索赔期限为十个工作日内完成索赔", term_proc_pass, False),
     # --- 17 份真实合同回归（批1施工验收）暴露的三面
-    ("合同履行期标签(school-uniform)", "合同履行期自生效之日起三年，至2028年12月31日止", term_proc_pass, True),
-    ("委托期限标签(mandate坐实)", "第三条 委托期限", term_proc_pass, True),
+    # （P2 改账：school-uniform/mandate 原文验尸均为空格占位——改判 blank 不通过，
+    #   老钱裁定硬要求+用户批准的改账）
+    ("合同履行期空格占位(school-uniform改账)", "合同履行期自生效之日起      年，至      年    月    日止", term_proc_pass, False),
+    ("委托期限空格占位(mandate改账)", "第三条 委托期限\n自     年   月   日至    年   月   日止。", term_proc_pass, False),
     ("担保期限不算交付期限(gov范本)", "履约担保期限：合同签订后30日内", term_proc_pass, False),
+    # --- P2 期限实质锚定（老钱裁定 §三 + 签字三条注释，spec-p2-term-anchoring.md）
+    ("委托期限真日期区间(老钱守卫E3)", "委托期限 自2024年1月1日至2024年12月31日止", term_proc_pass, True),
+    ("履行期限数字时长(老钱守卫E1)", "履行期限：自交付之日起6个月内完成交付", term_proc_pass, True),
+    ("合同履行期中文数字时长(老钱守卫E1)", "合同履行期自生效之日起三年", term_proc_pass, True),
+    ("事件止点无数字(老钱守卫E3勿误杀)", "履行期限：自生效之日起至验收合格之日止", term_proc_pass, True),
+    ("时长已定起止待定(注释1:E优先)", "委托期限3年，具体起止另行协商", term_proc_pass, True),
+    ("另行协商待定期限(X1)", "委托期限：由双方另行协商确定", term_proc_pass, False),
+    ("下划线占位(X2)", "委托期限：＿＿＿", term_proc_pass, False),
+    ("下划线日期占位(X2)", "交付期限：自＿＿年＿＿月＿＿日起", term_proc_pass, False),
+    ("空标题(X2)", "第三条 委托期限", term_proc_pass, False),
+    ("全角空格占位(X2相邻反例)", "交付期限：　年　月　日", term_proc_pass, False),
+    ("混合占位(X2相邻反例)", "交付期限：2026＿年 5 月前", term_proc_pass, False),
+    ("正文单空格不误判(相邻反例守卫)", "履行期限：乙方应在交付后 3 日内结清余款", term_proc_pass, True),
+    ("无标签数字链路存量保护(老钱签字前置)", "乙方应在30日内完成交付", term_proc_pass, True),
+    ("前缀日期不背书空白标签(外审P2销项②)", "2026年版合同期限：", term_proc_pass, False),
 ]
 
 _CASES: list[tuple[str, str, object, object]] = _PROC_TERM_CASES + _OTHER_CASES

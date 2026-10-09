@@ -37,13 +37,17 @@ STATUS_NA = "本类不适用"
 
 @dataclass(frozen=True)
 class MatchResult:
-    """匹配器命中对象（五字段，一次匹配多处复用：状态/quote/hits/全文兜底）。"""
+    """匹配器命中对象（五字段，一次匹配多处复用：状态/quote/hits/全文兜底）。
+
+    blank_flag（可选第六字段，P2 期限锚定新增，默认 False 向后兼容）：
+    有实质期限命中但另有独立空白占位条款——通过 + 非阻断旗标（老钱裁定）。"""
 
     matched: bool
     start: int | None
     end: int | None
     evidence: str
     hit_type: str
+    blank_flag: bool = False
 
 
 _MATCHERS: dict[str, Callable[[str], MatchResult]] = {}
@@ -65,8 +69,59 @@ _PROC_BASELINE = (
     _PROC_NUMBER + r"(?:日内|天内|个工作日内)"
     r"[^。，；,;\n\r]{0,20}(?:完成交付|完成送货|完成安装|完成验收|交付|送货|到场|送装|到货)"
 )
-_PROC_LABELED = re.compile(r"(?:^|[。；，,;\n\r])[^。，；,;\n\r]{0,12}" + _PROC_TERM_COMPOUNDS)
+# label 捕获组（外审 P2 #94 销项②）：锚定窗口从标签本体起算——_HEAD 前缀
+# 里的「2026年版」等不得为空白标签背书实质证据
+_PROC_LABELED = re.compile(r"(?:^|[。；，,;\n\r])[^。，；,;\n\r]{0,12}(?P<label>" + _PROC_TERM_COMPOUNDS + r")")
 _PROC_NAME_SPAN = re.compile(r"[一-龥]{0,4}期限")
+
+# ---- P2 期限实质锚定（老钱裁定 2026-10-08 + 签字 2026-10-09，spec-p2-term-anchoring.md）----
+# 窗口：标签命中点起跨换行取至句号/分号，上限 60 字（mandate 日期区间在标签下一行）
+_ANCHOR_WINDOW = 60
+_ANCHOR_SEP = "。；"  # 窗口终止符（老钱：跨换行取至句号/分号——日期区间常在标签下一行；60 字截断兜底）
+# E1 数字时长：含中文数字（老钱裁定原文词表）
+_ANCHOR_E1 = re.compile(r"[\d零〇一二两三四五六七八九十百]+(?:年|个月|天|日|个工作日|小时|周)")
+# E2 真实数字日期：日期表达含至少一个阿拉伯数字
+_ANCHOR_E2 = re.compile(r"\d+\s*(?:年|月|日)")
+# E3 起止双锚：自/从…起 与 至/止 同现
+_ANCHOR_E3_FROM = re.compile(r"(?:自|从)[^。；\n\r]{0,20}(?:之日)?起")
+_ANCHOR_E3_TO = re.compile(r"(?:至|止)")
+# 占位证据（出现即 E1–E3 失效，除非另有无占位的 E1）：
+# 下划线或连续空白（含全角空格）紧邻时间单位；单空格不算（「在 3 日内支付」不受误伤）
+_PLACEHOLDER = re.compile(r"(?:[＿_]|[ 　]{2,})\s*(?:年|月|日|天|时|周)")
+# 待定词（X1，仅 E1–E3 全不中时判定）
+_PENDING_WORDS = re.compile(r"另行协商|另行约定|协商确定|待定|另行确定|届时(?:另行)?(?:约定|确定|商定)")
+
+
+def _clause_window(text: str, start: int) -> str:
+    """标签命中点起的锚定窗口：跨换行取至句号/分号，上限 60 字符。
+    起点跳过前导分隔符（_PROC_LABELED 的 _HEAD 含前导「。」等，不跳会空窗）。"""
+    i = start
+    while i < len(text) and text[i] in _ANCHOR_SEP:
+        i += 1
+    for j in range(i, min(len(text), i + _ANCHOR_WINDOW + 1)):
+        if text[j] in _ANCHOR_SEP:
+            return text[i:j]
+    return text[i:i + _ANCHOR_WINDOW]
+
+
+def _classify_label_clause(window: str) -> str:
+    """单个标签条款分类：anchored / pending / blank（老钱裁定 §三）。"""
+    has_placeholder = bool(_PLACEHOLDER.search(window))
+    # E3 起止双锚（无占位证据才成立）
+    e3 = (bool(_ANCHOR_E3_FROM.search(window)) and bool(_ANCHOR_E3_TO.search(window))
+          and not has_placeholder)
+    # E1 数字时长：有占位时仅当存在「不含占位段」的 E1 命中段
+    e1 = False
+    for m in _ANCHOR_E1.finditer(window):
+        seg_start = m.start()
+        if not _PLACEHOLDER.search(window[max(0, seg_start - 6):m.end()]):
+            e1 = True
+            break
+    if e1 or (not has_placeholder and _ANCHOR_E2.search(window)) or e3:
+        return "anchored"
+    if _PENDING_WORDS.search(window):
+        return "pending"
+    return "blank"
 _PROC_NAME_LIST = ("合同期限", "履行期限", "履行期", "交付期限", "供货服务期", "供货期",
                    "服务期", "租赁期限", "租期", "工期", "委托期限")
 _CLAUSE_SEPS = "。；，,;\n\r"
@@ -82,17 +137,48 @@ def _clause_of(text: str, start: int, end: int) -> str:
 
 @_register_matcher("procurement_term")
 def _match_procurement_term(text: str) -> MatchResult:
-    """两步判定：白名单标签直接通过；无标签数字期限→采购动作链候选
-    再核对分句「票头」——分句内 ××期限 不以采购白名单结尾 → 拒绝。"""
-    m = _PROC_LABELED.search(text)
-    if m:
-        return MatchResult(True, m.start(), m.end(), m.group(), "whitelist")
+    """P2 期限四分类（老钱裁定+签字，spec-p2-term-anchoring.md v1.1）：
+
+    逐标签条款分类（anchored/pending/blank）+ 无标签数字链路（存量原样保留，
+    汇总视同 anchored），按老钱签字优先级汇总：
+      任一 pending → pending（最高优先）；
+      任一 anchored/unlabeled_numeric → anchored（blank_flag=另有独立空白条款）；
+      仅 blank → blank（未找到+旗标）；
+      全无 → none。
+    """
+    classified: list[tuple[str, int, int, str]] = []  # (分类, start, end, 引句)
+    for m in _PROC_LABELED.finditer(text):
+        # 窗口从标签本体起（外审 P2 #94 销项②：_HEAD 前缀日期不得背书空白标签）
+        window = _clause_window(text, m.start("label"))
+        cls = _classify_label_clause(window)
+        quote = window[:40]
+        classified.append((cls, m.start("label"), m.start("label") + len(window), quote))
+    has_unlabeled: tuple[int, int, str] | None = None
     for m2 in re.finditer(_PROC_BASELINE, text):
         clause = _clause_of(text, m2.start(), m2.end())
         bad_head = any(not any(name.endswith(w) for w in _PROC_NAME_LIST)
                        for name in _PROC_NAME_SPAN.findall(clause))
         if not bad_head:
-            return MatchResult(True, m2.start(), m2.end(), m2.group(), "unlabeled_numeric")
+            has_unlabeled = (m2.start(), m2.end(), m2.group())
+            break
+    pending = [c for c in classified if c[0] == "pending"]
+    anchored = [c for c in classified if c[0] == "anchored"]
+    blanks = [c for c in classified if c[0] == "blank"]
+    if pending:
+        cls, s, e, q = pending[0]
+        return MatchResult(True, s, e, q, "pending")
+    if anchored or has_unlabeled:
+        if anchored:
+            _, s, e, q = anchored[0]
+            return MatchResult(True, s, e, q, "anchored", blank_flag=bool(blanks))
+        # 无标签数字链路：hit_type 保留原身份（存量行为，老钱签字前置条件）；
+        # 坐标用链路命中本身（_match 消费要求坐标非空）
+        us, ue, uq = has_unlabeled  # type: ignore[misc]
+        return MatchResult(True, us, ue, uq, "unlabeled_numeric",
+                           blank_flag=bool(blanks))
+    if blanks:
+        cls, s, e, q = blanks[0]
+        return MatchResult(True, s, e, q, "blank")
     return MatchResult(False, None, None, "", "none")
 
 
@@ -224,6 +310,14 @@ def _validate_matchers(path: Path, cfg: dict[str, Any]) -> None:
             for n, rule in enumerate((item.get("rules") or {}).get(phase) or []):
                 if isinstance(rule, dict) and "matcher" in rule and rule["matcher"] not in _MATCHERS:
                     bad.append(f"{path}/{iid}#{phase}[{n}] matcher={rule['matcher']!r}")
+                # require_hit_type 必须是非空字符串列表（P2 期限锚定；写错类型
+                # 会让过滤静默失明——匹配上了却被当不合格丢弃）
+                if isinstance(rule, dict) and "require_hit_type" in rule:
+                    rht = rule["require_hit_type"]
+                    if not (isinstance(rht, list) and rht
+                            and all(isinstance(x, str) for x in rht)):
+                        bad.append(f"{path}/{iid}#{phase}[{n}] require_hit_type "
+                                   f"必须为非空字符串列表")
                 # hit_alternatives 三元组缺一不可（fail-closed：缺 start_token
                 # 会让豁免链禁行段失明；缺 neg_sensitive 会让否定判定口径漂移）
                 if isinstance(rule, dict) and "hit_alternatives" in rule:
@@ -401,6 +495,8 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
         "quote": "",
         "hits": [],
         "category_na": False,
+        # P2 期限锚定：空白占位非阻断旗标（未找到分支可覆写为 True）
+        "blank_flag": False,
     }
 
     if item.get("na"):
@@ -452,6 +548,8 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
                 "hits": _hits_for_rule(text, rule, evidence),
                 "evidence_start": evidence["start"],
                 "evidence_end": evidence["end"],
+                # P2 期限锚定：有实质期限但另有独立空白条款 → 非阻断旗标透传
+                "blank_flag": bool(evidence.get("blank_flag")),
                 "rule_id": f"{item['id']}#p{n}",
                 "rule_class": _rule_class(rule, item),
             }
@@ -463,12 +561,25 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
     # 「未找到」并触发 89 封顶；missing_as 决定缺项档位（默认「未找到」，可设「需关注」加严）。
     missing_as = item.get("missing_as", STATUS_NOT_FOUND)
     missing_note = item.get("missing_note", "未在合同中找到相关约定")
+    note = missing_note if missing_as == STATUS_ATTENTION else "未在合同中找到相关约定"
+    blank_flag = False
+    # P2 期限锚定：blank 分类旗标（老钱裁定：空白占位→未找到+旗标，note 带引句；
+    # regex 纯本地微开销，非「四处复用」红线路径——未找到是独立判定分支）
+    for rule in rules.get("pass") or []:
+        if "matcher" in rule:
+            res = _run_matcher(text, rule)
+            if res.matched and res.hit_type == "blank":
+                blank_flag = True
+                note = (f"检测到期限条款但内容留白，可能为未填写模板（引句："
+                        f"{(res.evidence or '')[:40]}）")
+                break
     return {
         **base,
         "status": missing_as,
-        "note": missing_note if missing_as == STATUS_ATTENTION else "未在合同中找到相关约定",
+        "note": note,
         "quote": "",
         "hits": [],
+        "blank_flag": blank_flag,
         # 未找到=「有没有写 X」未命中：item 级类别（existence 判定的落点）
         "rule_id": None,
         "rule_class": _rule_class({}, item),
@@ -511,8 +622,14 @@ def _first_unprotected_occurrence(text: str, rule: dict[str, Any]) -> Optional[d
         res = _run_matcher(text, rule)
         if not res.matched or res.start is None or res.end is None:
             return None
+        # P2 期限锚定：require_hit_type 过滤（缺省=任意 matched，向后兼容）
+        require = rule.get("require_hit_type")
+        if require and res.hit_type not in require:
+            return None
         return {"start": res.start, "end": res.end, "text": res.evidence,
-                "pattern": f"matcher:{rule['matcher']}", "hit_type": res.hit_type}
+                "pattern": f"matcher:{rule['matcher']}", "hit_type": res.hit_type,
+                # 非阻断空白旗标（P2）：pass 分支透传到 item 结果
+                "blank_flag": res.blank_flag}
     if "hit_alternatives" in rule:
         return _first_unprotected_hit_alt(text, rule)
     top = {k: rule[k] for k in ("pattern", "any_of", "all_of") if k in rule}
@@ -585,7 +702,11 @@ def _patterns_from_spec(spec: Any) -> list[str]:
 def _rule_matches(text: str, rule: dict[str, Any]) -> bool:
     """Positive match: matcher / pattern / any_of (OR) / all_of (AND) / hit_alternatives."""
     if "matcher" in rule:
-        return _run_matcher(text, rule).matched
+        res = _run_matcher(text, rule)
+        if not res.matched:
+            return False
+        require = rule.get("require_hit_type")
+        return not require or res.hit_type in require
     if "hit_alternatives" in rule:
         return _first_unprotected_hit_alt(text, rule) is not None
     if "all_of" in rule:
@@ -648,7 +769,12 @@ def _extract_hits_from_rule(text: str, rule: dict[str, Any]) -> list[str]:
     # matcher / hit_alternatives：复用判定入口的结果（一次匹配多处复用，不重扫）
     if "matcher" in rule:
         res = _run_matcher(text, rule)
-        return ([f"{res.evidence[:40]}({res.hit_type})"] if res.matched else [])
+        if not res.matched:
+            return []
+        require = rule.get("require_hit_type")
+        if require and res.hit_type not in require:
+            return []
+        return [f"{res.evidence[:40]}({res.hit_type})"]
     if "hit_alternatives" in rule:
         ev = _first_unprotected_hit_alt(text, rule)
         return ([f"{(ev['text'] or '')[:40]}({ev.get('hit_type', 'unprotected')})"]

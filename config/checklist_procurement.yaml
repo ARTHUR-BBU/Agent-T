@@ -187,12 +187,20 @@ items:
     segment: B
     description: 交付/履行期限是否明确
     rules:
-      pass:
-        # F-1/F-2 第一批（金标 v2，设计稿 v1.9.2）：两步匹配器——白名单标签
-        # 直接通过；无标签数字期限→采购动作链候选再核对分句票头
-        # （付款/索赔/整改/举证等非采购期限不得冒充，黑名单不枚举）
+      need_attention:
+        # P2 期限实质锚定（老钱裁定 2026-10-08 + 签字 2026-10-09）：待定期限
+        # （另行协商/待定等）→需关注——已填写但实质悬置，届满点不确定
         - matcher: procurement_term
-          note: 已约定交付/履行期限安排
+          require_hit_type: ["pending"]
+          note: 期限条款已填写但实质待定（另行协商等），届满点不确定，需关注
+          class: heuristic
+      pass:
+        # P2：实质期限锚定——白名单标签须带实质内容（E1 数字时长/E2 真实数字
+        # 日期/E3 起止双锚无占位）；无标签数字链路（unlabeled_numeric）存量
+        # 原样保留（老钱签字前置条件）。空白占位 → 未找到+旗标（见引擎 blank 通道）
+        - matcher: procurement_term
+          require_hit_type: ["anchored", "unlabeled_numeric"]
+          note: 已约定明确的交付/履行期限
       not_found:
         - pattern: "期限|日期|日内|天内"
 
