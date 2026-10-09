@@ -337,6 +337,19 @@ def _validate_matchers(path: Path, cfg: dict[str, Any]) -> None:
                                 and isinstance(alt.get("neg_sensitive"), bool)):
                             bad.append(f"{path}/{iid}#{phase}[{n}].hit_alternatives[{k}] "
                                        f"缺 pattern/start_token/neg_sensitive 之一")
+                # blank_flag_pattern 必须是合法正则（A2 空壳保密标签：写错正则若
+                # 静默失效，「栏目留白」旗标就永远不亮——用户看不到该知道的空白）
+                if isinstance(rule, dict) and "blank_flag_pattern" in rule:
+                    bfp = rule["blank_flag_pattern"]
+                    if not isinstance(bfp, str) or not bfp:
+                        bad.append(f"{path}/{iid}#{phase}[{n}] blank_flag_pattern "
+                                   f"必须为非空正则字符串")
+                    else:
+                        try:
+                            re.compile(bfp)
+                        except re.error:
+                            bad.append(f"{path}/{iid}#{phase}[{n}] blank_flag_pattern "
+                                       f"非法正则: {bfp!r}")
     if bad:
         raise ValueError(
             "配置错误（fail-closed）：匹配器/hit_alternatives 三元组结构非法\n" + "\n".join(bad))
@@ -584,6 +597,17 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
                 note = (f"检测到期限条款但内容留白，可能为未填写模板（引句："
                         f"{(res.evidence or '')[:40]}）")
                 break
+        # A2 空壳保密标签（老钱裁定 2026-10-09 + 用户红线）：规则级
+        # blank_flag_pattern——判定为未找到且全文命中「栏目存在但内容空白」形态时，
+        # 打非阻断旗标提示用户「这一栏是空的」。旗标≠风险警报（不判需关注、
+        # 不进封顶口径）；note 固定文案由 YAML blank_flag_note 提供。
+        elif "blank_flag_pattern" in rule:
+            try:
+                if re.search(rule["blank_flag_pattern"], text):
+                    blank_flag = True
+                    note = str(rule.get("blank_flag_note") or note)
+            except re.error:
+                pass  # load 期已 fail-closed，此处兜底不旗标
     return {
         **base,
         "status": missing_as,
