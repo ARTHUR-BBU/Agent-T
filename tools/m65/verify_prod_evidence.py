@@ -29,7 +29,7 @@ from pathlib import Path
 import requests
 
 ROOT = Path(__file__).resolve().parents[2]
-DEPLOY_VERSION = "9dd8377"
+DEPLOY_VERSION = "3343f2d"
 EXPECTED_CONTRACTS = 17
 # 凭据文件键名（值永不打印）
 _CRED_KEYS = ("url", "user", "password")
