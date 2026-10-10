@@ -42,6 +42,8 @@
 
 regression_batch1.py：AUTHORIZED_FLIPS 增 6 条四元组（file=subject_matter, was=未找到, now=通过）；靶向红线扩展确认——subject_matter 翻转从「靶向外即拦」改为「白名单精确放行」，was==快照校验+总量审计照旧。
 
+**守门员测试勘正（外审 P2，2026-10-10）**：白名单 7→13 扩容后，test_f12_regression_gate 的授权回退测试「任取一条+固定改 term」验尸错位——抽到 subject_matter 授权时改的是 term，rc=1 死因是别的非法翻转，被测正向断言未被验证。已改 13 条全参数化（每条授权各自回退+死因校验：extra_flips 必须为 0）。变异验证：双废正向断言+总量审计 → 13 条全红（单废任一会被另一冗余层兜住，rc 仍=1 属预期双保险行为）。
+
 ## 放行条件
 
 1. ruff + pyright 0 错误；专项测试全绿；本地全量绿
