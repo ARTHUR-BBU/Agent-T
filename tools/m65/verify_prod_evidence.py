@@ -2,7 +2,7 @@
 
 用法：
   python -X utf8 tools/m65/verify_prod_evidence.py \
-      --evidence "F:/合同审查Agent/audit-evidence/prod-evidence-3343f2d.json" \
+      --evidence "F:/合同审查Agent/audit-evidence/prod-evidence-5e93969.json" \
       [--credentials "F:/合同审查Agent/.deploy-credentials.txt"]   # --live 必需
 
 核验口径（放行标准：零退出 + 输出 17/17 一致 + 生产版本明确）：
@@ -29,7 +29,7 @@ from pathlib import Path
 import requests
 
 ROOT = Path(__file__).resolve().parents[2]
-DEPLOY_VERSION = "3343f2d"
+DEPLOY_VERSION = "5e93969"
 EXPECTED_CONTRACTS = 17
 # 凭据文件键名（值永不打印）
 _CRED_KEYS = ("url", "user", "password")
