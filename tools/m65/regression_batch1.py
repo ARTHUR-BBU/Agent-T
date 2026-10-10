@@ -49,6 +49,16 @@ AUTHORIZED_FLIPS = frozenset({
     ("raw-milk-purchase-2016.docx", "term", "通过", "未找到"),
     ("work-contract-gf-2000.docx", "term", "通过", "未找到"),
     ("mandate-contract-samr-2025.docx", "term", "通过", "未找到"),
+    # A3 标的语义域词表落地（docs/spec-a3-subject-matter-lexicon.md）：
+    # 11 词 pass 扩展的 6 份授权翻转（预估 4 份、实跑 6 份——多出 2 份已
+    # 逐字验尸：raw-milk 命中质量标准条款本体；data-processing 命中变更
+    # 条款引用，existence 级可接受记观察）
+    ("food-procurement-xinjiang-2025.docx", "subject_matter", "未找到", "通过"),
+    ("agri-produce-sale-samr-2025.docx", "subject_matter", "未找到", "通过"),
+    ("data-processing-service-2025.docx", "subject_matter", "未找到", "通过"),
+    ("energy-hosting-service-2026.docx", "subject_matter", "未找到", "通过"),
+    ("raw-milk-purchase-2016.docx", "subject_matter", "未找到", "通过"),
+    ("work-contract-gf-2000.docx", "subject_matter", "未找到", "通过"),
 })
 
 

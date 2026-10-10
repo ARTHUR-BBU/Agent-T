@@ -11,6 +11,8 @@ import copy
 import json
 from pathlib import Path
 
+import pytest
+
 import tools.m65.regression_batch1 as reg
 
 
@@ -59,14 +61,31 @@ def test_gate_blocks_signature_change() -> None:
     assert rc == 1
 
 
-def test_gate_blocks_reverted_authorized_flip() -> None:
-    """授权翻转被回退（term 改回「通过」）→ 正向断言必须拦——
-    只拦非法翻转的话，零 diff 的回归回退会溜过门禁（外审 P2 #94 销项③）。"""
+@pytest.mark.parametrize(
+    "fname,item_id,was,_now",
+    sorted(reg.AUTHORIZED_FLIPS),
+    ids=[f"{f}:{i}" for f, i, _w, _n in sorted(reg.AUTHORIZED_FLIPS)],
+)
+def test_gate_blocks_reverted_authorized_flip(
+    fname: str, item_id: str, was: str, _now: str
+) -> None:
+    """授权翻转被回退（逐条改回快照原值）→ 正向断言必须拦——
+    只拦非法翻转的话，零 diff 的回归回退会溜过门禁（外审 P2 #94 销项③）。
+    外审 P2 #101 勘正：白名单扩至 13 条后「任取一条+固定改 term」验尸错位
+    （抽到 subject_matter 授权时改的是 term，rc=1 死因是别的非法翻转，被测
+    正向断言未被验证）——改为 13 条全参数化，且断言死因：flipped_non_target
+    必须为 0，证明 rc=1 恰来自该条授权缺失的正向断言。"""
     live = _p2_live()
-    fname = next(f for f, i, _w, _n in reg.AUTHORIZED_FLIPS)
-    live[fname]["term"] = "通过"
-    rc, _ = reg.run_regression(None, live_override=live)
-    assert rc == 1
+    live[fname][item_id] = was
+    rc, report = reg.run_regression(None, live_override=live)
+    assert rc == 1, f"{fname}:{item_id} 授权回退必须被正向断言拦下"
+    # 死因校验：flipped_non_target 是复合计数器（非法翻转+授权缺失+集合不等
+    # 都累加），回退场景必 ≥2；真正的死因错位信号是 extra_flips（白名单外
+    # 翻转）——它必须为 0，证明 rc=1 恰来自被测的授权缺失正向断言
+    extra_total = sum(len(r["extra_flips"]) for r in report["rows"])
+    assert extra_total == 0, (
+        f"{fname}:{item_id} rc=1 死因错位：存在 {extra_total} 条白名单外翻转，"
+        f"被测的正向断言未被验证")
 
 
 def test_gate_blocks_missing_baseline_coverage(tmp_path: Path, monkeypatch) -> None:
