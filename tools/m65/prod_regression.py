@@ -58,6 +58,8 @@ def _upload_with_retry(
             data={"category": category, "force": "true"}, timeout=180)
         if r.status_code != 429:
             return r
+        if attempt == max_retries - 1:
+            break  # 最后一次 429：没有下一次请求，直接返回不再空等（外审 P2 #103）
         wait = float(r.headers.get("Retry-After", "30"))
         wait = min(max(wait, 5.0), 120.0)
         print(f"    ⏳ {fname[:36]} 429 限频，等 {wait:.0f}s 后重试"
