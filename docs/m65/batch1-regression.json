@@ -51,6 +51,10 @@
       "file": "food-procurement-xinjiang-2025.docx",
       "category": "procurement",
       "diffs": {
+        "subject_matter": {
+          "was": "未找到",
+          "now": "通过"
+        },
         "term": {
           "was": "通过",
           "now": "未找到"
@@ -59,7 +63,7 @@
       "extra_flips": {},
       "live": {
         "subject": "通过",
-        "subject_matter": "未找到",
+        "subject_matter": "通过",
         "payment": "通过",
         "term": "未找到",
         "breach": "通过",
@@ -164,11 +168,16 @@
     {
       "file": "agri-produce-sale-samr-2025.docx",
       "category": "procurement",
-      "diffs": {},
+      "diffs": {
+        "subject_matter": {
+          "was": "未找到",
+          "now": "通过"
+        }
+      },
       "extra_flips": {},
       "live": {
         "subject": "通过",
-        "subject_matter": "未找到",
+        "subject_matter": "通过",
         "payment": "通过",
         "term": "未找到",
         "breach": "通过",
@@ -206,11 +215,16 @@
     {
       "file": "data-processing-service-2025.docx",
       "category": "procurement",
-      "diffs": {},
+      "diffs": {
+        "subject_matter": {
+          "was": "未找到",
+          "now": "通过"
+        }
+      },
       "extra_flips": {},
       "live": {
         "subject": "通过",
-        "subject_matter": "未找到",
+        "subject_matter": "通过",
         "payment": "需关注",
         "term": "未找到",
         "breach": "通过",
@@ -254,6 +268,10 @@
       "file": "energy-hosting-service-2026.docx",
       "category": "procurement",
       "diffs": {
+        "subject_matter": {
+          "was": "未找到",
+          "now": "通过"
+        },
         "term": {
           "was": "通过",
           "now": "未找到"
@@ -262,7 +280,7 @@
       "extra_flips": {},
       "live": {
         "subject": "通过",
-        "subject_matter": "未找到",
+        "subject_matter": "通过",
         "payment": "通过",
         "term": "未找到",
         "breach": "通过",
@@ -280,6 +298,10 @@
       "file": "raw-milk-purchase-2016.docx",
       "category": "procurement",
       "diffs": {
+        "subject_matter": {
+          "was": "未找到",
+          "now": "通过"
+        },
         "term": {
           "was": "通过",
           "now": "未找到"
@@ -288,7 +310,7 @@
       "extra_flips": {},
       "live": {
         "subject": "通过",
-        "subject_matter": "未找到",
+        "subject_matter": "通过",
         "payment": "通过",
         "term": "未找到",
         "breach": "通过",
@@ -378,6 +400,10 @@
       "file": "work-contract-gf-2000.docx",
       "category": "procurement",
       "diffs": {
+        "subject_matter": {
+          "was": "未找到",
+          "now": "通过"
+        },
         "term": {
           "was": "通过",
           "now": "未找到"
@@ -386,7 +412,7 @@
       "extra_flips": {},
       "live": {
         "subject": "通过",
-        "subject_matter": "未找到",
+        "subject_matter": "通过",
         "payment": "通过",
         "term": "未找到",
         "breach": "未找到",
@@ -404,16 +430,40 @@
   "flipped_non_target": 0,
   "authorized_seen": [
     [
+      "agri-produce-sale-samr-2025.docx",
+      "subject_matter",
+      "未找到",
+      "通过"
+    ],
+    [
       "construction-work-contract-2017.docx",
       "term",
       "通过",
       "未找到"
     ],
     [
+      "data-processing-service-2025.docx",
+      "subject_matter",
+      "未找到",
+      "通过"
+    ],
+    [
+      "energy-hosting-service-2026.docx",
+      "subject_matter",
+      "未找到",
+      "通过"
+    ],
+    [
       "energy-hosting-service-2026.docx",
       "term",
       "通过",
       "未找到"
+    ],
+    [
+      "food-procurement-xinjiang-2025.docx",
+      "subject_matter",
+      "未找到",
+      "通过"
     ],
     [
       "food-procurement-xinjiang-2025.docx",
@@ -429,6 +479,12 @@
     ],
     [
       "raw-milk-purchase-2016.docx",
+      "subject_matter",
+      "未找到",
+      "通过"
+    ],
+    [
+      "raw-milk-purchase-2016.docx",
       "term",
       "通过",
       "未找到"
@@ -438,6 +494,12 @@
       "term",
       "通过",
       "未找到"
+    ],
+    [
+      "work-contract-gf-2000.docx",
+      "subject_matter",
+      "未找到",
+      "通过"
     ],
     [
       "work-contract-gf-2000.docx",

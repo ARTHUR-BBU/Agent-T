@@ -20,9 +20,9 @@ jobs:
           pip install -r requirements-lock.txt
           pip install -r requirements-dev.txt  # lint 工具精确锁版（审计 G：防工具升级自行漂移）
       - name: Ruff（外审批 3：F+基础 E 集；扩展规则待卫生批收编）
-        # tools/m65/verify_prod_evidence.py 纳入最小检查（证据核验脚本静态检查，
-        # 外审修复卡④：脚本自身也要过格式检查）
-        run: python -m ruff check app tests tools/m65/verify_prod_evidence.py
+        # tools/m65/ 下的生产运维脚本纳入最小检查（证据核验+生产对照并发版，
+        # 外审修复卡④ + PR #103 修复卡：脚本自身也要过格式检查）
+        run: python -m ruff check app tests tools/m65/verify_prod_evidence.py tools/m65/prod_regression.py
       - name: Pyright（basic 模式，存量 0 错误为门禁基线）
         run: python -m pyright app
 
