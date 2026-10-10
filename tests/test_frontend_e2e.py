@@ -184,6 +184,20 @@ def _upload(page, path: Path = FIXTURE, category: str = "lease", stance: str | N
     page.wait_for_selector(".item", state="visible", timeout=5000)
 
 
+def _wait_terminal(page, timeout: int = 30000) -> None:
+    """等 done 终态渲染完成（E2E flake 立项施工卡 T1）。
+
+    A5 优化：processing 中间态只要 items 非空即渲染清单（partial）——
+    `.item` visible 不代表终态。导出按钮 href 只在 done 渲染路径填充
+    （app/static/app.js:533），以它为终态信号：href 就位后评分卡 note/
+    完整 meta 等后续渲染也已完成。不接入 _upload（其余用例可能依赖
+    partial 期语义），由三个 flake 用例显式调用。"""
+    page.wait_for_function(
+        "() => { const b = document.querySelector('#btn-export-report');"
+        " return b && b.href && b.href.includes('/api/review/'); }",
+        timeout=timeout)
+
+
 # ---------- 上传页 ----------
 
 def test_home_renders_upload_screen(home):
@@ -341,6 +355,7 @@ def test_legend_shows_four_status_tags(home):
 
 def test_full_review_flow_renders_results(home):
     _upload(home)
+    _wait_terminal(home)  # review_id 从导出 href 取，必须等终态（flake 家族成员）
     meta = home.inner_text("#results-meta")
     assert "lease_sample.txt" in meta
     assert "租赁合同" in meta
@@ -447,6 +462,7 @@ def test_selected_row_highlight(home):
 
 def test_scorecard_hidden_with_no_key_note(home):
     _upload(home)
+    _wait_terminal(home)  # 评分卡 note 是 done 终态渲染（flake 家族成员）
     assert not home.is_visible("#score-card")
     note = home.locator(".score-unavailable")
     assert note.count() == 1
@@ -457,6 +473,7 @@ def test_scorecard_hidden_with_no_key_note(home):
 
 def test_export_report_button_and_download(home):
     _upload(home)
+    _wait_terminal(home)  # 导出 href 是 done 终态填充（flake 家族成员）
     # 阶段 2.3 IA 重排：导出按钮并入 meta 卡（#meta-actions 静态子容器）
     assert home.is_visible("#meta-actions")
     href = home.get_attribute("#btn-export-report", "href")
