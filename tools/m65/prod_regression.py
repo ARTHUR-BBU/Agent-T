@@ -44,6 +44,29 @@ def _load_credentials(path: Path) -> tuple[str, tuple[str, str]]:
     return url, (cred["user"], cred["password"])
 
 
+def _upload_with_retry(
+    base: str, auth: tuple[str, str], fname: str, category: str, raw: bytes,
+    max_retries: int = 5,
+) -> requests.Response:
+    """上传，429 限频按 Retry-After 等待重试（外审 P2 #103：生产默认
+    RATE_LIMIT_UPLOAD_PER_MINUTE=10，并发跑 17 份必须尊重限频窗口）。"""
+    r: requests.Response | None = None
+    for attempt in range(max_retries):
+        r = requests.post(
+            f"{base}/api/upload", auth=auth,
+            files={"file": (fname, raw, "application/octet-stream")},
+            data={"category": category, "force": "true"}, timeout=180)
+        if r.status_code != 429:
+            return r
+        wait = float(r.headers.get("Retry-After", "30"))
+        wait = min(max(wait, 5.0), 120.0)
+        print(f"    ⏳ {fname[:36]} 429 限频，等 {wait:.0f}s 后重试"
+              f"（{attempt + 1}/{max_retries}）")
+        time.sleep(wait)
+    assert r is not None, "max_retries >= 1 保证至少请求一次"
+    return r  # 重试耗尽：返回最后一次 429 响应由调用方报错
+
+
 def _upload_and_wait(
     base: str, auth: tuple[str, str], fname: str, category: str,
     poll_interval: float, timeout_s: float,
@@ -53,10 +76,7 @@ def _upload_and_wait(
                    "status": None, "items": None, "error": None}
     try:
         raw = (ROOT / "fixtures-real" / fname).read_bytes()
-        r = requests.post(
-            f"{base}/api/upload", auth=auth,
-            files={"file": (fname, raw, "application/octet-stream")},
-            data={"category": category, "force": "true"}, timeout=180)
+        r = _upload_with_retry(base, auth, fname, category, raw)
         if r.status_code != 200:
             entry["error"] = f"上传 HTTP {r.status_code}: {r.text[:120]}"
             return entry

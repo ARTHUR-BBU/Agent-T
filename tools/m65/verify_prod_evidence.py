@@ -12,7 +12,7 @@
      重复凑数——只验数量会漏「少一份 + 重复一份仍 17 条」）
   2. 每条合同文件 SHA256 与本地 fixtures-real 实算一致（文件未漂移）
   3. 合同类型与 fixtures-real/manifest.json 一致
-  4. 部署版本 == DEPLOY_VERSION（3343f2d）
+  4. 部署版本 == DEPLOY_VERSION（5e93969）
   5. 结果摘要指纹 == 按 batch1-regression.json 的 CI live 状态表规范 JSON
      重算的 SHA256（生产审查结果与 CI 门禁验证过的状态逐项一致）
   6. --live（可选）：读本地凭据文件连生产 API 逐条重取检查项状态，
