@@ -278,10 +278,15 @@ def _run_matcher(text: str, rule: dict[str, Any]) -> MatchResult:
     return fn(text)
 
 
-def list_categories() -> list[dict[str, Any]]:
+def list_categories(include_hidden: bool = False) -> list[dict[str, Any]]:
     cats = []
     for path in sorted(CONFIG_DIR.glob("checklist_*.yaml")):
         data = _load_yaml(path)
+        # 功能开关（B2 v1.1.1 外审复批）：hidden 品类对用户不可见——
+        # 「先盖好房子再开门」，半成品不接真实合同；引擎测试入口照常
+        # （load_checklist 不受影响）。B2-2 金标锁定后移除 hidden 开放。
+        if data.get("hidden") and not include_hidden:
+            continue
         cats.append(
             {
                 "id": data.get("category", path.stem.replace("checklist_", "")),
