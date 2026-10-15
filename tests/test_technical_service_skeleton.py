@@ -67,6 +67,18 @@ def test_acceptance_default_on_launch() -> None:
     assert _item("系统上线即视为验收合格。", "acceptance")["status"] == "需关注"
 
 
+@pytest.mark.parametrize(("text", "exp"), [
+    # 外审 P2 #107 短异议期精确矩阵：长数字个位不误、中文/数字短日期命中
+    ("验收标准：按照需求规格说明书测试用例验收。甲方应在交付后11日内提出异议，逾期视为验收合格。", "通过"),
+    ("验收标准符合国家标准。甲方应在交付后13日内提出异议，逾期视为验收合格。", "通过"),
+    ("验收标准：按照需求规格说明书测试用例验收。甲方应在交付后2日内提出异议，逾期视为验收合格。", "需关注"),
+    ("验收标准符合国家标准。甲方应在交付后三日内未提出异议视为验收合格。", "需关注"),
+    ("验收标准符合国家标准 GB/T 25000。甲方收到交付物后10日内未提出异议视为验收合格。", "通过"),
+])
+def test_acceptance_short_review_period_precision(text: str, exp: str) -> None:
+    assert _item(text, "acceptance")["status"] == exp, text
+
+
 def test_acceptance_substantive_standard_pass() -> None:
     """实质锚定：验收∧标准词同句；「验收合格后付款」的验收不算本项证据。"""
     assert _item("验收标准：符合国家标准 GB/T 25000。", "acceptance")["status"] == "通过"
@@ -132,6 +144,20 @@ def test_breach_f2_mutual_force_majeure_pass() -> None:
 def test_breach_one_sided_exemption_blocked() -> None:
     """真单方写法照旧必中（F-2 门不放行）。"""
     assert _item("乙方逾期交付的，免除乙方全部违约责任。", "breach")["status"] == "需关注"
+
+
+def test_breach_one_sided_penalty_no_reciprocal() -> None:
+    """外审 P2 #107：单向罚则（乙方逾期计罚∧甲方逾期无对等责任）→需关注，
+    不得被宽 pass「违约金」洗成通过。"""
+    t = "乙方逾期交付的，每日按合同总价的千分之五支付违约金。"
+    assert _item(t, "breach")["status"] == "需关注"
+
+
+def test_breach_reciprocal_penalty_pass() -> None:
+    """对等罚则（甲方逾期付款责任在场）→通过（matcher 双向判定）。"""
+    t = ("乙方逾期交付的，每日按合同总价的千分之五支付违约金；"
+         "甲方逾期付款的，每逾期一日按应付款项的千分之一支付违约金。")
+    assert _item(t, "breach")["status"] == "通过"
 
 
 # ---------- 7. termination（v1.1.1 中性说明） ----------

@@ -141,6 +141,24 @@ def _clause_of(text: str, start: int, end: int) -> str:
     return text[lo + 1:hi]
 
 
+# ---- one_sided_penalty：单向违约罚则判定（B2 验收单 §6 技术特有） ----
+# 跨文本 existence 判定（正则 unless 窗口做不了的全文 AND/OR）：
+#   乙方逾期罚则在场 ∧ 甲方对等逾期责任不在场 → 命中（one_sided）
+_RE_OSP_B = re.compile(r"乙方[^。\n\r]{0,20}逾期[^。\n\r]{0,25}(?:违约金|罚金|按[^。\n\r]{0,8}支付)")
+_RE_OSP_A = re.compile(r"甲方[^。\n\r]{0,25}(?:逾期|迟延)[^。\n\r]{0,20}(?:违约|责任|违约金|赔偿|罚)")
+
+
+@_register_matcher("one_sided_penalty")
+def _match_one_sided_penalty(text: str) -> MatchResult:
+    """单向违约罚则（B2 技术服务验收单 §6）：只罚乙方逾期、甲方逾期付款
+    无对等责任 → 对等性缺失，需关注；甲方对等责任在场 → 不命中（对等）。"""
+    mb = _RE_OSP_B.search(text)
+    if not mb or _RE_OSP_A.search(text):
+        return MatchResult(False, 0, 0, "", "none")
+    quote = text[max(0, mb.start() - 10):mb.end() + 10]
+    return MatchResult(True, mb.start(), mb.end(), quote, "one_sided")
+
+
 @_register_matcher("procurement_term")
 def _match_procurement_term(text: str) -> MatchResult:
     """P2 期限四分类（老钱裁定+签字，spec-p2-term-anchoring.md v1.1）：
@@ -411,7 +429,9 @@ def validate_checklist_configs() -> None:
     ——不再「load 时查一半、启动时查另一半」。配置坏了宁可起不来，
     也不要悄悄降级漏审。"""
     problems: list[str] = []
-    for cat_info in list_categories():
+    # include_hidden=True（外审 P2 #107）：hidden 品类同样必须过启动校验——
+    # 否则坏正则/重复 id 会潜伏到品类开放那天才爆
+    for cat_info in list_categories(include_hidden=True):
         category = cat_info["id"]
         cfg = _load_yaml(CONFIG_DIR / f"checklist_{category}.yaml")
         try:
