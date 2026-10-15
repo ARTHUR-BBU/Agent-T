@@ -141,6 +141,31 @@ def _clause_of(text: str, start: int, end: int) -> str:
     return text[lo + 1:hi]
 
 
+# ---- one_sided_penalty：单向违约罚则判定（B2 验收单 §6 技术特有） ----
+# 跨文本 existence 判定（正则 unless 窗口做不了的全文 AND/OR）：
+#   服务提供方逾期罚则在场 ∧ 付款方对等逾期付款责任不在场 → 命中（one_sided）
+# 角色词族（外审 P1 #107：技术服务合同常用委托方/受托方、服务方/客户方，
+# 不止甲乙方）；对等责任精确=「逾期付款/支付」的责任——无关责任（如逾期
+# 提供资料）不构成对等豁免
+_RE_OSP_B = re.compile(
+    r"(?:乙方|受托方|服务方|开发方|承包方|供方)[^。\n\r]{0,20}逾期[^。\n\r]{0,25}"
+    r"(?:违约金|罚金|按[^。\n\r]{0,8}支付)")
+_RE_OSP_A = re.compile(
+    r"(?:甲方|委托方|客户方|定作方|需方|发包方)[^。\n\r]{0,25}(?:逾期|迟延)"
+    r"[^。\n\r]{0,15}(?:付款|支付)[^。\n\r]{0,10}(?:违约|责任|违约金|罚|赔偿)")
+
+
+@_register_matcher("one_sided_penalty")
+def _match_one_sided_penalty(text: str) -> MatchResult:
+    """单向违约罚则（B2 技术服务验收单 §6）：只罚服务方逾期、付款方逾期付款
+    无对等责任 → 对等性缺失，需关注；付款方对等责任在场 → 不命中（对等）。"""
+    mb = _RE_OSP_B.search(text)
+    if not mb or _RE_OSP_A.search(text):
+        return MatchResult(False, 0, 0, "", "none")
+    quote = text[max(0, mb.start() - 10):mb.end() + 10]
+    return MatchResult(True, mb.start(), mb.end(), quote, "one_sided")
+
+
 @_register_matcher("procurement_term")
 def _match_procurement_term(text: str) -> MatchResult:
     """P2 期限四分类（老钱裁定+签字，spec-p2-term-anchoring.md v1.1）：
@@ -278,10 +303,15 @@ def _run_matcher(text: str, rule: dict[str, Any]) -> MatchResult:
     return fn(text)
 
 
-def list_categories() -> list[dict[str, Any]]:
+def list_categories(include_hidden: bool = False) -> list[dict[str, Any]]:
     cats = []
     for path in sorted(CONFIG_DIR.glob("checklist_*.yaml")):
         data = _load_yaml(path)
+        # 功能开关（B2 v1.1.1 外审复批）：hidden 品类对用户不可见——
+        # 「先盖好房子再开门」，半成品不接真实合同；引擎测试入口照常
+        # （load_checklist 不受影响）。B2-2 金标锁定后移除 hidden 开放。
+        if data.get("hidden") and not include_hidden:
+            continue
         cats.append(
             {
                 "id": data.get("category", path.stem.replace("checklist_", "")),
@@ -406,7 +436,9 @@ def validate_checklist_configs() -> None:
     ——不再「load 时查一半、启动时查另一半」。配置坏了宁可起不来，
     也不要悄悄降级漏审。"""
     problems: list[str] = []
-    for cat_info in list_categories():
+    # include_hidden=True（外审 P2 #107）：hidden 品类同样必须过启动校验——
+    # 否则坏正则/重复 id 会潜伏到品类开放那天才爆
+    for cat_info in list_categories(include_hidden=True):
         category = cat_info["id"]
         cfg = _load_yaml(CONFIG_DIR / f"checklist_{category}.yaml")
         try:
