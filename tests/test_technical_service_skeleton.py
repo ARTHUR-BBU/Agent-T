@@ -160,6 +160,48 @@ def test_breach_reciprocal_penalty_pass() -> None:
     assert _item(t, "breach")["status"] == "通过"
 
 
+# ---- 外审 #107 二轮 2 P1 固化 ----
+
+def test_payment_tail_with_standard_gives_pass() -> None:
+    """P1-1a：safeguard（验收标准）放行+尾款 pass 路径=通过（不再未找到）。"""
+    t = "验收标准：按照需求规格说明书测试用例验收。验收合格后支付全部尾款。"
+    assert _item(t, "payment")["status"] == "通过"
+
+
+def test_payment_tail_with_deadline_gives_pass() -> None:
+    """P1-1b：safeguard（验收期限，数字与「日」间有空格形态）→通过。"""
+    t = "甲方应在交付后 10 日内完成验收。验收合格后支付全部尾款。"
+    assert _item(t, "payment")["status"] == "通过"
+
+
+def test_payment_bare_tail_still_attention() -> None:
+    """无 safeguard 裸尾款仍拦（need_attention 先于 pass）。"""
+    assert _item("验收合格后支付全部尾款。", "payment")["status"] == "需关注"
+
+
+def test_breach_vendee_role_one_sided() -> None:
+    """P1-2a：受托方角色词族单向罚则（无甲方/乙方字样）也命中 matcher。"""
+    assert _item("受托方逾期交付，支付违约金。", "breach")["status"] == "需关注"
+
+
+def test_breach_vendee_reciprocal_pass() -> None:
+    """P1-2b：受托方罚则+委托方逾期付款罚则=对等→通过。"""
+    t = "受托方逾期交付，支付违约金。委托方逾期付款，支付违约金。"
+    assert _item(t, "breach")["status"] == "通过"
+
+
+def test_breach_irrelevant_counterparty_duty_not_reciprocal() -> None:
+    """P1-2c：委托方仅有无关责任（逾期提供资料）不构成付款对等——仍需关注。"""
+    t = "受托方逾期交付，支付违约金。委托方逾期提供需求资料的，顺延工期。"
+    assert _item(t, "breach")["status"] == "需关注"
+
+
+def test_breach_service_party_roles_pass() -> None:
+    """P1-2d：服务方/客户方角色词族对等→通过。"""
+    t = "服务方逾期交付，支付违约金。客户方逾期付款，支付违约金。"
+    assert _item(t, "breach")["status"] == "通过"
+
+
 # ---------- 7. termination（v1.1.1 中性说明） ----------
 
 def test_termination_present_pass() -> None:
