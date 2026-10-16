@@ -135,3 +135,30 @@ def test_subject_value_with_trailing_stamp_still_passes() -> None:
     """括号只挡首位：「法定代表人：李四（签名）」实填不受影响。"""
     item = _item("委托方：甲公司，法定代表人：李四（签名）。", "subject")
     assert item["status"] == "通过"
+
+
+# ---------- Codex 门禁 P2 修正固化 ----------
+
+@pytest.mark.parametrize("text", [
+    "服务费分2期支付，具体金额另行协商。",
+    "技术服务费分3期支付，具体金额另行协商。",
+    "服务费分期支付：2。",
+])
+def test_payment_installment_count_not_amount(text: str) -> None:
+    """分期计数数字不是金额锚（裸数字/计数被数字类洗白实锤）——不得通过。"""
+    item = _item(text, "payment")
+    assert item["status"] != "通过", text
+
+
+def test_payment_amount_with_unit_passes() -> None:
+    """数字+货币单位是有效金额锚：「100万元」须通过。"""
+    out = checklist.run_checklist(
+        "技术服务费总额为：100万元。验收合格后支付。", category="technical_service")
+    item = next(i for i in out["items"] if i["id"] == "payment")
+    assert item["status"] == "通过"
+
+
+def test_confidentiality_substantive_after_crossline_guide_passes() -> None:
+    """catdoc 跨行引导句后接实质义务（承担保密责任）=实质约定，不得漏报。"""
+    item = _item("保密义务如下\n：\n双方对项目资料承担保密责任。", "confidentiality")
+    assert item["status"] == "通过"
