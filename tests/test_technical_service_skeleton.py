@@ -32,6 +32,34 @@ def test_engine_entry_works_behind_flag() -> None:
     assert len(out["items"]) == 13
 
 
+def test_hidden_bad_config_still_fails_startup(tmp_path, monkeypatch) -> None:
+    """外审 #108 P2 回归钉死：hidden 品类必须同样过启动校验——
+    若 validate 退回排除 hidden（功能开关回归），坏正则 hidden 配置
+    仍须炸响。现有坏配置 fixture 全是可见品类，本条补盲区。"""
+    import yaml
+
+    from app.services.checklist import validate_checklist_configs
+
+    bad = {
+        "category": "hidden_bad",
+        "label": "隐藏坏配置",
+        "hidden": True,
+        "items": [
+            {
+                "id": "x",
+                "name": "x",
+                "segment": "A",
+                "rules": {"need_attention": [{"any_of": ["(未闭合括号"], "note": "n"}]},
+            }
+        ],
+    }
+    (tmp_path / "checklist_hidden_bad.yaml").write_text(
+        yaml.safe_dump(bad, allow_unicode=True), encoding="utf-8")
+    monkeypatch.setattr(checklist, "CONFIG_DIR", tmp_path)
+    with pytest.raises(ValueError, match="非法正则"):
+        validate_checklist_configs()
+
+
 # ---------- 2. service_scope ----------
 
 def test_scope_vague_externalized_standard() -> None:
