@@ -1,0 +1,27 @@
+{
+ "techdev-coop-most-2001.txt": {
+  "catdoc_sha256": "1674fdc141ab2b351091dfdbb968132724bfb26df24aa3be50df7467f342cc1f",
+  "source_doc": "techdev-coop-most-2001.doc",
+  "source_sha256": "108c0351ce92fc768d22f147e932872ec7cd787d2479e13454e4f0f8302bc8e1"
+ },
+ "techdev-most-2001.txt": {
+  "catdoc_sha256": "bcbce0d0fdc40d7a658a0d5331375dabb1e863c2909dc864b83128f23b97f9b0",
+  "source_doc": "techdev-most-2001.doc",
+  "source_sha256": "bf82b27568db6574818d97569826cadd4570b90bcc07f6eacc5d418c4a261933"
+ },
+ "tisvc-most-2001.txt": {
+  "catdoc_sha256": "8a7a8ff325cab418fcc789ba165b0ef651763a450cbc02bb6e8ed4a0bd903469",
+  "source_doc": "tisvc-most-2001.doc",
+  "source_sha256": "661b254a65da7ac1395a4354dee5cad22f3169e8490e863232dbfc5eccc829c8"
+ },
+ "tisvc-shgov-2020.txt": {
+  "catdoc_sha256": "d6a167c83ef4bf31676195808d5feefcfa966b126fa44596dd0bb74722c033c1",
+  "source_doc": "tisvc-shgov-2020.doc",
+  "source_sha256": "5c6904301b71f93eb212721ca68ec5b2060251693ee320f7fbfbb24f0bcbf6a4"
+ },
+ "tisvc-sjtu-2003.txt": {
+  "catdoc_sha256": "d1174d7cef7acf1ff343b63a34c36a36ec23bc00d5716ed13b274834dafa5c47",
+  "source_doc": "tisvc-sjtu-2003.doc",
+  "source_sha256": "54c28e9027b666c65825e779a17f98cf3898bc040b233d2c0e292566d1e2258b"
+ }
+}
