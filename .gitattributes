@@ -1,5 +1,5 @@
 # fixtures-tisvc/ 是 catdoc 生产同构提取的原始输出（B2-2 金标语料），
 # 行尾空格与文件末尾空行是 catdoc 真实产物，逐字节保留是「生产解析忠实
 # 重放」证据的一部分——禁用空白格式检查，防「顺手规范化」破坏重放属性。
-# 字节完整性由 tests/test_tisvc_gold.py 的 SHA256 对账测试守卫。
+# 字节完整性由 tests/test_tisvc_fixture_integrity.py 的 SHA256 对账测试守卫。
 fixtures-tisvc/*.txt -whitespace
