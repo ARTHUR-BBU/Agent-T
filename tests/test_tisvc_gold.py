@@ -51,6 +51,9 @@ def _review(fname: str) -> dict:
 @pytest.mark.parametrize("fname", sorted(GOLD_MATRIX))
 def test_gold_matrix_locked(fname: str) -> None:
     """金标逐格断言：65 格直锁（老钱签认 2026-10-16，不允许静默重算）。"""
+    assert len(ITEMS) == 13, "清单项数漂移：金标矩阵按 13 项锁定"
+    assert len(GOLD_MATRIX[fname]) == 13, (
+        "金标行长度≠13：zip 会静默截断，必须补齐后再断言")
     row = _review(fname)
     for item_id, expected in zip(ITEMS, GOLD_MATRIX[fname]):
         actual = row[item_id]["status"]
@@ -115,3 +118,20 @@ def test_subject_double_colon_not_pass() -> None:
     （签认口径 [^\s_＿:：]，冒号非值字符）——有称谓词在场仍须需关注。"""
     item = _item("甲方：甲公司，乙方：乙公司，法定代表人：：张三。", "subject")
     assert item["status"] == "需关注"
+
+
+@pytest.mark.parametrize("text", [
+    "委托人（甲方）：某科技有限责任公司\n法定代表人：（签章）",
+    "甲方：甲公司\n法定代表人：（签字）\n住所：（略）",
+])
+def test_subject_signature_placeholder_not_pass(text: str) -> None:
+    """小智娘门禁 P1-1 探针固化：签字栏占位「（签章/签字/略）」不是填值
+    （病根残留通道：括号占位洗白主体项）。"""
+    item = _item(text, "subject")
+    assert item["status"] == "需关注", text
+
+
+def test_subject_value_with_trailing_stamp_still_passes() -> None:
+    """括号只挡首位：「法定代表人：李四（签名）」实填不受影响。"""
+    item = _item("委托方：甲公司，法定代表人：李四（签名）。", "subject")
+    assert item["status"] == "通过"
