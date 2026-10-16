@@ -162,3 +162,54 @@ def test_confidentiality_substantive_after_crossline_guide_passes() -> None:
     """catdoc 跨行引导句后接实质义务（承担保密责任）=实质约定，不得漏报。"""
     item = _item("保密义务如下\n：\n双方对项目资料承担保密责任。", "confidentiality")
     assert item["status"] == "通过"
+
+
+# ---------- B2-3 批1 规则修复固化（老钱口径：率值豁免/补词继承金额锚/预印人民币定性未约定） ----------
+
+@pytest.mark.parametrize("text", [
+    "违约金的计算方法为合同总价的10%。",
+    "违约金或者损失赔偿额的计算方法：每逾期一日按万分之五支付。",
+    "违约金的计算方法：按千分之三执行。",
+])
+def test_breach_rate_value_exemption_passes(text: str) -> None:
+    """率值豁免：栏头+实填率值是真实违约金合意（漏报优先级最高）。"""
+    item = _item(text, "breach")
+    assert item["status"] == "通过", text
+
+
+@pytest.mark.parametrize("text", [
+    "违约金或者损失赔偿额的计算方法：另行协商。",
+    "违约金的计算方法：双方另行约定。",
+    "违约金的计算方法：按万分之____。",
+    "违约金或者损失赔偿额的计算方法：按百分之____。",
+    "违约金的计算方法：按千分之＿＿执行。",
+])
+def test_breach_deferred_calculation_not_pass(text: str) -> None:
+    """悬置≠实填（老钱反向样例）：「另行协商/另行约定」无率值仍不得通过；
+    Codex 门禁 P1：率值单位词+空白占位（按万分之____）不得凭前缀豁免。"""
+    item = _item(text, "breach")
+    assert item["status"] != "通过", text
+
+
+@pytest.mark.parametrize("text", [
+    "本项目报酬（服务报酬或培训报酬大写）：壹拾万元。",
+    "本项目报酬一次总付：壹拾万元。",
+    "报酬（大写）：人民币伍万元整。",
+])
+def test_payment_sjtu_wordforms_with_amount_pass(text: str) -> None:
+    """sjtu 自有词形（报酬（大写）/一次总付）实填须通过（继承金额锚定）。"""
+    item = _item(text, "payment")
+    assert item["status"] == "通过", text
+
+
+@pytest.mark.parametrize("text", [
+    "本项目报酬一次总付：________元。",
+    "报酬（大写）：________元。",
+    "服务费总额：人民币____元。",
+    "合同总价：人民币（大写）：＿＿＿",
+    "技术服务费总额为：人民币：　　　元",
+])
+def test_payment_prefilled_currency_blank_not_pass(text: str) -> None:
+    """预印币种/大写标注+空白=未约定（币种是印刷体不是谈价，老钱口径③）。"""
+    item = _item(text, "payment")
+    assert item["status"] != "通过", text
