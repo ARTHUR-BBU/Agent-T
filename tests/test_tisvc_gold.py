@@ -180,9 +180,13 @@ def test_breach_rate_value_exemption_passes(text: str) -> None:
 @pytest.mark.parametrize("text", [
     "违约金或者损失赔偿额的计算方法：另行协商。",
     "违约金的计算方法：双方另行约定。",
+    "违约金的计算方法：按万分之____。",
+    "违约金或者损失赔偿额的计算方法：按百分之____。",
+    "违约金的计算方法：按千分之＿＿执行。",
 ])
 def test_breach_deferred_calculation_not_pass(text: str) -> None:
-    """悬置≠实填（老钱反向样例）：「另行协商/另行约定」无率值仍不得通过。"""
+    """悬置≠实填（老钱反向样例）：「另行协商/另行约定」无率值仍不得通过；
+    Codex 门禁 P1：率值单位词+空白占位（按万分之____）不得凭前缀豁免。"""
     item = _item(text, "breach")
     assert item["status"] != "通过", text
 
