@@ -10,9 +10,13 @@ payment 空白总额不得通过、breach 示范括注不得通过。
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from app.services import checklist
+
+ROOT = Path(__file__).resolve().parent.parent
 
 ITEMS = [
     "subject", "service_scope", "schedule", "payment", "acceptance",
@@ -30,11 +34,16 @@ GOLD_MATRIX = {
     "tisvc-sjtu-2003": ["需关注", "未找到", "未找到", "未找到", "需关注", "未找到", "需关注", "需关注", "未找到", "需关注", "通过", "需关注", "通过"],
 }
 
-_FIXTURE_DIR = "fixtures-tisvc"
+_FIXTURE_DIR = ROOT / "fixtures-tisvc"
+
+
+def _item(text: str, item_id: str) -> dict:
+    out = checklist.run_checklist(text, category="technical_service")
+    return next(i for i in out["items"] if i["id"] == item_id)
 
 
 def _review(fname: str) -> dict:
-    text = open(f"{_FIXTURE_DIR}/{fname}.txt", encoding="utf-8").read()
+    text = (_FIXTURE_DIR / f"{fname}.txt").read_text(encoding="utf-8")
     out = checklist.run_checklist(text, category="technical_service")
     return {i["id"]: i for i in out["items"]}
 
@@ -99,3 +108,10 @@ def test_subject_filled_officer_passes() -> None:
         category="technical_service")
     item = next(i for i in out["items"] if i["id"] == "subject")
     assert item["status"] == "通过"
+
+
+def test_subject_double_colon_not_pass() -> None:
+    r"""肉饼门禁 P2-1 探针固化：连号冒号「法定代表人：：张三」不是填值
+    （签认口径 [^\s_＿:：]，冒号非值字符）——有称谓词在场仍须需关注。"""
+    item = _item("甲方：甲公司，乙方：乙公司，法定代表人：：张三。", "subject")
+    assert item["status"] == "需关注"
