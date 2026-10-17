@@ -59,7 +59,9 @@ def prompt_hash_for(provider: str) -> str:
         {"instructions": JEV_INSTRUCTIONS, "criteria": JEV_CRITERIA}, ensure_ascii=False)
     return hashlib.sha256(payload.encode()).hexdigest()[:12]
 
-# 法务标签（老钱签认 2026-10-16）+冻结划分；support_splits 见仓库外 MANIFEST
+# 法务标签（老钱签认 2026-10-16；含 2026-10-17 五格翻格→other——修订前
+# 17/22 口径见 docs/b23/shadow_jev_calibration_20261017_080504.jsonl）+
+# 冻结划分；support_splits 见仓库外 MANIFEST
 REJECTION_LABELS = {
     "tech-consulting-shgov": "consulting",
     "management-consulting-zhujianbu": "consulting",
@@ -170,7 +172,7 @@ def call_jev(text: str) -> tuple[dict, dict]:
     usage = resp.get("usage", {})
     return {"category": a["choice"], "confidence": a.get("confidence")}, {
         "provider": "jev", "model_version": resp.get("model", "jev-latest"), "latency_s": latency,
-        "cost_note": f"in={usage.get('input_tokens')} out={usage.get('output_tokens')} tokens($5 硬上限内)",
+        "cost_note": f"in={usage.get('input_tokens')} out={usage.get('output_tokens')} tokens(单价未定，上限核算见报告)",
         "raw_output": json.dumps(a, ensure_ascii=False), "degradation_reason": None,
     }
 
