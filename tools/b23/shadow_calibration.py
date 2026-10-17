@@ -42,6 +42,23 @@ PROMPT = """你是合同品类分诊器。判断给定合同文本属于以下�
 CATEGORIES = ["procurement", "lease", "nda", "technical_service",
               "consulting", "labor_dispatch", "tech_transfer", "other"]
 
+JEV_INSTRUCTIONS = ("判断这份合同文本属于哪个品类。依据标题、当事人称谓与核心义务；"
+                   "空白模板按栏目结构判断。")
+JEV_CRITERIA = {
+    "procurement": "买卖/采购/供货合同", "lease": "租赁合同", "nda": "保密协议",
+    "technical_service": "技术服务合同（以技术知识解决特定技术问题）",
+    "consulting": "咨询合同（含技术/工程/管理咨询）",
+    "labor_dispatch": "劳务派遣/人力外包（三方结构）",
+    "tech_transfer": "技术转让/许可（权属移转或授权）", "other": "以上均不是",
+}
+
+
+def prompt_hash_for(provider: str) -> str:
+    """哈希对象=实际发送的提示词（Codex P2：Jev 不发 GLM PROMPT）。"""
+    payload = PROMPT if provider == "glm" else json.dumps(
+        {"instructions": JEV_INSTRUCTIONS, "criteria": JEV_CRITERIA}, ensure_ascii=False)
+    return hashlib.sha256(payload.encode()).hexdigest()[:12]
+
 # 法务标签（老钱签认 2026-10-16）+冻结划分；support_splits 见仓库外 MANIFEST
 REJECTION_LABELS = {
     "tech-consulting-shgov": "consulting",
@@ -64,9 +81,9 @@ SUPPORT = [  # (样本名, 提取路径, 法务标签)
     ("gov-procurement-goods-mof-2024", "fixtures-real/gov-procurement-goods-mof-2024.docx", "procurement"),
     ("agri-produce-sale-samr-2025", "fixtures-real/agri-produce-sale-samr-2025.docx", "procurement"),
     ("school-uniform-procurement-guangzhou", "fixtures-real/school-uniform-procurement-guangzhou.docx", "procurement"),
-    ("mandate-contract-samr-2025", "fixtures-real/mandate-contract-samr-2025.docx", "procurement"),
-    ("construction-work-contract-2017", "fixtures-real/construction-work-contract-2017.docx", "procurement"),
-    ("work-contract-gf-2000", "fixtures-real/work-contract-gf-2000.docx", "procurement"),
+    ("mandate-contract-samr-2025", "fixtures-real/mandate-contract-samr-2025.docx", "other"),
+    ("construction-work-contract-2017", "fixtures-real/construction-work-contract-2017.docx", "other"),
+    ("work-contract-gf-2000", "fixtures-real/work-contract-gf-2000.docx", "other"),
     ("raw-milk-purchase-2016", "fixtures-real/raw-milk-purchase-2016.docx", "procurement"),
     ("equipment-lease-construction-2000", "fixtures-real/equipment-lease-construction-2000.docx", "lease"),
     ("house-lease-gf-2025-2614", "fixtures-real/house-lease-gf-2025-2614.docx", "lease"),
@@ -74,8 +91,8 @@ SUPPORT = [  # (样本名, 提取路径, 法务标签)
     ("zhejiang-vehicle-lease-2024", "fixtures-real/zhejiang-vehicle-lease-2024.docx", "lease"),
     ("business-cooperation-nda-guangdong", "fixtures-real/business-cooperation-nda-guangdong.docx", "nda"),
     ("trade-secret-nda-guangdong", "fixtures-real/trade-secret-nda-guangdong.docx", "nda"),
-    ("techdev-coop-most-2001", "fixtures-tisvc/techdev-coop-most-2001.txt", "technical_service"),
-    ("techdev-most-2001", "fixtures-tisvc/techdev-most-2001.txt", "technical_service"),
+    ("techdev-coop-most-2001", "fixtures-tisvc/techdev-coop-most-2001.txt", "other"),
+    ("techdev-most-2001", "fixtures-tisvc/techdev-most-2001.txt", "other"),
     ("tisvc-most-2001", "fixtures-tisvc/tisvc-most-2001.txt", "technical_service"),
     ("tisvc-shgov-2020", "fixtures-tisvc/tisvc-shgov-2020.txt", "technical_service"),
     ("tisvc-sjtu-2003", "fixtures-tisvc/tisvc-sjtu-2003.txt", "technical_service"),
@@ -96,8 +113,11 @@ def load_text(path: str, max_chars: int = 6000) -> tuple[str, str]:
         text = "\n".join(parts)
     else:
         text = p.read_text(encoding="utf-8", errors="replace")
-    coverage = "full" if len(text) <= max_chars else f"truncated_head_{max_chars}"
-    return text[:max_chars], coverage
+    if len(text) <= max_chars:
+        return text, "full"
+    tail = 2000
+    marker = "\n...[中段截断]...\n"
+    return text[:max_chars] + marker + text[-tail:], f"truncated_head_{max_chars}_tail_{tail}"
 
 
 def call_glm(text: str) -> tuple[dict, dict]:
@@ -137,17 +157,9 @@ def call_jev(text: str) -> tuple[dict, dict]:
     for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
         if line.startswith("TYPESAFE_API_KEY="):
             key = line.split("=", 1)[1].strip()
-    criteria = {
-        "procurement": "买卖/采购/供货合同", "lease": "租赁合同", "nda": "保密协议",
-        "technical_service": "技术服务合同（以技术知识解决特定技术问题）",
-        "consulting": "咨询合同（含技术/工程/管理咨询）",
-        "labor_dispatch": "劳务派遣/人力外包（三方结构）",
-        "tech_transfer": "技术转让/许可（权属移转或授权）", "other": "以上均不是",
-    }
     body = json.dumps({"state": text, "model": "jev-latest", "questions": {
         "category": {"type": "choice",
-            "instructions": "判断这份合同文本属于哪个品类。依据标题、当事人称谓与核心义务；空白模板按栏目结构判断。",
-            "criteria": criteria}}}).encode()
+            "instructions": JEV_INSTRUCTIONS, "criteria": JEV_CRITERIA}}}).encode()
     req = urllib.request.Request("https://api.typesafe.ai/v1/systemone", data=body, headers={
         "Authorization": f"Bearer {key}", "Content-Type": "application/json"})
     t0 = time.time()
@@ -175,6 +187,15 @@ def parse_verdict(raw: str) -> dict:
     return {"category": data["category"], "confidence": max(0.0, min(1.0, conf))}
 
 
+def model_of(provider: str) -> str:
+    if provider == "jev":
+        return "jev-latest"
+    for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
+        if line.startswith("GLM_MODEL="):
+            return line.split("=", 1)[1].strip()
+    return "glm-4-flash"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--provider", choices=["glm", "jev"], required=True)
@@ -183,7 +204,7 @@ def main() -> int:
     args = ap.parse_args()
 
     caller = call_glm if args.provider == "glm" else call_jev
-    prompt_hash = hashlib.sha256(PROMPT.encode()).hexdigest()[:12]
+    prompt_hash = prompt_hash_for(args.provider)
 
     samples = []
     for name, path, label in SUPPORT:
@@ -208,10 +229,14 @@ def main() -> int:
         for name, path, label in samples:
             text, coverage = load_text(path)
             verdict, meta = None, None
+            t_sample = time.time()
             try:
                 verdict, meta = caller(text)
-            except Exception as e:  # 降级留痕（不中断批次）
-                meta = {"provider": args.provider, "model_version": "?", "latency_s": None,
+            except Exception as e:  # 降级留痕（不中断批次；保留请求模型与耗时）
+                t_err = round(time.time() - t_sample, 2)
+                meta = {"provider": args.provider,
+                        "model_version": model_of(args.provider),
+                        "latency_s": t_err,
                         "cost_note": None, "raw_output": str(e)[:300],
                         "degradation_reason": f"parse_or_http_error: {type(e).__name__}"}
                 verdict = {"category": None, "confidence": None}
