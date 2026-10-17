@@ -18,9 +18,10 @@ from shadow_calibration import (  # noqa: E402  # 需先注入 sys.path
 
 
 def test_price_table_covers_providers() -> None:
-    """计费表覆盖双供应商且为正数（单价更新须同步改表+重审）。"""
-    for p in ("jev", "glm"):
-        assert PRICE_TABLE[p] > 0
+    """计费表覆盖双供应商：Jev 实测单价（控制台 2026-10-17 ≈$0.041/M，上取整
+    0.05 留余量）须为正；GLM 免费档计 0（商用定价后更新）。"""
+    assert PRICE_TABLE["jev"] > 0
+    assert PRICE_TABLE["glm"] >= 0
 
 
 def test_estimate_cost_monotonic_in_length() -> None:

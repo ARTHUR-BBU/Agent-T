@@ -41,6 +41,14 @@
 
 - Jev 全量（29 份+消融 2）：约 15 万 input tokens，$5 硬上限内（试射→放量协议已走：3 份试射核 usage 后放量）。
 - GLM-4-Flash：**未跑**——easyrouter 中转「限时特价通道」整条 503（glm-5.3-flash 与 mimo-v2.6-flash 均无可用渠道，model_not_found 实锤）。恢复后按同一协议补跑，jsonl 降级字段已记录（shadow_glm_calibration_20261017_080324.jsonl）。
+
+> **〔2026-10-17 定性变更（用户澄清）〕** 503 非临时故障：所购套餐为 coding 套餐，
+> 不支持此类直接 API 调用——**easyrouter GLM 通道就此排除，无「恢复」可言**。
+> 双模型对比的 GLM 侧取消；后续分诊台生产主通道选型待用户拍板。补考计划作废。
+>
+> **〔同日更新〕** 用户随后提供官方智谱开放平台临时 key，GLM-4-Flash 补考**已完成**
+> （官方免费档，shadow_glm_calibration_20261017_172703.jsonl 等），双模型对比报告
+> 见 model-comparison-report-r1.md。上文「补考作废」表述仅指 easyrouter 通道。
 - 住建部 5.2 万字：本次走截断版（头 6000）判对；设计稿 §9-3 要求的全文复核随 GLM 通道恢复一并做。
 
 ## 待老钱裁定（金标标签修订，签认前不改 GOLD）

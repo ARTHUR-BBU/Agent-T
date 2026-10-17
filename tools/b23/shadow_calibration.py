@@ -122,14 +122,21 @@ def load_text(path: str, max_chars: int = 6000) -> tuple[str, str]:
     return text[:max_chars] + marker + text[-tail:], f"truncated_head_{max_chars}_tail_{tail}"
 
 
-def call_glm(text: str) -> tuple[dict, dict]:
-    """智谱兼容 chat completions（.env: ZHIPU_API_BASE/ZHIPU_API_KEY/GLM_MODEL）。"""
+def _load_env() -> dict:
     env = {}
     for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
         if "=" in line and not line.startswith("#"):
             k, v = line.split("=", 1)
             env[k.strip()] = v.strip()
-    base, key, model = env["ZHIPU_API_BASE"].rstrip("/"), env["ZHIPU_API_KEY"], env.get("GLM_MODEL", "glm-4-flash")
+    return env
+
+
+def call_glm(text: str) -> tuple[dict, dict]:
+    """官方智谱开放平台 glm-4-flash（.env: GLM4F_*，2026-10-17 临时测试 key）；
+    coding 套餐中转（ZHIPU_*）不支持直接调用已排除。"""
+    env = _load_env()
+    base = env.get("GLM4F_API_BASE", "https://open.bigmodel.cn/api/paas/v4").rstrip("/")
+    key, model = env["GLM4F_API_KEY"], env.get("GLM4F_MODEL", "glm-4-flash")
     body = json.dumps({
         "model": model,
         "messages": [
@@ -193,19 +200,19 @@ def model_of(provider: str) -> str:
     if provider == "jev":
         return "jev-latest"
     for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
-        if line.startswith("GLM_MODEL="):
+        if line.startswith("GLM4F_MODEL="):
             return line.split("=", 1)[1].strip()
     return "glm-4-flash"
 
 
 # ---------- 预算闸（用户复核 P1：$5 硬上限必须进执行路径，不只进说明书） ----------
 
-# 固定计费表（可审计）：官方未公开单价，取保守上界；更新单价须同步改表+重审。
-# 单请求成本按「输入 token 估算×单价上界」计，输出侧以 3x 输入价计且输出占比小，
-# 一并折入保守系数 EST_TOKENS_PER_CHAR。
-PRICE_TABLE = {  # USD per 1M tokens（保守上界）
-    "jev": 10.0,
-    "glm": 2.0,  # 中转通道按贵档估；免费档实际更低
+# 固定计费表（可审计）。Jev 单价来源：TypeSafe 控制台实测（用户 2026-10-17 提供：
+# 269,257 tokens 实扣 $0.0111 ≈ $0.041/M tokens），上取整留 20% 余量；
+# 单价变动须同步改表+重审。GLM 官方免费档计 0（临时测试 key，商用定价待定）。
+PRICE_TABLE = {  # USD per 1M tokens
+    "jev": 0.05,
+    "glm": 0.0,
 }
 EST_TOKENS_PER_CHAR = 1.0  # 中文保守上界（实际 ~0.6-0.75），宁高估不低估
 
