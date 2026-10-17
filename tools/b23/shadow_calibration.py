@@ -262,6 +262,37 @@ def run_calibration(samples: list[tuple[str, str, str]], caller, provider: str,
     return correct, total, spent, skipped
 
 
+def preflight_budget_total(samples: list[tuple[str, str, str]], provider: str) -> float:
+    """整批总成本上界（逐份 load_text 估算之和，含截断后的实际输入）。"""
+    return sum(estimate_request_cost_usd(provider, load_text(path)[0])
+               for _, path, _ in samples)
+
+
+def run_batch_with_preflight(samples: list[tuple[str, str, str]], caller, provider: str,
+                             prompt_hash: str, budget_usd: float,
+                             out_path: Path) -> tuple[int, int, int, float, int]:
+    """预检→跑批→落盘（复核 P1：预算须在首个请求前预检全批——超限在任何
+    caller 与文件创建前退出；批中再遇超限为防御兜底，同样零半截文件）。"""
+    total_est = preflight_budget_total(samples, provider)
+    if not check_budget(budget_usd, total_est):
+        print(f"[BUDGET] 整批总上界 ${total_est:.4f} > 预算 ${budget_usd:.2f}"
+              f"——预检不过，零请求零文件退出（退出码 2）")
+        return 2, 0, 0, 0.0, len(samples)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    lines: list[str] = []
+    correct, total, spent, skipped = run_calibration(
+        samples, caller, provider, prompt_hash, budget_usd, lines.append)
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+    print(f"\n{provider}: {correct}/{total} correct, "
+          f"budget_spent≈${spent:.4f}/${budget_usd:.2f}, "
+          f"skipped_by_budget={skipped} -> {out_path}")
+    if skipped:
+        print("预算超限截停：本批未跑完（退出码 2）")
+        return 2, correct, total, spent, skipped
+    return 0, correct, total, spent, skipped
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--provider", choices=["glm", "jev"], required=True)
@@ -290,20 +321,10 @@ def main() -> int:
         samples = samples[: args.limit]
 
     out_dir = ROOT / "docs" / "b23"
-    out_dir.mkdir(exist_ok=True)
     out_path = out_dir / f"shadow_{args.provider}_{args.split}_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
-    lines: list[str] = []
-    correct, total, spent, skipped = run_calibration(
-        samples, caller, args.provider, prompt_hash, args.budget_usd, lines.append)
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.writelines(lines)
-    print(f"\n{args.provider}/{args.split}: {correct}/{total} correct, "
-          f"budget_spent≈${spent:.4f}/${args.budget_usd:.2f}, "
-          f"skipped_by_budget={skipped} -> {out_path}")
-    if skipped:
-        print("预算超限截停：本批未跑完，提高 --budget-usd 前先复核额度（退出码 2）")
-        return 2
-    return 0
+    code, _correct, _total, _spent, _skipped = run_batch_with_preflight(
+        samples, caller, args.provider, prompt_hash, args.budget_usd, out_path)
+    return code
 
 
 if __name__ == "__main__":

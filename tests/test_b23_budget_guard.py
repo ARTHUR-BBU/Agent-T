@@ -13,7 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools" / "b23"))
 
 from shadow_calibration import (  # noqa: E402  # 需先注入 sys.path
-    PRICE_TABLE, check_budget, load_text, estimate_request_cost_usd, run_calibration)
+    PRICE_TABLE, check_budget, load_text, estimate_request_cost_usd,
+    run_batch_with_preflight, run_calibration)
 
 
 def test_price_table_covers_providers() -> None:
@@ -77,6 +78,39 @@ def test_check_budget_boundary() -> None:
     """闸门边界：等于剩余额度放行，超过一分也拦。"""
     assert check_budget(0.05, 0.05)
     assert not check_budget(0.05, 0.05001)
+
+
+def test_preflight_blocks_mid_batch_shortfall(tmp_path) -> None:
+    """复核 P1：小样本先通过→大样本超预算→后面小样本——预检须在首个
+    请求前拦下整批：零调用、零记录、零输出文件、退出码 2。"""
+    calls = []
+
+    def fake_caller(text: str):
+        calls.append(text)
+        return {"category": "consulting", "confidence": 0.9}, {}
+
+    small1 = tmp_path / "small1.txt"
+    small1.write_text("乙" * 100, encoding="utf-8")
+    big = tmp_path / "big.txt"
+    big.write_text("甲" * 30000, encoding="utf-8")
+    small2 = tmp_path / "small2.txt"
+    small2.write_text("丙" * 100, encoding="utf-8")
+    samples = [(n, str(p), "consulting") for n, p in
+               (("small-1", small1), ("big", big), ("small-2", small2))]
+
+    # 预算=只够第一份小样本：整批总上界必超（旧实现会发 1 次请求+写 1 条留痕）
+    unit_small = estimate_request_cost_usd("jev", "乙" * 100)
+    budget = unit_small * 1 + 1e-6
+    out_path = tmp_path / "out" / "shadow_test.jsonl"
+
+    code, _c, total, _spent, skipped = run_batch_with_preflight(
+        samples, fake_caller, "jev", "h" * 12, budget, out_path)
+
+    assert code == 2
+    assert calls == [], f"仍发了 {len(calls)} 个请求——预检未生效"
+    assert total == 0
+    assert not out_path.exists(), "半截校准文件被写出"
+    assert not out_path.parent.exists() or not any(out_path.parent.iterdir()), "输出目录被污染"
 
 
 def test_budget_stop_whole_batch_on_first_exceed(monkeypatch, tmp_path) -> None:
