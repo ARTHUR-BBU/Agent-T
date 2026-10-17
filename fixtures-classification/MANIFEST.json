@@ -1,0 +1,224 @@
+{
+  "_meta": {
+    "purpose": "B2-3 批2 合同级分类金标语料（拒收类公开示范文本补位，用户 2026-10-16 拍板）",
+    "download_date": "2026-10-16",
+    "provenance_note": "全部为官方公开示范文本（gov.cn/部委/全国合同示范文本库）。报告须单列本来源，不得包装为真实交易合同泛化准确率；脱敏真实样本到位后增补。",
+    "sample_policy": "每类 2 份校准+1 份独立留出集（划分冻结后模型方可触碰）",
+    "excluded": "data-processing-service-2025.docx 与 energy-hosting-service-2026.docx（边界样本，老钱裁定前不进入任何集合）",
+    "ole2_magic": "d0cf11e0",
+    "split_frozen": "2026-10-16",
+    "splits": {
+      "consulting_reject": {
+        "calibration": [
+          "tech-consulting-shgov.doc",
+          "management-consulting-guangzhou.doc"
+        ],
+        "holdout": [
+          "management-consulting-zhujianbu.doc"
+        ]
+      },
+      "dispatch_reject": {
+        "calibration": [
+          "labor-dispatch-mohrss-official.doc",
+          "labor-dispatch-shenzhen.doc"
+        ],
+        "holdout": [
+          "labor-dispatch-shenyang.doc"
+        ]
+      },
+      "tech_transfer_reject": {
+        "calibration": [
+          "tech-transfer-patent-right-shgov.doc",
+          "tech-transfer-trade-secret-shgov.doc"
+        ],
+        "holdout": [
+          "tech-license-patent-shgov.doc"
+        ]
+      }
+    },
+    "split_rule": "留出集选形态最异/最新版：住建部2024全过程咨询（最新最大）/沈阳2023修订（唯一2023版）/技术许可（与转让不同族）",
+    "support_corpus": {
+      "procurement": {
+        "official_template": [
+          "cement-sale-gf-2008.docx",
+          "food-procurement-xinjiang-2025.docx",
+          "gov-procurement-goods-mof-2024.docx",
+          "agri-produce-sale-samr-2025.docx",
+          "school-uniform-procurement-guangzhou.docx",
+          "raw-milk-purchase-2016.docx"
+        ]
+      },
+      "lease": {
+        "official_template": [
+          "equipment-lease-construction-2000.docx",
+          "house-lease-gf-2025-2614.docx",
+          "shanghai-residential-lease-2014.docx",
+          "zhejiang-vehicle-lease-2024.docx"
+        ]
+      },
+      "nda": {
+        "official_template": [
+          "business-cooperation-nda-guangdong.docx",
+          "trade-secret-nda-guangdong.docx"
+        ]
+      },
+      "technical_service": {
+        "official_template_blank": [
+          "tisvc-most-2001.doc",
+          "tisvc-shgov-2020.doc",
+          "tisvc-sjtu-2003.doc"
+        ]
+      },
+      "paths": "fixtures-real/ 与 corpus-tisvc/（见 Agent-T 仓库与 F:/合同审查Agent/corpus-tisvc），SHA256 沿用各处既有登记",
+      "purity_note": "老钱签认条件④：支持类无真实交易合同档位样本，成绩不得表述为真实合同泛化准确率；报告按档位分层统计，不得只报合并分；标题消融探针≥1 份（抹标题再判，防标题捷径）。",
+      "other_reject": {
+        "members": [
+          "mandate-contract-samr-2025.docx",
+          "construction-work-contract-2017.docx",
+          "work-contract-gf-2000.docx",
+          "techdev-coop-most-2001.doc",
+          "techdev-most-2001.doc"
+        ],
+        "legal_basis": "老钱签认 2026-10-17 五格翻格：合同性质+法条+收类定义（模型置信度仅触发复核信号，不作标签依据）：委托（§919）/建设工程施工（§788 准用承揽 §808）/承揽（§770）均非货物买卖（§595）；技术开发与技术服务系 §843 并列类型（§851 vs §878），产品四收类不含技术开发（决策点①）。分类层归 other 交分诊台。"
+      }
+    },
+    "support_splits": {
+      "rule": "每品类留出 1 份（形态最异原则，与拒收类同口径）；阈值只从校准集选，留出集只做最终验证",
+      "holdout": {
+        "procurement": [
+          "school-uniform-procurement-guangzhou.docx"
+        ],
+        "lease": [
+          "shanghai-residential-lease-2014.docx"
+        ],
+        "nda": [
+          "trade-secret-nda-guangdong.docx"
+        ],
+        "technical_service": [
+          "tisvc-sjtu-2003.doc"
+        ]
+      }
+    },
+    "five_flip_signoff": "2026-10-17 老钱五格翻格签认：修订前成绩 17/22（金标疑误）与修订后 22/22（金标纠错后）必须并列呈现，禁止单独引用 22/22；留出集对 other 类零判别力（局限挂账）。"
+  },
+  "tech-consulting-shgov.doc": {
+    "source_page": "https://stcsm.sh.gov.cn/jsscgl/mbxz/20200108/0016-153850.html",
+    "download_url": "https://stcsm.sh.gov.cn/cmsres/63/63e7fd59167f47ee804d94fd0459e266/9fa32db94381dea449fff6190d357744.doc",
+    "publisher": "上海市科学技术委员会（科技部示范文本转载，gov.cn）",
+    "title": "技术咨询合同（示范文本）",
+    "label": "consulting_reject",
+    "note": "科技部技术咨询形态；非技术服务（B2 决策点①：纯咨询拒收）",
+    "sha256": "bbf352d34e41753c4ba93cc3014669b4a482d5aa0c76e25d046aa0a846d5e21a",
+    "bytes": 71168,
+    "catdoc_sha256": "bb48d5d4c83ba0b318b8b7246e8b0629193ee62ef761b14a0b8346b7f4bc6820",
+    "catdoc_chars": 8426,
+    "extract_path": "fixtures-classification/tech-consulting-shgov.txt",
+    "extract_sha256": "bb48d5d4c83ba0b318b8b7246e8b0629193ee62ef761b14a0b8346b7f4bc6820"
+  },
+  "management-consulting-zhujianbu.doc": {
+    "source_page": "https://htsfwb.samr.gov.cn/View?id=918cf0d3-3e17-40f6-a26f-8cf3011d4d70",
+    "download_url": "https://htsfwb.samr.gov.cn/api/File/DownTemplate?id=918cf0d3-3e17-40f6-a26f-8cf3011d4d70&type=1",
+    "publisher": "住房城乡建设部办公厅、市场监管总局办公厅（建办市〔2024〕8号）",
+    "title": "房屋建筑和市政基础设施项目工程建设全过程咨询服务合同（示范文本）",
+    "label": "consulting_reject",
+    "note": "形态偏差：工程全过程咨询（全国无管理咨询类官方示范文本，实锤检索）；归类待老钱签认；归类依据=清单适配性裁定（2026-10-16 老钱签认），非学理咨询类属；留出集住建部版兼任边界探针（判 technical_service 计错判+高价值混淆信号单列）",
+    "sha256": "528cac124b70a56bdc8d0a140c7dd432dfd10bab33c79704178746ba999bdb0a",
+    "bytes": 450186,
+    "catdoc_sha256": "21ec0078312b60c7a042f19fe8715ba646baa6ee34fc8f767429165f9c227ebf",
+    "catdoc_chars": 52267,
+    "extract_path": "fixtures-classification/management-consulting-zhujianbu.txt",
+    "extract_sha256": "21ec0078312b60c7a042f19fe8715ba646baa6ee34fc8f767429165f9c227ebf"
+  },
+  "management-consulting-guangzhou.doc": {
+    "source_page": "https://htsfwb.samr.gov.cn/View?id=5e338657-4d15-401f-be7d-a94de927eab5",
+    "download_url": "https://htsfwb.samr.gov.cn/api/File/DownTemplate?id=5e338657-4d15-401f-be7d-a94de927eab5&type=1",
+    "publisher": "广州市（住建/市场监管系统，SF-2019-0205，收录于全国合同示范文本库）",
+    "title": "广州市建设工程造价咨询合同",
+    "label": "consulting_reject",
+    "note": "形态偏差：工程造价咨询；归类待老钱签认；归类依据=清单适配性裁定（2026-10-16 老钱签认），非学理咨询类属；留出集住建部版兼任边界探针（判 technical_service 计错判+高价值混淆信号单列）",
+    "sha256": "547b6b64ac82fc6de851d53a9dbd2b1b20071d802b38d23e78acf0ee6aeb8175",
+    "bytes": 329581,
+    "catdoc_sha256": "5e8589af26fb6e7f32a793cd332df9415d3415885aabc2e1056a02f0761765a5",
+    "catdoc_chars": 21933,
+    "extract_path": "fixtures-classification/management-consulting-guangzhou.txt",
+    "extract_sha256": "5e8589af26fb6e7f32a793cd332df9415d3415885aabc2e1056a02f0761765a5"
+  },
+  "labor-dispatch-mohrss-official.doc": {
+    "source_page": "http://114.255.111.180/xxgk2020/fdzdgknr/ldgx_4234/ldyg/202106/t20210602_415702.html",
+    "download_url": "http://114.255.111.180/xxgk2020/fdzdgknr/ldgx_4234/ldyg/202106/P020210610345841096845.doc",
+    "publisher": "人力资源社会保障部（2019 劳动合同示范文本）",
+    "title": "劳动合同（劳务派遣）示范文本",
+    "label": "dispatch_reject",
+    "sha256": "9dc7c4e8f5ae166cdd30425cb080a163c1ccfef2629706f8cbbfbf8df7268dce",
+    "bytes": 90624,
+    "catdoc_sha256": "188d866ff2260edf6e0b0060809d4d6c5721b715d7114af5597a8eb71023207c",
+    "catdoc_chars": 5340,
+    "extract_path": "fixtures-classification/labor-dispatch-mohrss-official.txt",
+    "extract_sha256": "188d866ff2260edf6e0b0060809d4d6c5721b715d7114af5597a8eb71023207c"
+  },
+  "labor-dispatch-shenzhen.doc": {
+    "source_page": "https://hrss.sz.gov.cn/zmhd/cjwt/cjwt/ldgx/content/post_1994740.html",
+    "download_url": "https://hrss.sz.gov.cn/attachment/0/731/731659/1994740.doc",
+    "publisher": "深圳市人力资源和社会保障局",
+    "title": "深圳市劳务派遣合同参考文本",
+    "label": "dispatch_reject",
+    "sha256": "8f138a0b3680baeb25b393630f40611f18ac72f0ad9682fea6db3d7f4854d06c",
+    "bytes": 84992,
+    "catdoc_sha256": "3c9252455b968318eac0eac81cff76d862fc4e40f80bd77a94b33969bd2958cb",
+    "catdoc_chars": 4918,
+    "extract_path": "fixtures-classification/labor-dispatch-shenzhen.txt",
+    "extract_sha256": "3c9252455b968318eac0eac81cff76d862fc4e40f80bd77a94b33969bd2958cb"
+  },
+  "labor-dispatch-shenyang.doc": {
+    "source_page": "https://rsj.shenyang.gov.cn/bsfw/xzzq/202312/t20231229_4582613.html",
+    "download_url": "https://rsj.shenyang.gov.cn/bsfw/xzzq/202312/P020231229490858010639.doc",
+    "publisher": "沈阳市人力资源和社会保障局（2023-12 修订版）",
+    "title": "沈阳市劳务派遣劳动合同（示范文本）",
+    "label": "dispatch_reject",
+    "sha256": "4b6bd0f6d74d1d793c0e72152ed6234ebb169ea6456df12bccbffa8f06b522a9",
+    "bytes": 90112,
+    "catdoc_sha256": "66925ff119bfdfc57fbadb44372b3adbbfc5dbb3b486bf30383a8f81708748a0",
+    "catdoc_chars": 5716,
+    "extract_path": "fixtures-classification/labor-dispatch-shenyang.txt",
+    "extract_sha256": "66925ff119bfdfc57fbadb44372b3adbbfc5dbb3b486bf30383a8f81708748a0"
+  },
+  "tech-transfer-patent-right-shgov.doc": {
+    "source_page": "https://stcsm.sh.gov.cn/jsscgl/mbxz/20200108/0016-153850.html",
+    "download_url": "https://stcsm.sh.gov.cn/cmsres/1f/1f9025c2313849c9a17b46c9c7db5400/62c7bbb87454386a4f86d2aa85ed7d69.doc",
+    "publisher": "上海市科学技术委员会（科技部示范文本转载，gov.cn）",
+    "title": "技术转让（专利权）合同（示范文本）",
+    "label": "tech_transfer_reject",
+    "sha256": "681f970416f5bff07a5dad48acaf49cf0eeb7a4ed0ad1713db35a10250d73d63",
+    "bytes": 64512,
+    "catdoc_sha256": "d7e485484ed1f1baddd0d119047d78af7c1c8a392383eb959d4f2a0a8a711816",
+    "catdoc_chars": 8095,
+    "extract_path": "fixtures-classification/tech-transfer-patent-right-shgov.txt",
+    "extract_sha256": "d7e485484ed1f1baddd0d119047d78af7c1c8a392383eb959d4f2a0a8a711816"
+  },
+  "tech-transfer-trade-secret-shgov.doc": {
+    "source_page": "https://stcsm.sh.gov.cn/jsscgl/mbxz/20200108/0016-153850.html",
+    "download_url": "https://stcsm.sh.gov.cn/cmsres/21/21c18d743a624a2098690a0587d82e5d/1f4a7219207bf0a7307be82f030048f9.doc",
+    "publisher": "上海市科学技术委员会（科技部示范文本转载，gov.cn）",
+    "title": "技术转让（技术秘密）合同（示范文本）",
+    "label": "tech_transfer_reject",
+    "sha256": "0a417b14c90168b06c93c3b65bda0e7a62b0c5a267ff427fe53a8b5c00940e79",
+    "bytes": 55808,
+    "catdoc_sha256": "3c3c683de6afa8f7a8240f72bd41e39ee7ee1d0548958b8bc15a51bff1e7d69e",
+    "catdoc_chars": 10079,
+    "extract_path": "fixtures-classification/tech-transfer-trade-secret-shgov.txt",
+    "extract_sha256": "3c3c683de6afa8f7a8240f72bd41e39ee7ee1d0548958b8bc15a51bff1e7d69e"
+  },
+  "tech-license-patent-shgov.doc": {
+    "source_page": "https://stcsm.sh.gov.cn/jsscgl/mbxz/20200108/0016-153850.html",
+    "download_url": "https://stcsm.sh.gov.cn/cmsres/f8/f82dc9c6e29e4d099876c9896ec5913f/f75ee0250adc1464d0aed46d1893d362.doc",
+    "publisher": "上海市科学技术委员会（科技部示范文本转载，gov.cn）",
+    "title": "技术许可（专利实施）合同（示范文本）",
+    "label": "tech_transfer_reject",
+    "sha256": "08d8e2c979d36f6a954744725181ac4fa7cd881850c2013bc881313ff851bc26",
+    "bytes": 74240,
+    "catdoc_sha256": "29e054af81d4a82e99601e1d7fffaa5f858c3ba8eb2c4983f29db43a3805f986",
+    "catdoc_chars": 8907,
+    "extract_path": "fixtures-classification/tech-license-patent-shgov.txt",
+    "extract_sha256": "29e054af81d4a82e99601e1d7fffaa5f858c3ba8eb2c4983f29db43a3805f986"
+  }
+}

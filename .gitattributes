@@ -5,3 +5,5 @@
 # 实锤拦截过一次），防「顺手规范化」破坏重放属性。
 # 字节完整性由 tests/test_tisvc_fixture_integrity.py 的 SHA256 对账测试守卫。
 fixtures-tisvc/*.txt -text -whitespace
+# fixtures-classification/ 同规（B2-3 分类金标语料，生产同构提取逐字节证据）
+fixtures-classification/*.txt -text -whitespace
