@@ -223,7 +223,8 @@ def check_budget(remaining_usd: float, next_cost_usd: float) -> bool:
 
 def run_calibration(samples: list[tuple[str, str, str]], caller, provider: str,
                     prompt_hash: str, budget_usd: float, writer) -> tuple[int, int, float, int]:
-    """跑批（可注入 caller/writer 供守卫测试）：超限立即停批，返回
+    """跑批（可注入 caller/writer 供守卫测试）：首次超限立即停止整批
+    （防半截批次污染校准记录——跳过后续样本，哪怕它们更小装得下），返回
     (correct, total, spent_usd, skipped_by_budget)。"""
     correct = total = skipped = 0
     spent = 0.0
@@ -231,10 +232,10 @@ def run_calibration(samples: list[tuple[str, str, str]], caller, provider: str,
         text, coverage = load_text(path)
         est = estimate_request_cost_usd(provider, text)
         if not check_budget(budget_usd - spent, est):
-            skipped += 1
+            skipped = len(samples) - total  # 本样本+其后全部未跑
             print(f"[BUDGET] {name} 预估 ${est:.4f} > 剩余 ${budget_usd - spent:.4f}"
-                  f"——超限即停（不发请求）")
-            continue
+                  f"——超限即停批（本条及其后 {skipped} 条全部不发）")
+            break
         spent += est
         verdict, meta = None, None
         t_sample = time.time()

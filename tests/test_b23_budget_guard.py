@@ -77,3 +77,35 @@ def test_check_budget_boundary() -> None:
     """闸门边界：等于剩余额度放行，超过一分也拦。"""
     assert check_budget(0.05, 0.05)
     assert not check_budget(0.05, 0.05001)
+
+
+def test_budget_stop_whole_batch_on_first_exceed(monkeypatch, tmp_path) -> None:
+    """复核 P2：首次超限即停整批——大样本被拦后，后面更小的样本也
+    不得发请求（防半截批次污染校准记录）；writer 只落已发样本。"""
+    calls = []
+
+    def fake_caller(text: str):
+        calls.append(text)
+        return {"category": "consulting", "confidence": 0.9}, {}
+
+    # 大样本（住建部 5.2 万字）在前，小样本在后——复现受控场景：
+    # 大样本超预算，若实现错误（continue），后面小样本仍会被调用
+    big = tmp_path / "big.txt"
+    big.write_text("甲" * 30000, encoding="utf-8")
+    small = tmp_path / "small.txt"
+    small.write_text("乙" * 100, encoding="utf-8")
+    samples = [(n, str(p), "consulting") for n, p in
+               (("big", big), ("small-1", small), ("small-2", small))]
+
+    # 预算=小样本单份成本×2：够 0 份大样本，但若错误实现会够跑后面小样本
+    small_cost = estimate_request_cost_usd("jev", "乙" * 100)
+    budget = small_cost * 2 + 1e-6
+
+    lines: list[str] = []
+    _c, total, spent, skipped = run_calibration(
+        samples, fake_caller, "jev", "h" * 12, budget, lines.append)
+    assert calls == [], f"首次超限后仍发了 {len(calls)} 个请求"
+    assert total == 0
+    assert skipped == 3, skipped
+    assert lines == [], "超限后不应有任何留痕落盘"
+    assert spent == 0.0
