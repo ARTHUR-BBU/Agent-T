@@ -198,11 +198,76 @@ def model_of(provider: str) -> str:
     return "glm-4-flash"
 
 
+# ---------- 预算闸（用户复核 P1：$5 硬上限必须进执行路径，不只进说明书） ----------
+
+# 固定计费表（可审计）：官方未公开单价，取保守上界；更新单价须同步改表+重审。
+# 单请求成本按「输入 token 估算×单价上界」计，输出侧以 3x 输入价计且输出占比小，
+# 一并折入保守系数 EST_TOKENS_PER_CHAR。
+PRICE_TABLE = {  # USD per 1M tokens（保守上界）
+    "jev": 10.0,
+    "glm": 2.0,  # 中转通道按贵档估；免费档实际更低
+}
+EST_TOKENS_PER_CHAR = 1.0  # 中文保守上界（实际 ~0.6-0.75），宁高估不低估
+
+
+def estimate_request_cost_usd(provider: str, text: str) -> float:
+    """单请求成本上界（可审计：纯函数，单价来自 PRICE_TABLE）。"""
+    est_tokens = len(text) * EST_TOKENS_PER_CHAR
+    return est_tokens / 1_000_000 * PRICE_TABLE[provider]
+
+
+def check_budget(remaining_usd: float, next_cost_usd: float) -> bool:
+    """发请求前的唯一闸门：下一笔预估≤剩余额度才放行。"""
+    return next_cost_usd <= remaining_usd
+
+
+def run_calibration(samples: list[tuple[str, str, str]], caller, provider: str,
+                    prompt_hash: str, budget_usd: float, writer) -> tuple[int, int, float, int]:
+    """跑批（可注入 caller/writer 供守卫测试）：超限立即停批，返回
+    (correct, total, spent_usd, skipped_by_budget)。"""
+    correct = total = skipped = 0
+    spent = 0.0
+    for name, path, label in samples:
+        text, coverage = load_text(path)
+        est = estimate_request_cost_usd(provider, text)
+        if not check_budget(budget_usd - spent, est):
+            skipped += 1
+            print(f"[BUDGET] {name} 预估 ${est:.4f} > 剩余 ${budget_usd - spent:.4f}"
+                  f"——超限即停（不发请求）")
+            continue
+        spent += est
+        verdict, meta = None, None
+        t_sample = time.time()
+        try:
+            verdict, meta = caller(text)
+        except Exception as e:  # 降级留痕（不中断批次；保留请求模型与耗时）
+            t_err = round(time.time() - t_sample, 2)
+            meta = {"provider": provider,
+                    "model_version": model_of(provider),
+                    "latency_s": t_err,
+                    "cost_note": None, "raw_output": str(e)[:300],
+                    "degradation_reason": f"parse_or_http_error: {type(e).__name__}"}
+            verdict = {"category": None, "confidence": None}
+        total += 1
+        ok = verdict["category"] == label
+        correct += ok
+        rec = {"sample": name, "path": path, "gold_label": label,
+               "input_coverage": coverage, "prompt_hash": prompt_hash,
+               "est_cost_usd": round(est, 4), "verdict": verdict, "correct": ok, **meta}
+        writer(json.dumps(rec, ensure_ascii=False) + "\n")
+        mark = "OK " if ok else "MISS"
+        print(f"[{total}] {mark} {name} gold={label} pred={verdict['category']} "
+              f"conf={verdict['confidence']}")
+    return correct, total, spent, skipped
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--provider", choices=["glm", "jev"], required=True)
     ap.add_argument("--split", choices=["calibration", "holdout"], default="calibration")
     ap.add_argument("--limit", type=int, default=0, help="试射限量（0=全量）")
+    ap.add_argument("--budget-usd", type=float, default=5.0,
+                    help="本批预算硬上限 USD（默认 5.0；超限即停，退出码 2）")
     args = ap.parse_args()
 
     caller = call_glm if args.provider == "glm" else call_jev
@@ -226,33 +291,17 @@ def main() -> int:
     out_dir = ROOT / "docs" / "b23"
     out_dir.mkdir(exist_ok=True)
     out_path = out_dir / f"shadow_{args.provider}_{args.split}_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
-    correct = total = 0
+    lines: list[str] = []
+    correct, total, spent, skipped = run_calibration(
+        samples, caller, args.provider, prompt_hash, args.budget_usd, lines.append)
     with open(out_path, "w", encoding="utf-8") as f:
-        for name, path, label in samples:
-            text, coverage = load_text(path)
-            verdict, meta = None, None
-            t_sample = time.time()
-            try:
-                verdict, meta = caller(text)
-            except Exception as e:  # 降级留痕（不中断批次；保留请求模型与耗时）
-                t_err = round(time.time() - t_sample, 2)
-                meta = {"provider": args.provider,
-                        "model_version": model_of(args.provider),
-                        "latency_s": t_err,
-                        "cost_note": None, "raw_output": str(e)[:300],
-                        "degradation_reason": f"parse_or_http_error: {type(e).__name__}"}
-                verdict = {"category": None, "confidence": None}
-            total += 1
-            ok = verdict["category"] == label
-            correct += ok
-            rec = {"sample": name, "path": path, "gold_label": label,
-                   "input_coverage": coverage, "prompt_hash": prompt_hash,
-                   "verdict": verdict, "correct": ok, **meta}
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-            mark = "OK " if ok else "MISS"
-            print(f"[{total}] {mark} {name} gold={label} pred={verdict['category']} "
-                  f"conf={verdict['confidence']}")
-    print(f"\n{args.provider}/{args.split}: {correct}/{total} correct -> {out_path}")
+        f.writelines(lines)
+    print(f"\n{args.provider}/{args.split}: {correct}/{total} correct, "
+          f"budget_spent≈${spent:.4f}/${args.budget_usd:.2f}, "
+          f"skipped_by_budget={skipped} -> {out_path}")
+    if skipped:
+        print("预算超限截停：本批未跑完，提高 --budget-usd 前先复核额度（退出码 2）")
+        return 2
     return 0
 
 
