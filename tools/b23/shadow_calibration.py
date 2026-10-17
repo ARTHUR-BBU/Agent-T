@@ -122,14 +122,21 @@ def load_text(path: str, max_chars: int = 6000) -> tuple[str, str]:
     return text[:max_chars] + marker + text[-tail:], f"truncated_head_{max_chars}_tail_{tail}"
 
 
-def call_glm(text: str) -> tuple[dict, dict]:
-    """智谱兼容 chat completions（.env: ZHIPU_API_BASE/ZHIPU_API_KEY/GLM_MODEL）。"""
+def _load_env() -> dict:
     env = {}
     for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
         if "=" in line and not line.startswith("#"):
             k, v = line.split("=", 1)
             env[k.strip()] = v.strip()
-    base, key, model = env["ZHIPU_API_BASE"].rstrip("/"), env["ZHIPU_API_KEY"], env.get("GLM_MODEL", "glm-4-flash")
+    return env
+
+
+def call_glm(text: str) -> tuple[dict, dict]:
+    """官方智谱开放平台 glm-4-flash（.env: GLM4F_*，2026-10-17 临时测试 key）；
+    coding 套餐中转（ZHIPU_*）不支持直接调用已排除。"""
+    env = _load_env()
+    base = env.get("GLM4F_API_BASE", "https://open.bigmodel.cn/api/paas/v4").rstrip("/")
+    key, model = env["GLM4F_API_KEY"], env.get("GLM4F_MODEL", "glm-4-flash")
     body = json.dumps({
         "model": model,
         "messages": [
@@ -193,7 +200,7 @@ def model_of(provider: str) -> str:
     if provider == "jev":
         return "jev-latest"
     for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
-        if line.startswith("GLM_MODEL="):
+        if line.startswith("GLM4F_MODEL="):
             return line.split("=", 1)[1].strip()
     return "glm-4-flash"
 
