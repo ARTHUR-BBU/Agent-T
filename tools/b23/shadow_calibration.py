@@ -1,0 +1,233 @@
+# -*- coding: utf-8 -*-
+"""B2-3 批2 双模型影子校准（设计稿 docs/spec-b23-classification-gold.md v1.2）。
+
+红线（硬接口，spec-b2 §3.1）：
+- 模型只给建议品类，永不切换；所有不一致一律 category_confirm（施工实现，
+  本脚本只产校准数据）。
+- 留痕八字段：provider/确切模型版本/提示词哈希/输入覆盖范围/延迟/费用/
+  原始结构化输出/降级原因。
+- 语料以冻结划分（fixtures-classification/MANIFEST.json + MANIFEST
+  support_splits）为准；留出集仅终评（--split holdout），阈值只看校准集。
+
+用法：
+  python -X utf8 tools/b23/shadow_calibration.py --provider glm --split calibration
+  python -X utf8 tools/b23/shadow_calibration.py --provider jev --split calibration --limit 3
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import re
+import sys
+import time
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+
+PROMPT = """你是合同品类分诊器。判断给定合同文本属于以下哪个品类，只输出 JSON：
+{"category": "<八选一>", "confidence": <0-1 小数>}
+品类定义：
+- procurement: 买卖/采购/供货合同（货物交付与价款支付为主轴）
+- lease: 租赁合同（设备/房屋/车辆等租赁）
+- nda: 保密协议（NDA，保密义务为主轴）
+- technical_service: 技术服务合同（受托方以技术知识为委托方解决特定技术问题）
+- consulting: 咨询合同（提供咨询意见/成果建议，含技术咨询/工程咨询/管理咨询）
+- labor_dispatch: 劳务派遣/人力资源外包合同（派遣单位/用工单位/劳动者三方）
+- tech_transfer: 技术转让/技术许可合同（专利权/专利申请权/技术秘密/实施许可的权属移转或授权）
+- other: 以上均不是
+判定依据：合同标题、首部当事人称谓、核心义务结构。文本可能是空白模板——按栏目结构判断形态归属。"""
+
+CATEGORIES = ["procurement", "lease", "nda", "technical_service",
+              "consulting", "labor_dispatch", "tech_transfer", "other"]
+
+# 法务标签（老钱签认 2026-10-16）+冻结划分；support_splits 见仓库外 MANIFEST
+REJECTION_LABELS = {
+    "tech-consulting-shgov": "consulting",
+    "management-consulting-zhujianbu": "consulting",
+    "management-consulting-guangzhou": "consulting",
+    "labor-dispatch-mohrss-official": "labor_dispatch",
+    "labor-dispatch-shenzhen": "labor_dispatch",
+    "labor-dispatch-shenyang": "labor_dispatch",
+    "tech-transfer-patent-right-shgov": "tech_transfer",
+    "tech-transfer-trade-secret-shgov": "tech_transfer",
+    "tech-license-patent-shgov": "tech_transfer",
+}
+REJECTION_HOLDOUT = {"management-consulting-zhujianbu", "labor-dispatch-shenyang", "tech-license-patent-shgov"}
+SUPPORT_HOLDOUT = {"school-uniform-procurement-guangzhou", "shanghai-residential-lease-2014",
+                   "trade-secret-nda-guangdong", "tisvc-sjtu-2003"}
+
+SUPPORT = [  # (样本名, 提取路径, 法务标签)
+    ("cement-sale-gf-2008", "fixtures-real/cement-sale-gf-2008.docx", "procurement"),
+    ("food-procurement-xinjiang-2025", "fixtures-real/food-procurement-xinjiang-2025.docx", "procurement"),
+    ("gov-procurement-goods-mof-2024", "fixtures-real/gov-procurement-goods-mof-2024.docx", "procurement"),
+    ("agri-produce-sale-samr-2025", "fixtures-real/agri-produce-sale-samr-2025.docx", "procurement"),
+    ("school-uniform-procurement-guangzhou", "fixtures-real/school-uniform-procurement-guangzhou.docx", "procurement"),
+    ("mandate-contract-samr-2025", "fixtures-real/mandate-contract-samr-2025.docx", "procurement"),
+    ("construction-work-contract-2017", "fixtures-real/construction-work-contract-2017.docx", "procurement"),
+    ("work-contract-gf-2000", "fixtures-real/work-contract-gf-2000.docx", "procurement"),
+    ("raw-milk-purchase-2016", "fixtures-real/raw-milk-purchase-2016.docx", "procurement"),
+    ("equipment-lease-construction-2000", "fixtures-real/equipment-lease-construction-2000.docx", "lease"),
+    ("house-lease-gf-2025-2614", "fixtures-real/house-lease-gf-2025-2614.docx", "lease"),
+    ("shanghai-residential-lease-2014", "fixtures-real/shanghai-residential-lease-2014.docx", "lease"),
+    ("zhejiang-vehicle-lease-2024", "fixtures-real/zhejiang-vehicle-lease-2024.docx", "lease"),
+    ("business-cooperation-nda-guangdong", "fixtures-real/business-cooperation-nda-guangdong.docx", "nda"),
+    ("trade-secret-nda-guangdong", "fixtures-real/trade-secret-nda-guangdong.docx", "nda"),
+    ("techdev-coop-most-2001", "fixtures-tisvc/techdev-coop-most-2001.txt", "technical_service"),
+    ("techdev-most-2001", "fixtures-tisvc/techdev-most-2001.txt", "technical_service"),
+    ("tisvc-most-2001", "fixtures-tisvc/tisvc-most-2001.txt", "technical_service"),
+    ("tisvc-shgov-2020", "fixtures-tisvc/tisvc-shgov-2020.txt", "technical_service"),
+    ("tisvc-sjtu-2003", "fixtures-tisvc/tisvc-sjtu-2003.txt", "technical_service"),
+]
+
+
+def load_text(path: str, max_chars: int = 6000) -> tuple[str, str]:
+    """读样本文本；docx 走生产同构 python-docx。截断=头 max_chars（§5 截断策略）。"""
+    p = ROOT / path
+    if path.endswith(".docx"):
+        from docx import Document  # 生产解析同构
+
+        doc = Document(str(p))
+        parts = [par.text for par in doc.paragraphs]
+        for table in doc.tables:
+            for row in table.rows:
+                parts.append("\t".join(cell.text for cell in row.cells))
+        text = "\n".join(parts)
+    else:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    coverage = "full" if len(text) <= max_chars else f"truncated_head_{max_chars}"
+    return text[:max_chars], coverage
+
+
+def call_glm(text: str) -> tuple[dict, dict]:
+    """智谱兼容 chat completions（.env: ZHIPU_API_BASE/ZHIPU_API_KEY/GLM_MODEL）。"""
+    env = {}
+    for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
+        if "=" in line and not line.startswith("#"):
+            k, v = line.split("=", 1)
+            env[k.strip()] = v.strip()
+    base, key, model = env["ZHIPU_API_BASE"].rstrip("/"), env["ZHIPU_API_KEY"], env.get("GLM_MODEL", "glm-4-flash")
+    body = json.dumps({
+        "model": model,
+        "messages": [
+            {"role": "system", "content": PROMPT},
+            {"role": "user", "content": f"合同文本：\n{text}"},
+        ],
+        "temperature": 0,
+    }).encode()
+    req = urllib.request.Request(f"{base}/chat/completions", data=body, headers={
+        "Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    t0 = time.time()
+    with urllib.request.urlopen(req, timeout=120) as r:
+        resp = json.loads(r.read())
+    latency = round(time.time() - t0, 2)
+    usage = resp.get("usage", {})
+    raw = resp["choices"][0]["message"]["content"]
+    return parse_verdict(raw), {
+        "provider": "glm", "model_version": model, "latency_s": latency,
+        "cost_note": f"in={usage.get('prompt_tokens')} out={usage.get('completion_tokens')} tokens(中转计费未查单价)",
+        "raw_output": raw, "degradation_reason": None,
+    }
+
+
+def call_jev(text: str) -> tuple[dict, dict]:
+    """TypeSafe Jev choice 八类（预检已过，2026-10-16）。"""
+    key = None
+    for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
+        if line.startswith("TYPESAFE_API_KEY="):
+            key = line.split("=", 1)[1].strip()
+    criteria = {
+        "procurement": "买卖/采购/供货合同", "lease": "租赁合同", "nda": "保密协议",
+        "technical_service": "技术服务合同（以技术知识解决特定技术问题）",
+        "consulting": "咨询合同（含技术/工程/管理咨询）",
+        "labor_dispatch": "劳务派遣/人力外包（三方结构）",
+        "tech_transfer": "技术转让/许可（权属移转或授权）", "other": "以上均不是",
+    }
+    body = json.dumps({"state": text, "model": "jev-latest", "questions": {
+        "category": {"type": "choice",
+            "instructions": "判断这份合同文本属于哪个品类。依据标题、当事人称谓与核心义务；空白模板按栏目结构判断。",
+            "criteria": criteria}}}).encode()
+    req = urllib.request.Request("https://api.typesafe.ai/v1/systemone", data=body, headers={
+        "Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    t0 = time.time()
+    with urllib.request.urlopen(req, timeout=120) as r:
+        resp = json.loads(r.read())
+    latency = round(time.time() - t0, 2)
+    a = resp["answers"]["category"]
+    usage = resp.get("usage", {})
+    return {"category": a["choice"], "confidence": a.get("confidence")}, {
+        "provider": "jev", "model_version": resp.get("model", "jev-latest"), "latency_s": latency,
+        "cost_note": f"in={usage.get('input_tokens')} out={usage.get('output_tokens')} tokens($5 硬上限内)",
+        "raw_output": json.dumps(a, ensure_ascii=False), "degradation_reason": None,
+    }
+
+
+def parse_verdict(raw: str) -> dict:
+    """GLM JSON 解析+Schema 校验；失败重试由调用方按降级留痕处理。"""
+    m = re.search(r"\{[^{}]*\}", raw, re.S)
+    if not m:
+        raise ValueError(f"no json in output: {raw[:120]}")
+    data = json.loads(m.group(0))
+    if data.get("category") not in CATEGORIES:
+        raise ValueError(f"bad category: {data.get('category')}")
+    conf = float(data.get("confidence", 0))
+    return {"category": data["category"], "confidence": max(0.0, min(1.0, conf))}
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--provider", choices=["glm", "jev"], required=True)
+    ap.add_argument("--split", choices=["calibration", "holdout"], default="calibration")
+    ap.add_argument("--limit", type=int, default=0, help="试射限量（0=全量）")
+    args = ap.parse_args()
+
+    caller = call_glm if args.provider == "glm" else call_jev
+    prompt_hash = hashlib.sha256(PROMPT.encode()).hexdigest()[:12]
+
+    samples = []
+    for name, path, label in SUPPORT:
+        if name not in SUPPORT_HOLDOUT:
+            samples.append((name, path, label))
+    for name, label in REJECTION_LABELS.items():
+        if name not in REJECTION_HOLDOUT:
+            samples.append((name, f"fixtures-classification/{name}.txt", label))
+    if args.split == "holdout":
+        hold = [(n, p, lb) for n, p, lb in SUPPORT if n in SUPPORT_HOLDOUT]
+        hold += [(n, f"fixtures-classification/{n}.txt", lb)
+                 for n, lb in REJECTION_LABELS.items() if n in REJECTION_HOLDOUT]
+        samples = hold
+    if args.limit:
+        samples = samples[: args.limit]
+
+    out_dir = ROOT / "docs" / "b23"
+    out_dir.mkdir(exist_ok=True)
+    out_path = out_dir / f"shadow_{args.provider}_{args.split}_{time.strftime('%Y%m%d_%H%M%S')}.jsonl"
+    correct = total = 0
+    with open(out_path, "w", encoding="utf-8") as f:
+        for name, path, label in samples:
+            text, coverage = load_text(path)
+            verdict, meta = None, None
+            try:
+                verdict, meta = caller(text)
+            except Exception as e:  # 降级留痕（不中断批次）
+                meta = {"provider": args.provider, "model_version": "?", "latency_s": None,
+                        "cost_note": None, "raw_output": str(e)[:300],
+                        "degradation_reason": f"parse_or_http_error: {type(e).__name__}"}
+                verdict = {"category": None, "confidence": None}
+            total += 1
+            ok = verdict["category"] == label
+            correct += ok
+            rec = {"sample": name, "path": path, "gold_label": label,
+                   "input_coverage": coverage, "prompt_hash": prompt_hash,
+                   "verdict": verdict, "correct": ok, **meta}
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            mark = "OK " if ok else "MISS"
+            print(f"[{total}] {mark} {name} gold={label} pred={verdict['category']} "
+                  f"conf={verdict['confidence']}")
+    print(f"\n{args.provider}/{args.split}: {correct}/{total} correct -> {out_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
