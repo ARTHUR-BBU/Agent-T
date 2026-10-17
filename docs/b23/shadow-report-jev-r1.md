@@ -15,11 +15,11 @@
 > **截断口径脚注（肉饼门禁 P2-1）**：校准 22 份中 14 份、留出 7 份中 3 份为截断输入。本批跑分用的是初版策略（head_6000 only，coverage 字段=truncated_head_6000）；入库脚本现行策略为 head_6000+tail_2000（§5 协议，coverage=truncated_head_6000_tail_2000）——两代策略不同代，用入库脚本无法逐字节重放 080504 批次。挂账：GLM 通道恢复后对截断样本按现行策略重跑复核。
 > **合计口径注记（P3-1）**：对外引用统一校准集口径（17/22→22/22）；合计 24/29 系校准+留出混算，留出集不含 other 判别力。
 > **GLM 补跑留痕（P3-4）**：2026-10-17 已试补跑一次仍 503（shadow_glm_calibration_20261017_081853.jsonl 降级留痕），通道未恢复。
-> **relabelled 字段口径**：shadow_jev_calibration_20261017_080504_relabelled.jsonl 中 gold_label 保留修订前原值（历史留痕），correct 按 gold_label_revised 计算并以 revised_correct 标记翻格五份。
+> **relabelled 字段口径**：shadow_jev_calibration_20261017_080504_relabelled.jsonl 中 gold_label 保留修订前原值（历史留痕），小智娘 P2-1 修正：correct 保持原始语义（pred==gold_label，翻格五行为 false），22/22 由 revised_correct 字段计算——全库不变式 correct==(pred==gold_label) 恢复。
 
 ## 5 个 MISS = 高价值混淆信号（矛头指向金标标签，非模型）
 
-全部 5 个 MISS 的预测都是 `other` 且高置信——模型在说「这些合同不属于我认识的八类」，逐份验尸：
+校准集 5 个 MISS 的预测都是 `other` 且置信 0.87-0.99——模型在说「这些合同不属于我认识的八类」，逐份验尸（0.71 系 techdev 抹标题消融版，见下文探针节，非校准集 MISS）：
 
 | 样本 | 金标标签 | 模型判 | 验尸结论 |
 |---|---|---|---|
@@ -71,3 +71,9 @@
 5. **techdev-most-2001**：同上；抹标题消融后义务结构仍指向非技术服务（other 0.71）。
 
 **其他签认条款落地**：⑥重算口径=重放 jsonl（shadow_jev_calibration_20261017_080504_relabelled.jsonl）⑦留出集 other 零判别力局限挂账+other 样本量不再追加 ⑧技术开发并入/新增品类=品类边界变更议题需用户拍板，不在金标层面处理 ⑨边界样本两份维持排除另行裁定 ⑩混同类合同（开发+服务混合）按主给付义务定性——口径已写入设计稿 §10。
+
+## 勘误与复现性声明（小智娘门禁 P2-2/P3，2026-10-17）
+
+1. **Jev 提示词哈希勘误**：校准/试射/留出/relabelled 四份 jsonl 的 prompt_hash=13dcc040c784 系修复前误记（GLM PROMPT 顶包）。经 git b2eb331 提交逐字节比对：修复前后实际发送给 Jev 的 instructions+criteria 完全一致——**成绩数据有效，仅哈希留痕失真**。各记录已补 prompt_hash_corrected=478819368c72+erratum 说明（verdict 未动）。
+2. **截断整批声明**：080504 校准批与 080601 留出批全部为修复前截断策略（head_6000 无尾）；入库脚本现行策略 head+tail 系门禁整改产物，两代不同代（重跑复核挂账见上节脚注）。
+3. **消融探针复现**：shadow_jev_ablation_20261017.jsonl 已补 input_text_synth 字段（抹标题合成输入全文留痕），无需代码即可复现。

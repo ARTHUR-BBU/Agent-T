@@ -102,7 +102,7 @@ SUPPORT = [  # (样本名, 提取路径, 法务标签)
 
 
 def load_text(path: str, max_chars: int = 6000) -> tuple[str, str]:
-    """读样本文本；docx 走生产同构 python-docx。截断=头 max_chars（§5 截断策略）。"""
+    """读样本文本；docx 走生产同构 python-docx。截断=头 max_chars+尾 2000（§5 截断策略）。"""
     p = ROOT / path
     if path.endswith(".docx"):
         from docx import Document  # 生产解析同构
