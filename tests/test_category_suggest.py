@@ -43,7 +43,7 @@ def test_disabled_means_no_network() -> None:
 
 
 def test_no_key_skips() -> None:
-    """开关开但无 TYPESAFE key：skip no_key，不炸（env 隔离防真 .env 兜底）。"""
+    """开关开但无 CF_API_TOKEN：skip no_key，不炸（env 隔离防真 .env 兜底）。"""
     with mock.patch.dict("os.environ", {"CATEGORY_SUGGEST_ENABLED": "true"}, clear=False):
         with mock.patch.object(cs, "_load_env", return_value={}):
             out = cs.suggest_category("文本", "procurement")
@@ -54,16 +54,18 @@ def test_no_key_skips() -> None:
 # ---------- 解析与白名单 ----------
 
 def test_parse_ok() -> None:
-    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "TYPESAFE_API_KEY": "k"}
+    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "CF_API_TOKEN": "k",
+        "CF_ACCOUNT_ID": "acct", "CF_CLEF_MODEL": "clef-flash"}
     with mock.patch.dict("os.environ", fake_env),             mock.patch.object(cs, "_load_env", return_value=dict(fake_env)),             mock.patch("app.services.llm_client.httpx.Client") as fake_client:
         fake_client.return_value.__enter__ = lambda s: s
         fake_client.return_value.__exit__ = lambda s, *a: False
         fake_client.return_value.post.return_value.json.return_value = {
-            "model": "jev-latest",
-            "answers": {"category": {"type": "choice", "choice": "lease",
-                                     "probabilities": {"lease": 0.92},
-                                     "confidence": 0.92}},
-            "usage": {"input_tokens": 100, "output_tokens": 10},
+            "success": True,
+            "result": {"model": "clef-flash",
+                       "answers": {"category": {"type": "choice", "choice": "lease",
+                                                "probabilities": {"lease": 0.92},
+                                                "confidence": 0.92}},
+                       "usage": {"input_tokens": 100, "output_tokens": 0}},
         }
         fake_client.return_value.post.return_value.status_code = 200
         out = cs.suggest_category("房屋租赁合同文本" * 10, "procurement")
@@ -73,8 +75,8 @@ def test_parse_ok() -> None:
     assert out.result.confidence == pytest.approx(0.92)
     assert out.skip_reason is None
     # 留痕八字段（provider/model/延迟/费用/原始输出）
-    assert out.provider == "typesafe"
-    assert out.model_version == "jev-latest"
+    assert out.provider == "clef"
+    assert out.model_version == "clef-flash"
     assert out.latency_s is not None
     assert "账本" in (out.cost_note or "")
     assert out.raw_output
@@ -82,15 +84,17 @@ def test_parse_ok() -> None:
 
 def test_parse_rejects_nonwhitelist_category() -> None:
     """白名单外品类（注入逃逸防线）→ 强制 None+降级留痕。"""
-    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "TYPESAFE_API_KEY": "k"}
+    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "CF_API_TOKEN": "k",
+        "CF_ACCOUNT_ID": "acct", "CF_CLEF_MODEL": "clef-flash"}
     with mock.patch.dict("os.environ", fake_env),             mock.patch.object(cs, "_load_env", return_value=dict(fake_env)),             mock.patch("app.services.llm_client.httpx.Client") as fake_client:
         fake_client.return_value.__enter__ = lambda s: s
         fake_client.return_value.__exit__ = lambda s, *a: False
         fake_client.return_value.post.return_value.json.return_value = {
-            "answers": {"category": {"type": "choice",
-                                     "choice": "hacked_category",
-                                     "confidence": 1.0}},
-            "usage": {},
+            "success": True,
+            "result": {"answers": {"category": {"type": "choice",
+                                                "choice": "hacked_category",
+                                                "confidence": 1.0}},
+                       "usage": {}},
         }
         fake_client.return_value.post.return_value.status_code = 200
         out = cs.suggest_category("文本", "procurement")
@@ -104,14 +108,16 @@ def test_llm_call_record_emitted() -> None:
     （LLMCallRecord node=category_suggest，provider=typesafe）。"""
     from app.services import llm_call_log
 
-    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "TYPESAFE_API_KEY": "k"}
+    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "CF_API_TOKEN": "k",
+        "CF_ACCOUNT_ID": "acct", "CF_CLEF_MODEL": "clef-flash"}
     with mock.patch.dict("os.environ", fake_env),             mock.patch.object(cs, "_load_env", return_value=dict(fake_env)),             mock.patch("app.services.llm_client.httpx.Client") as fake_client,             mock.patch.object(llm_call_log, "emit") as fake_emit:
         fake_client.return_value.__enter__ = lambda s: s
         fake_client.return_value.__exit__ = lambda s, *a: False
         fake_client.return_value.post.return_value.json.return_value = {
-            "answers": {"category": {"type": "choice", "choice": "nda",
-                                     "confidence": 1.0}},
-            "usage": {"input_tokens": 50, "output_tokens": 5},
+            "success": True,
+            "result": {"answers": {"category": {"type": "choice", "choice": "nda",
+                                                "confidence": 1.0}},
+                       "usage": {"input_tokens": 50, "output_tokens": 0}},
         }
         fake_client.return_value.post.return_value.status_code = 200
         with llm_call_log.record_node("category_suggest",
@@ -121,14 +127,15 @@ def test_llm_call_record_emitted() -> None:
     assert fake_emit.called, "transport 未落账本（P1-1 复发）"
     rec = fake_emit.call_args[0][0]
     assert rec.node == "category_suggest"
-    assert rec.provider == "typesafe"
+    assert rec.provider == "cloudflare"
     assert rec.usage.get("input_tokens") == 50
 
 
 def test_http_error_degrades_with_metadata() -> None:
     """HTTP 失败降级：保留请求模型与耗时（复核 P2 同款纪律）。"""
     import httpx
-    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "TYPESAFE_API_KEY": "k"}
+    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "CF_API_TOKEN": "k",
+        "CF_ACCOUNT_ID": "acct", "CF_CLEF_MODEL": "clef-flash"}
     with mock.patch.dict("os.environ", fake_env),             mock.patch.object(cs, "_load_env", return_value=dict(fake_env)),             mock.patch("app.services.llm_client.httpx.Client") as fake_client:
         fake_client.return_value.__enter__ = lambda s: s
         fake_client.return_value.__exit__ = lambda s, *a: False
@@ -136,5 +143,5 @@ def test_http_error_degrades_with_metadata() -> None:
         out = cs.suggest_category("文本", "procurement")
     assert out.performed is False
     assert out.skip_reason and out.skip_reason.startswith("llm_error")
-    assert out.model_version == "jev-latest"
+    assert out.model_version == "clef-flash"
     assert out.latency_s is not None

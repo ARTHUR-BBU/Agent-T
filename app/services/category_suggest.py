@@ -10,9 +10,9 @@
   行为与现状完全一致。
 - 拒收话术（老钱签认 2026-10-16）：「暂不在支持范围」，禁「有风险/不合规」。
 
-选型（用户 2026-10-17 拍板）：**Jev 主通道**——双模型对比 Jev 29/29 vs GLM 24/29
-（GLM 5 真错判含 3 个置信 1.0，置信度无区分度不可做分档文案）；计费实锤
-$0.041/M tokens（控制台 269,257 tokens=$0.0111），规模化约 $3.8/万份。
+选型演进：Jev（29/29，$0.041/M）→ 生产 451 地域封锁熔断（2026-10-18）
+→ **Cloudflare Clef 主通道**（用户 2026-10-18 提供凭据，生产服务器实测可达；
+接口与 Jev 同构，输出 0 计费）。Clef 同卷校准见 docs/b23/ 三模型对比。
 校准依据：docs/b23/threshold-analysis-jev-r1.md。
 """
 from __future__ import annotations
@@ -114,25 +114,26 @@ def suggest_category(text: str, selected_category: str) -> SuggestOutcome:
         outcome.skip_reason = "disabled"
         return outcome
     env = _load_env()
-    key = env.get("TYPESAFE_API_KEY")
+    key = env.get("CF_API_TOKEN")
     if not key:
         outcome.skip_reason = "no_llm_key"
         return outcome
 
     clipped, coverage = _clip_for_suggest(text)
     outcome.coverage = {"coverage": coverage, "selected_category": selected_category}
-    base = env.get("TYPESAFE_API_URL", "https://api.typesafe.ai/v1").rstrip("/")
-    model = env.get("JEV_MODEL", "jev-latest")
-    outcome.provider = "typesafe"
+    base = env.get("CF_AI_BASE", "https://api.cloudflare.com/client/v4").rstrip("/")
+    account = env.get("CF_ACCOUNT_ID", "")
+    model = env.get("CF_CLEF_MODEL", "clef")
+    outcome.provider = "clef"
     outcome.model_version = model
 
     # P1-1（肉饼门禁）：transport 走 llm_client.typesafe_judgment 单点——
     # LLMCallRecord 账本只在彼处落盘，自建 HTTP 会绕过账本留痕空转
     t0 = time.time()
     try:
-        raw = llm_client.typesafe_judgment(
-            api_key=key, url=f"{base}/systemone", model=model,
-            state=clipped, instructions=JEV_INSTRUCTIONS,
+        raw = llm_client.decision_judgment(
+            api_key=key, url=f"{base}/accounts/{account}/ai/run/@cf/cloudflare/{model}",
+            model=model, state=clipped, instructions=JEV_INSTRUCTIONS,
             criteria=dict(JEV_CRITERIA), timeout=15.0,
             truncated=(coverage != "full"),
         )
@@ -170,7 +171,7 @@ def _load_env() -> dict[str, str]:
                     v = v[1:-1]
                 env[k.strip()] = v
     env.update({k: v for k, v in os.environ.items()
-                if k.startswith(("TYPESAFE_", "JEV_", "CATEGORY_SUGGEST"))})
+                if k.startswith(("CF_", "CATEGORY_SUGGEST"))})
     return env
 
 

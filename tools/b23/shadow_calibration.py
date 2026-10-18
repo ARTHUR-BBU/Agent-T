@@ -184,6 +184,54 @@ def call_jev(text: str) -> tuple[dict, dict]:
     }
 
 
+def call_clef(text: str) -> tuple[dict, dict]:
+    """Cloudflare Clef（clef-flash）——独立 HTTP（校准工具不依赖 app 包）；
+    生产路径走 app/services/llm_client.decision_judgment（账本单点）。"""
+    env = _load_env()
+    url = (f"{env.get('CF_AI_BASE', 'https://api.cloudflare.com/client/v4').rstrip('/')}"
+           f"/accounts/{env['CF_ACCOUNT_ID']}/ai/run/@cf/cloudflare/{env.get('CF_CLEF_MODEL', 'clef-flash')}")
+    body = json.dumps({"model": env.get("CF_CLEF_MODEL", "clef-flash"),
+                       "state": text, "questions": {"category": {
+                           "type": "choice",
+                           "instructions": JEV_INSTRUCTIONS,
+                           "criteria": dict(JEV_CRITERIA)}}}).encode()
+    req = urllib.request.Request(url, data=body, headers={
+        "Authorization": f"Bearer {env['CF_API_TOKEN']}",
+        "Content-Type": "application/json"})
+    t0 = time.time()
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read())
+    except Exception as e:
+        return {"category": None, "confidence": None}, {
+            "provider": "clef", "model_version": env.get("CF_CLEF_MODEL", "clef-flash"),
+            "latency_s": round(time.time() - t0, 2), "cost_note": None,
+            "raw_output": str(e)[:300],
+            "degradation_reason": f"llm_error: {type(e).__name__}"}
+    a = (data.get("answers") or data.get("result", {}).get("answers") or {}).get("category", {})
+    usage = data.get("usage") or data.get("result", {}).get("usage") or {}
+    return {"category": a.get("choice"), "confidence": a.get("confidence")}, {
+        "provider": "clef", "model_version": env.get("CF_CLEF_MODEL", "clef-flash"),
+        "latency_s": round(time.time() - t0, 2),
+        "cost_note": f"in={usage.get('input_tokens')} out={usage.get('output_tokens')} tokens(免费额度)",
+        "raw_output": json.dumps(a, ensure_ascii=False)[:500],
+        "degradation_reason": None}
+
+
+def _load_env() -> dict:
+    env = {}
+    from pathlib import Path
+    dot_env = Path(__file__).resolve().parents[2] / ".env"
+    if dot_env.exists():
+        for line in dot_env.read_text(encoding="utf-8").splitlines():
+            if "=" in line and not line.startswith("#"):
+                k, v = line.split("=", 1)
+                env[k.strip()] = v.strip()
+    import os
+    env.update({k: v for k, v in os.environ.items() if k.startswith(("CF_", "TYPESAFE_", "GLM4F_"))})
+    return env
+
+
 def parse_verdict(raw: str) -> dict:
     """GLM JSON 解析+Schema 校验；失败重试由调用方按降级留痕处理。"""
     m = re.search(r"\{[^{}]*\}", raw, re.S)
@@ -199,6 +247,9 @@ def parse_verdict(raw: str) -> dict:
 def model_of(provider: str) -> str:
     if provider == "jev":
         return "jev-latest"
+    if provider == "clef":
+        import os
+        return os.environ.get("CF_CLEF_MODEL", "clef-flash")
     for line in (ROOT / ".env").read_text(encoding="utf-8").splitlines():
         if line.startswith("GLM4F_MODEL="):
             return line.split("=", 1)[1].strip()
@@ -212,6 +263,7 @@ def model_of(provider: str) -> str:
 # 单价变动须同步改表+重审。GLM 官方免费档计 0（临时测试 key，商用定价待定）。
 PRICE_TABLE = {  # USD per 1M tokens
     "jev": 0.05,
+    "clef": 0.05,
     "glm": 0.0,
 }
 EST_TOKENS_PER_CHAR = 1.0  # 中文保守上界（实际 ~0.6-0.75），宁高估不低估
@@ -302,14 +354,14 @@ def run_batch_with_preflight(samples: list[tuple[str, str, str]], caller, provid
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--provider", choices=["glm", "jev"], required=True)
+    ap.add_argument("--provider", choices=["glm", "jev", "clef"], required=True)
     ap.add_argument("--split", choices=["calibration", "holdout"], default="calibration")
     ap.add_argument("--limit", type=int, default=0, help="试射限量（0=全量）")
     ap.add_argument("--budget-usd", type=float, default=5.0,
                     help="本批预算硬上限 USD（默认 5.0；超限即停，退出码 2）")
     args = ap.parse_args()
 
-    caller = call_glm if args.provider == "glm" else call_jev
+    caller = {"glm": call_glm, "jev": call_jev, "clef": call_clef}[args.provider]
     prompt_hash = prompt_hash_for(args.provider)
 
     samples = []
