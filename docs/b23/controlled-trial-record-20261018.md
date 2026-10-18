@@ -62,15 +62,19 @@
 
 ## 1. 核心结论
 
-**建议层在生产真正工作**：fail-loud 报警器输出 `PASS: 3 category_suggest calls`（三条调用全部 success，零降级零失败）——第二轮不再是 precheck 兜底，而是 Clef 建议层本身在判。
+**建议层在生产真正工作**：fail-loud 报警器输出 `PASS: 3 category_suggest calls`，且三份受控响应均为建议层专属拦截文案（precheck 兜底文案不同），佐证解析成功。
+
+**PASS 口径边界（Codex P2-1，如实注明）**：账本 success 仅证明 transport 层成功；若 Clef 返回 200 但品类缺失/畸形/白名单外，账本 outcome 仍记 success（解析层降级记录在 SuggestOutcome.skip_reason，不体现在账本——精度残留已在施工卡 v0.2 注记 4 挂账，随留痕升级专项修）。本轮佐证：三份响应的 detected_type 均为建议层中文话术格式，非 precheck 兜底格式。
 
 ## 2. 六项验收实测（Clef 通道）
+
+**判定：受控通过（5 项实测通过+1 项未覆盖）——不宣称六项全过。**
 
 | 场景 | 实测 | 判定 |
 |---|---|---|
 | 1 建议一致→正常审查 | uploaded+review_id（a92ef1752b7d） | ✅ |
-| 2 高置信不一致→category_confirm | category_confirm（Clef 判 tisvc→technical_service 0.97） | ✅ |
-| 3 低置信不一致→confirm 改文案 | 本轮未自然出现（Clef 全部高置信判对）——低置信文案由测试锁定（test_disagree_low_confidence_still_confirms） | N/A（留真实样本覆盖） |
+| 2 高置信不一致→category_confirm | category_confirm（Clef 判 tisvc→technical_service 0.97）——**注**：technical_service 为 hidden 品类，路由按「不在支持范围」出拒收话术+suggested=None（见 §3 口径说明）；「支持类之间不一致+切换选项」分支在 hidden 状态下不可达，由测试 test_cross_supported_disagree_no_english_id+test_disagree_always_confirms 锁定，生产演练待品类开放 | ✅（hidden 口径） |
+| 3 低置信不一致→confirm 改文案 | **未覆盖**：本轮未自然出现（Clef 全部高置信判对）——低置信文案由测试锁定（test_disagree_low_confidence_still_confirms）；真实低置信样本到位后补验 | ⚠️ 未覆盖 |
 | 4 force 确认重传→正常审查 | uploaded+review_id（ae18289c28da） | ✅ 无弹窗死循环 |
 | 5 不支持品类建议→拒收话术 | category_confirm+「暂不在支持范围」+suggested=None（detected=咨询合同） | ✅ |
 | 6 与开关关对照规则状态不变 | 本地全量 1161 passed+CI 双绿为据；force 后审查照常完成 | ✅ |
