@@ -53,13 +53,43 @@ ssh root@<IP> "docker run -d --name agent-t --restart unless-stopped -p 8080:808
 
 ## 日常更新代码
 
+> **⚠️ 换容器前必先备份账本**（B2-3 受控试运行事故教训，2026-10-18）：
+> reviews.db 在容器内 /tmp，`docker rm -f` 会连带销毁——先 `docker cp`
+> 备份到宿主机再做任何容器操作。
+
 ```bash
 git archive --format=tar.gz HEAD -o /tmp/agent-t.tar.gz
 scp /tmp/agent-t.tar.gz root@<IP>:/opt/
+# ① 备份账本（换容器前必做）
+ssh root@<IP> 'mkdir -p /opt/backup && docker cp agent-t:/tmp/agent-t-reviews.db /opt/backup/agent-t-reviews-$(date +%Y%m%d%H%M).db'
+# ② 构建+换容器
 ssh root@<IP> 'cd /opt/agent-t && tar xzf /opt/agent-t.tar.gz && \
   docker build -f Dockerfile.server -t agent-t:latest . && \
   docker rm -f agent-t'
 # 然后重跑上面的 docker run（env 不变）
+```
+
+### B2-3 建议层配置核对（开启 CATEGORY_SUGGEST_ENABLED 时必做）
+
+**顺序**：先开启开关并完成至少一次受控上传（触发建议层），再执行核验——
+核验命令 fail-loud：**零调用或任何失败/降级记录都以退出码 1 报错**，
+不存在「零调用也 PASS」的假绿。
+
+```bash
+ssh root@<IP> 'docker exec agent-t python3 -c "
+import sqlite3, sys
+con = sqlite3.connect("/tmp/agent-t-reviews.db")
+rows = con.execute("SELECT outcome, error_detail FROM llm_calls WHERE node=:n", {"n": "category_suggest"}).fetchall()
+if not rows:
+    raise SystemExit("FAIL: 未发现 category_suggest 调用；请先完成受控上传")
+bad = [r for r in rows if r[0] != "success"]
+if bad:
+    raise SystemExit(f"FAIL: 建议层存在失败/降级记录：{bad}")
+print("PASS:", len(rows), "category_suggest calls")
+"'
+# 同时核对容器 env 含 CF_API_TOKEN 与 CF_ACCOUNT_ID（变量名核对即可，勿回显值）；
+# 降级名单黑话：no_llm_key=缺 CF_API_TOKEN / no_account_id=缺 CF_ACCOUNT_ID
+# （出现即配置缺失，建议层未真正工作）
 ```
 
 ## 部署验收安全门（每次部署/更新后必跑）

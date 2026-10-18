@@ -10,9 +10,9 @@
   行为与现状完全一致。
 - 拒收话术（老钱签认 2026-10-16）：「暂不在支持范围」，禁「有风险/不合规」。
 
-选型（用户 2026-10-17 拍板）：**Jev 主通道**——双模型对比 Jev 29/29 vs GLM 24/29
-（GLM 5 真错判含 3 个置信 1.0，置信度无区分度不可做分档文案）；计费实锤
-$0.041/M tokens（控制台 269,257 tokens=$0.0111），规模化约 $3.8/万份。
+选型演进：Jev（29/29，$0.041/M）→ 生产 451 地域封锁熔断（2026-10-18）
+→ **Cloudflare Clef 主通道**（用户 2026-10-18 提供凭据，生产服务器实测可达；
+接口与 Jev 同构，输出 0 计费）。Clef 同卷校准见 docs/b23/ 三模型对比。
 校准依据：docs/b23/threshold-analysis-jev-r1.md。
 """
 from __future__ import annotations
@@ -22,6 +22,8 @@ import os
 import re
 import time
 from typing import Any, Optional
+
+import httpx
 
 from pydantic import BaseModel
 
@@ -71,6 +73,7 @@ class SuggestOutcome(BaseModel):
     # 八字段留痕（spec-b2 硬接口 4）
     provider: Optional[str] = None
     model_version: Optional[str] = None
+    attempt: int = 1
     latency_s: Optional[float] = None
     cost_note: Optional[str] = None
     raw_output: Optional[str] = None
@@ -114,34 +117,65 @@ def suggest_category(text: str, selected_category: str) -> SuggestOutcome:
         outcome.skip_reason = "disabled"
         return outcome
     env = _load_env()
-    key = env.get("TYPESAFE_API_KEY")
+    key = env.get("CF_API_TOKEN")
     if not key:
         outcome.skip_reason = "no_llm_key"
         return outcome
 
     clipped, coverage = _clip_for_suggest(text)
     outcome.coverage = {"coverage": coverage, "selected_category": selected_category}
-    base = env.get("TYPESAFE_API_URL", "https://api.typesafe.ai/v1").rstrip("/")
-    model = env.get("JEV_MODEL", "jev-latest")
-    outcome.provider = "typesafe"
+    base = env.get("CF_AI_BASE", "https://api.cloudflare.com/client/v4").rstrip("/")
+    account = env.get("CF_ACCOUNT_ID", "")
+    # P1-1（复核）：默认=clef-flash（校准同款+用户拍板最便宜档）——生产漏配
+    # CF_CLEF_MODEL 时不得静默升级 27B 贵档
+    model = env.get("CF_CLEF_MODEL", "clef-flash")
+    outcome.provider = "clef"
     outcome.model_version = model
+    if not account:
+        # P1-1（复核）：缺 CF_ACCOUNT_ID 明确降级，不拼空账户 URL
+        outcome.skip_reason = "no_account_id"
+        return outcome
 
     # P1-1（肉饼门禁）：transport 走 llm_client.typesafe_judgment 单点——
     # LLMCallRecord 账本只在彼处落盘，自建 HTTP 会绕过账本留痕空转
     t0 = time.time()
-    try:
-        raw = llm_client.typesafe_judgment(
-            api_key=key, url=f"{base}/systemone", model=model,
-            state=clipped, instructions=JEV_INSTRUCTIONS,
-            criteria=dict(JEV_CRITERIA), timeout=15.0,
-            truncated=(coverage != "full"),
-        )
-    except Exception as e:  # 降级留痕（保留请求模型与耗时；账本已由 transport 落）
-        outcome.latency_s = round(time.time() - t0, 2)
-        outcome.raw_output = str(e)[:300]
-        outcome.skip_reason = f"llm_error: {type(e).__name__}"
-        return outcome
+    raw: Optional[str] = None
+    last_err: Optional[Exception] = None
+    # P1-2（复核修正）：**仅瞬态网络异常**允许重试一次（断连/读超时/协议错误）；
+    # 401 凭据错/400 配置错/451 地域封锁等永久性拒绝只请求一次——重试白名单
+    # 与施工口径一致（ChatGPT 复核：全异常重试会给永久拒绝白白多打一次）
+    transient = (httpx.TimeoutException, httpx.ConnectError,
+                 httpx.ReadError, httpx.RemoteProtocolError)
+    attempt = 1
+    while True:
+        try:
+            raw = llm_client.decision_judgment(
+                api_key=key, url=f"{base}/accounts/{account}/ai/run/@cf/cloudflare/{model}",
+                model=model, state=clipped, instructions=JEV_INSTRUCTIONS,
+                criteria=dict(JEV_CRITERIA), timeout=15.0,
+                truncated=(coverage != "full"), attempt=attempt,
+            )
+            last_err = None
+            outcome.skip_reason = None  # 重试成功须清前次失败残留
+            outcome.attempt = attempt
+            break
+        except transient as e:
+            if attempt >= 2:
+                last_err = e
+                outcome.skip_reason = f"llm_error: {type(e).__name__}"
+                outcome.attempt = attempt
+                break
+            attempt = 2  # 瞬态：重试一次
+            continue
+        except Exception as e:  # 永久性拒绝（401/400/451 等）：不重试
+            last_err = e
+            outcome.skip_reason = f"llm_error: {type(e).__name__}"
+            outcome.attempt = attempt
+            break
     outcome.latency_s = round(time.time() - t0, 2)
+    if last_err is not None or raw is None:  # 白名单重试仍失败才降级
+        outcome.raw_output = str(last_err)[:300]
+        return outcome
     outcome.cost_note = "usage 由 llm_client 账本记录（LLMCallRecord.usage）"
     # P2-5（肉饼门禁）：畸形响应 fail-closed——结构异常按 parse_failed 降级，
     # 绝不上穿 500 阻断上传主流程
@@ -170,7 +204,7 @@ def _load_env() -> dict[str, str]:
                     v = v[1:-1]
                 env[k.strip()] = v
     env.update({k: v for k, v in os.environ.items()
-                if k.startswith(("TYPESAFE_", "JEV_", "CATEGORY_SUGGEST"))})
+                if k.startswith(("CF_", "CATEGORY_SUGGEST"))})
     return env
 
 
