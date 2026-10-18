@@ -193,15 +193,19 @@ pytest -q
 ```
 
 
-## B2-3 快思考建议层（2026-10-17）
+## B2-3 快思考建议层（2026-10-18 更新：主通道 TypeSafe Jev→Cloudflare Clef-flash）
+
+> 变更原因：Jev 生产 451 地域封锁（受控试运行熔断，见 docs/b23/controlled-trial-record-20261018.md）。
+> 旧变量 TYPESAFE_API_KEY/TYPESAFE_API_URL/JEV_MODEL 已废弃，生产代码不再读取。
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| CATEGORY_SUGGEST_ENABLED | **false** | 外部模型建议层总开关（默认关=零请求零感知；值 true/1/yes 开） |
-| TYPESAFE_API_KEY | （无） | TypeSafe API key（.env 或 env；env 优先） |
-| TYPESAFE_API_URL | https://api.typesafe.ai/v1 | TypeSafe 端点 |
-| JEV_MODEL | jev-latest | 判定模型版本 |
+| CATEGORY_SUGGEST_ENABLED | **false** | 外部模型建议层总开关（默认关=零请求零感知；值 true/1/yes 开；**只认进程环境变量**，.env 里写不生效） |
+| CF_API_TOKEN | （无） | Cloudflare API Token（key 类 .env 兜底可用，env 优先） |
+| CF_ACCOUNT_ID | （无） | Cloudflare Account ID；**缺失时建议层明确降级 no_account_id**，不拼空账户 URL |
+| CF_AI_BASE | https://api.cloudflare.com/client/v4 | Cloudflare API 端点（一般无需改） |
+| CF_CLEF_MODEL | **clef-flash** | 决策模型（默认最便宜档；漏配不会静默升级 27B 贵档） |
 
-注意：开关只认进程环境变量（.env 里写 CATEGORY_SUGGEST_ENABLED 不生效——
-方向安全；key 类变量 .env 兜底可用）。生产启用前阈值表须用户复批（前置条件
-见 docs/b23/threshold-analysis-jev-r1.md §4）。
+部署核对：开启开关后看日志/账本，不得出现 `no_llm_key` / `no_account_id`
+降级（出现=配置缺失，建议层未真正工作）。生产启用前阈值表须用户复批
+（前置条件见 docs/b23/threshold-analysis-jev-r1.md §4）。
