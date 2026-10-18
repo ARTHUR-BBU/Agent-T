@@ -53,9 +53,16 @@ ssh root@<IP> "docker run -d --name agent-t --restart unless-stopped -p 8080:808
 
 ## 日常更新代码
 
+> **⚠️ 换容器前必先备份账本**（B2-3 受控试运行事故教训，2026-10-18）：
+> reviews.db 在容器内 /tmp，`docker rm -f` 会连带销毁——先 `docker cp`
+> 备份到宿主机再做任何容器操作。
+
 ```bash
 git archive --format=tar.gz HEAD -o /tmp/agent-t.tar.gz
 scp /tmp/agent-t.tar.gz root@<IP>:/opt/
+# ① 备份账本（换容器前必做）
+ssh root@<IP> 'mkdir -p /opt/backup && docker cp agent-t:/tmp/agent-t-reviews.db /opt/backup/agent-t-reviews-$(date +%Y%m%d%H%M).db'
+# ② 构建+换容器
 ssh root@<IP> 'cd /opt/agent-t && tar xzf /opt/agent-t.tar.gz && \
   docker build -f Dockerfile.server -t agent-t:latest . && \
   docker rm -f agent-t'
