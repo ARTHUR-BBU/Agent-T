@@ -191,3 +191,17 @@ NDA 红线（风险金标 / 对抗样例须为「需关注」，不得「通过�
 pip install pytest
 pytest -q
 ```
+
+
+## B2-3 快思考建议层（2026-10-17）
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| CATEGORY_SUGGEST_ENABLED | **false** | 外部模型建议层总开关（默认关=零请求零感知；值 true/1/yes 开） |
+| TYPESAFE_API_KEY | （无） | TypeSafe API key（.env 或 env；env 优先） |
+| TYPESAFE_API_URL | https://api.typesafe.ai/v1 | TypeSafe 端点 |
+| JEV_MODEL | jev-latest | 判定模型版本 |
+
+注意：开关只认进程环境变量（.env 里写 CATEGORY_SUGGEST_ENABLED 不生效——
+方向安全；key 类变量 .env 兜底可用）。生产启用前阈值表须用户复批（前置条件
+见 docs/b23/threshold-analysis-jev-r1.md §4）。

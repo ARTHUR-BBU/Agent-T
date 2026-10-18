@@ -32,6 +32,7 @@ from app.api.schemas import (
 from app.api.routes_objection import router as _objection_router
 from app.api.routes_verify import _merge_evidence_index, _pack_verify, router as _verify_router
 from app.graph.pipeline import run_review
+from app.services import category_suggest as category_suggest_service
 from app.services import llm_ask, precheck as precheck_service, report as report_service
 from app.services import verify as verify_service
 from app.prompts import precheck as precheck_prompts
@@ -295,6 +296,50 @@ async def upload(
                 contract_text = None  # 提取失败交给 worker 的 fail-closed 路径统一报错
         finally:
             _parse_slots.release()
+    # B2-3 批3：快思考建议层（施工卡 spec-b23-triage-integration）——
+    # 外部模型开关默认关（关=零请求零感知）；建议永不切换：与用户选择不一致
+    # 一律 category_confirm（置信度只改文案）；other 兜底与 force 重传照常放行
+    # （force=用户已在确认弹窗拍板，重传不二次弹）。
+    if (contract_text is not None and category_suggest_service.is_enabled()
+            and not force):
+        with llm_call_log.record_node(
+                "category_suggest",
+                prompt_version=category_suggest_service.PROMPT_VERSION,
+        ):
+            sug_outcome = await run_in_threadpool(
+                category_suggest_service.suggest_category, contract_text, category
+            )
+        sug = sug_outcome.result
+        if (sug_outcome.performed and sug is not None and sug.category
+                and sug.category not in {category, "other"}):
+            tier = category_suggest_service.confidence_tier(sug.confidence or 0.0)
+            supported_ids = {c["id"] for c in list_categories()}
+            is_unsupported = sug.category not in supported_ids
+            zh = category_suggest_service.category_zh(sug.category)
+            if is_unsupported:
+                # 老钱签认拒收话术（小智娘 P1-2：unsupported 建议是主场景——
+                # 建议层存在的意义恰是抓咨询/劳务派遣，弹窗文案用拒收口径）
+                summary = category_suggest_service.reject_notice(sug.category)
+            else:
+                summary = (f"检测到疑似{zh}（把握较高），与本合约类型不一致，请确认。"
+                           if tier == "high" else
+                           f"检测到疑似{zh}（把握较低），请确认按哪种类型继续。")
+            return UploadResponse(
+                message="category_confirm",
+                status="category_confirm",
+                precheck=PrecheckInfo(
+                    performed=True,
+                    detected_type=zh,
+                    confidence=tier,
+                    summary=summary,
+                ),
+                # P2-1（肉饼门禁）：不支持品类（consulting 等）置 None——
+                # 对齐预审 confirm 分支先例，防前端「切换」点击 422
+                suggested_category=(sug.category
+                                    if sug.category in supported_ids else None),
+                supported_categories=list_categories(),
+            )
+
     if contract_text is not None:
         # 宪法 P0-D1：precheck 时 review_id 尚未生成（create 在预审后），
         # 账本先记 node 标签，review 关联留待后续补全
