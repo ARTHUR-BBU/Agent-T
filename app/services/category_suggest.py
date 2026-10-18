@@ -158,7 +158,7 @@ def suggest_category(text: str, selected_category: str) -> SuggestOutcome:
             outcome.skip_reason = f"llm_error: {type(e).__name__}"
             outcome.attempt = attempt
     outcome.latency_s = round(time.time() - t0, 2)
-    if last_err is not None:  # 两次尝试均失败才降级
+    if last_err is not None or raw is None:  # 两次尝试均失败才降级
         outcome.raw_output = str(last_err)[:300]
         return outcome
     outcome.cost_note = "usage 由 llm_client 账本记录（LLMCallRecord.usage）"
