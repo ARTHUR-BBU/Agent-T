@@ -117,6 +117,7 @@ def typesafe_judgment(
     instructions: str,
     criteria: dict,
     timeout: float,
+    truncated: bool = False,
 ) -> str:
     """TypeSafe System One 判断调用（非 OpenAI 兼容形态，B2-3 批3）。
 
@@ -133,7 +134,7 @@ def typesafe_judgment(
         prompt_version=llm_call_log.current_prompt_version(),
         review_id=llm_call_log.current_review_id(),
         chars_sent=len(state) + len(instructions),
-        truncated=False,
+        truncated=truncated,
     )
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
@@ -154,7 +155,14 @@ def typesafe_judgment(
                 raise httpx.HTTPStatusError(
                     f"{resp.status_code} {resp.text[:300]}",
                     request=resp.request, response=resp)
-            data = resp.json()
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                _rec.latency_ms = int((time.monotonic() - _t0) * 1000)
+                _rec.outcome = "provider_error"
+                _rec.error_detail = "invalid_json_response"
+                llm_call_log.emit(_rec)
+                raise httpx.RequestError("invalid_json_response", request=resp.request) from exc
     except httpx.TimeoutException as exc:
         _rec.latency_ms = int((time.monotonic() - _t0) * 1000)
         _rec.outcome = "timeout"

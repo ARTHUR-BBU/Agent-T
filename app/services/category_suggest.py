@@ -41,19 +41,6 @@ JEV_CRITERIA = {
     "tech_transfer": "技术转让/许可（权属移转或授权）", "other": "以上均不是",
 }
 
-PROMPT = """你是合同品类分诊器。判断给定合同文本属于以下哪个品类，只输出 JSON：
-{"category": "<八选一>", "confidence": <0-1 小数>}
-品类定义：
-- procurement: 买卖/采购/供货合同（货物交付与价款支付为主轴）
-- lease: 租赁合同（设备/房屋/车辆等租赁）
-- nda: 保密协议（NDA，保密义务为主轴）
-- technical_service: 技术服务合同（受托方以技术知识解决特定技术问题）
-- consulting: 咨询合同（提供咨询意见/成果建议，含技术咨询/工程咨询/管理咨询）
-- labor_dispatch: 劳务派遣/人力资源外包合同（派遣单位/用工单位/劳动者三方）
-- tech_transfer: 技术转让/技术许可合同（专利权/申请权/技术秘密/实施许可的权属移转或授权）
-- other: 以上均不是
-判定依据：合同标题、首部当事人称谓、核心义务结构。文本可能是空白模板——按栏目结构判断形态归属。"""
-
 CATEGORIES = ("procurement", "lease", "nda", "technical_service",
               "consulting", "labor_dispatch", "tech_transfer", "other")
 
@@ -147,6 +134,7 @@ def suggest_category(text: str, selected_category: str) -> SuggestOutcome:
             api_key=key, url=f"{base}/systemone", model=model,
             state=clipped, instructions=JEV_INSTRUCTIONS,
             criteria=dict(JEV_CRITERIA), timeout=15.0,
+            truncated=(coverage != "full"),
         )
     except Exception as e:  # 降级留痕（保留请求模型与耗时；账本已由 transport 落）
         outcome.latency_s = round(time.time() - t0, 2)

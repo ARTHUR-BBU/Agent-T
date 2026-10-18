@@ -9,7 +9,6 @@
 """
 from __future__ import annotations
 
-import json
 from unittest import mock
 
 import pytest
@@ -52,22 +51,6 @@ def test_no_key_skips() -> None:
 
 
 # ---------- 解析与白名单 ----------
-
-def _fake_urlopen(payload: dict):
-    body = json.dumps(payload).encode()
-
-    class R:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def read(self):
-            return body
-
-    return R()
-
 
 def test_parse_ok() -> None:
     fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "TYPESAFE_API_KEY": "k"}
