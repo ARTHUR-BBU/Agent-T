@@ -71,18 +71,25 @@ ssh root@<IP> 'cd /opt/agent-t && tar xzf /opt/agent-t.tar.gz && \
 
 ### B2-3 建议层配置核对（开启 CATEGORY_SUGGEST_ENABLED 时必做）
 
-换容器后确认日志/账本**没有** `no_llm_key` / `no_account_id` 降级记录
-（出现=CF_API_TOKEN/CF_ACCOUNT_ID 配置缺失，建议层未真正工作）：
+**顺序**：先开启开关并完成至少一次受控上传（触发建议层），再执行核验——
+核验命令 fail-loud：**零调用或任何失败/降级记录都以退出码 1 报错**，
+不存在「零调用也 PASS」的假绿。
 
 ```bash
 ssh root@<IP> 'docker exec agent-t python3 -c "
-import sqlite3
+import sqlite3, sys
 con = sqlite3.connect("/tmp/agent-t-reviews.db")
 rows = con.execute("SELECT outcome, error_detail FROM llm_calls WHERE node=:n", {"n": "category_suggest"}).fetchall()
+if not rows:
+    raise SystemExit("FAIL: 未发现 category_suggest 调用；请先完成受控上传")
 bad = [r for r in rows if r[0] != "success"]
-print("suggest calls:", len(rows), "failures:", bad)"
-'
-# 同时核对容器 env 含 CF_API_TOKEN 与 CF_ACCOUNT_ID（变量名核对即可，勿回显值）
+if bad:
+    raise SystemExit(f"FAIL: 建议层存在失败/降级记录：{bad}")
+print("PASS:", len(rows), "category_suggest calls")
+"'
+# 同时核对容器 env 含 CF_API_TOKEN 与 CF_ACCOUNT_ID（变量名核对即可，勿回显值）；
+# 降级名单黑话：no_llm_key=缺 CF_API_TOKEN / no_account_id=缺 CF_ACCOUNT_ID
+# （出现即配置缺失，建议层未真正工作）
 ```
 
 ## 部署验收安全门（每次部署/更新后必跑）
