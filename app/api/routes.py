@@ -310,15 +310,20 @@ async def upload(
                 category_suggest_service.suggest_category, contract_text, category
             )
         sug = sug_outcome.result
-        supported_ids = {c["id"] for c in list_categories()}
         if (sug_outcome.performed and sug is not None and sug.category
                 and sug.category not in {category, "other"}):
             tier = category_suggest_service.confidence_tier(sug.confidence or 0.0)
-            zh = category_suggest_service._CATEGORY_ZH.get(
-                sug.category, sug.category)
-            summary = (f"检测到疑似{zh}（把握较高），与本合约类型不一致，请确认。"
-                       if tier == "high" else
-                       f"检测到疑似{zh}（把握较低），请确认按哪种类型继续。")
+            supported_ids = {c["id"] for c in list_categories()}
+            is_unsupported = sug.category not in supported_ids
+            zh = category_suggest_service.category_zh(sug.category)
+            if is_unsupported:
+                # 老钱签认拒收话术（小智娘 P1-2：unsupported 建议是主场景——
+                # 建议层存在的意义恰是抓咨询/劳务派遣，弹窗文案用拒收口径）
+                summary = category_suggest_service.reject_notice(sug.category)
+            else:
+                summary = (f"检测到疑似{zh}（把握较高），与本合约类型不一致，请确认。"
+                           if tier == "high" else
+                           f"检测到疑似{zh}（把握较低），请确认按哪种类型继续。")
             return UploadResponse(
                 message="category_confirm",
                 status="category_confirm",

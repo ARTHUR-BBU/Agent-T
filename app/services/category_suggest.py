@@ -63,8 +63,10 @@ _CLIP_MARKER = "\n...[中段截断]...\n"
 
 # 老钱签认拒收话术（禁「有风险/不合规」；用户可读文案不露英文 id）
 _CATEGORY_ZH = {
-    "consulting": "咨询合同", "labor_dispatch": "劳务派遣合同",
-    "tech_transfer": "技术转让/许可合同", "other": "其他类型合同",
+    "procurement": "采购合同", "lease": "租赁合同", "nda": "保密协议",
+    "technical_service": "技术服务合同", "consulting": "咨询合同",
+    "labor_dispatch": "劳务派遣合同", "tech_transfer": "技术转让/许可合同",
+    "other": "其他类型合同",
 }
 
 
@@ -105,6 +107,11 @@ def _clip_for_suggest(text: str) -> tuple[str, str]:
 def confidence_tier(confidence: float) -> str:
     """置信度分档：≥0.90 high，<0.90 low（0.90 单归属高置信）。"""
     return "high" if confidence >= 0.90 else "low"
+
+
+def category_zh(category_id: str) -> str:
+    """用户可读中文品类名（公共接口，路由层经此取文案不摸私有映射）。"""
+    return _CATEGORY_ZH.get(category_id, category_id)
 
 
 def reject_notice(category_id: str) -> str:

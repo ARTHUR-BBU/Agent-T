@@ -110,3 +110,36 @@ def test_force_skips_suggestion_confirm(monkeypatch) -> None:
     assert r.status_code == 200
     assert r.json()["status"] == "uploaded"
     called.assert_not_called()
+
+
+def test_unsupported_suggestion_reject_wording(monkeypatch) -> None:
+    """小智娘 P1-2：unsupported 建议（consulting）=主场景——弹窗文案必须
+    是老钱拒收话术（暂不在支持范围），suggested_category=None（防 422）。"""
+    monkeypatch.setenv("CATEGORY_SUGGEST_ENABLED", "true")
+    with mock.patch.object(cs, "suggest_category",
+                           return_value=_suggestion("consulting", 1.0)), \
+            mock.patch.object(precheck_service, "is_precheck_enabled",
+                              return_value=False):
+        r = _upload()
+    body = r.json()
+    assert body["status"] == "category_confirm"
+    assert body["suggested_category"] is None, "unsupported 建议不得透传（防 422）"
+    assert "暂不在支持范围" in body["precheck"]["summary"]
+    assert "风险" not in body["precheck"]["summary"]
+    assert body["precheck"]["detected_type"] == "咨询合同"
+
+
+def test_cross_supported_disagree_no_english_id(monkeypatch) -> None:
+    """小智娘 P2-1：跨支持类不一致（procurement vs lease）文案不露英文 id。"""
+    monkeypatch.setenv("CATEGORY_SUGGEST_ENABLED", "true")
+    with mock.patch.object(cs, "suggest_category",
+                           return_value=_suggestion("lease", 0.95)), \
+            mock.patch.object(precheck_service, "is_precheck_enabled",
+                              return_value=False):
+        r = _upload(category="procurement")
+    body = r.json()
+    assert body["status"] == "category_confirm"
+    assert body["suggested_category"] == "lease"
+    assert body["precheck"]["detected_type"] == "租赁合同"
+    assert "lease" not in body["precheck"]["summary"]
+    assert "lease" not in body["precheck"]["detected_type"]
