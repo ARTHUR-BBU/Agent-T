@@ -197,7 +197,7 @@ def test_transient_error_retries_once(monkeypatch) -> None:
     def flaky_post(url, **kw):
         calls.append(1)
         if len(calls) == 1:
-            raise httpx.RemoteDisconnected("first try drops")
+            raise httpx.RemoteProtocolError("first try drops")
         r = mock.Mock(status_code=200)
         r.json.return_value = {"success": True, "result": {
             "answers": {"category": {"type": "choice", "choice": "lease",
@@ -214,3 +214,61 @@ def test_transient_error_retries_once(monkeypatch) -> None:
         out = cs.suggest_category("租赁文本", "procurement")
     assert len(calls) == 2, "应重试一次"
     assert out.performed is True and out.attempt == 2
+
+
+def test_permanent_rejection_not_retried(monkeypatch) -> None:
+    """ChatGPT 复核 P1：451/401/400 等永久性拒绝只请求一次（不重试）。"""
+    import httpx
+    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "CF_API_TOKEN": "k",
+                "CF_ACCOUNT_ID": "acct", "CF_CLEF_MODEL": "clef-flash"}
+    calls = []
+
+    def rejecting_post(url, **kw):
+        calls.append(1)
+        r = mock.Mock(status_code=451)
+        r.request = mock.Mock()
+        raise httpx.HTTPStatusError("451 region", request=r.request, response=r)
+
+    with mock.patch.dict("os.environ", fake_env), \
+            mock.patch.object(cs, "_load_env", return_value=dict(fake_env)), \
+            mock.patch("app.services.llm_client.httpx.Client") as fake_client:
+        fake_client.return_value.__enter__ = lambda s: s
+        fake_client.return_value.__exit__ = lambda s, *a: False
+        fake_client.return_value.post = mock.Mock(side_effect=rejecting_post)
+        out = cs.suggest_category("文本", "procurement")
+    assert len(calls) == 1, f"永久拒绝被重试了 {len(calls)} 次"
+    assert out.performed is False
+    assert out.attempt == 1
+
+
+def test_retry_records_attempts_1_and_2_in_ledger(monkeypatch) -> None:
+    """ChatGPT 复核：重试的两笔调用在账本里 attempt 分别为 1、2。"""
+    import httpx
+    from app.services import llm_call_log
+    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "CF_API_TOKEN": "k",
+                "CF_ACCOUNT_ID": "acct", "CF_CLEF_MODEL": "clef-flash"}
+    calls = []
+
+    def flaky_post(url, **kw):
+        calls.append(kw.get("json", {}).get("_attempt_marker") or len(calls))
+        if len(calls) == 1:
+            raise httpx.RemoteProtocolError("first try drops")
+        r = mock.Mock(status_code=200)
+        r.json.return_value = {"success": True, "result": {
+            "answers": {"category": {"type": "choice", "choice": "lease",
+                                     "confidence": 0.9}},
+            "usage": {"input_tokens": 1, "output_tokens": 0}}}
+        return r
+
+    with mock.patch.dict("os.environ", fake_env), \
+            mock.patch.object(cs, "_load_env", return_value=dict(fake_env)), \
+            mock.patch("app.services.llm_client.httpx.Client") as fake_client, \
+            mock.patch.object(llm_call_log, "emit") as fake_emit:
+        fake_client.return_value.__enter__ = lambda s: s
+        fake_client.return_value.__exit__ = lambda s, *a: False
+        fake_client.return_value.post = mock.Mock(side_effect=flaky_post)
+        out = cs.suggest_category("租赁文本", "procurement")
+    assert out.performed is True and out.attempt == 2
+    attempts = [rec.attempt for rec in fake_emit.call_args_list
+                for rec in [rec.args[0]]]
+    assert attempts == [1, 2], f"账本 attempt 序列错误：{attempts}"

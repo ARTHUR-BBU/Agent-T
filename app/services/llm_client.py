@@ -118,6 +118,7 @@ def decision_judgment(
     criteria: dict,
     timeout: float,
     truncated: bool = False,
+    attempt: int = 1,
 ) -> str:
     """决策模型判断调用（TypeSafe Jev / Cloudflare Clef 同构形态，B2-3 批3）。
 
@@ -137,6 +138,7 @@ def decision_judgment(
         review_id=llm_call_log.current_review_id(),
         chars_sent=len(state) + len(instructions),
         truncated=truncated,
+        attempt=attempt,
     )
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {

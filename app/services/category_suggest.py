@@ -23,6 +23,8 @@ import re
 import time
 from typing import Any, Optional
 
+import httpx
+
 from pydantic import BaseModel
 
 from app.services import llm_client
@@ -139,26 +141,39 @@ def suggest_category(text: str, selected_category: str) -> SuggestOutcome:
     t0 = time.time()
     raw: Optional[str] = None
     last_err: Optional[Exception] = None
-    # P1-2（复核）：瞬态网络错误（断连/超时）有限重试一次——首轮受控试运行
-    # 留出集 1 例 RemoteDisconnected 即此类；白名单解析失败不重试
-    for attempt in (1, 2):
+    # P1-2（复核修正）：**仅瞬态网络异常**允许重试一次（断连/读超时/协议错误）；
+    # 401 凭据错/400 配置错/451 地域封锁等永久性拒绝只请求一次——重试白名单
+    # 与施工口径一致（ChatGPT 复核：全异常重试会给永久拒绝白白多打一次）
+    transient = (httpx.TimeoutException, httpx.ConnectError,
+                 httpx.ReadError, httpx.RemoteProtocolError)
+    attempt = 1
+    while True:
         try:
             raw = llm_client.decision_judgment(
                 api_key=key, url=f"{base}/accounts/{account}/ai/run/@cf/cloudflare/{model}",
                 model=model, state=clipped, instructions=JEV_INSTRUCTIONS,
                 criteria=dict(JEV_CRITERIA), timeout=15.0,
-                truncated=(coverage != "full"),
+                truncated=(coverage != "full"), attempt=attempt,
             )
             last_err = None
             outcome.skip_reason = None  # 重试成功须清前次失败残留
             outcome.attempt = attempt
             break
-        except Exception as e:
+        except transient as e:
+            if attempt >= 2:
+                last_err = e
+                outcome.skip_reason = f"llm_error: {type(e).__name__}"
+                outcome.attempt = attempt
+                break
+            attempt = 2  # 瞬态：重试一次
+            continue
+        except Exception as e:  # 永久性拒绝（401/400/451 等）：不重试
             last_err = e
             outcome.skip_reason = f"llm_error: {type(e).__name__}"
             outcome.attempt = attempt
+            break
     outcome.latency_s = round(time.time() - t0, 2)
-    if last_err is not None or raw is None:  # 两次尝试均失败才降级
+    if last_err is not None or raw is None:  # 白名单重试仍失败才降级
         outcome.raw_output = str(last_err)[:300]
         return outcome
     outcome.cost_note = "usage 由 llm_client 账本记录（LLMCallRecord.usage）"
