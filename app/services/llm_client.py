@@ -6,6 +6,7 @@ HTTP 细节只有一处实现；llm_ask 只负责「问什么、模型怎么选�
 """
 from __future__ import annotations
 
+import json
 import time
 
 import httpx
@@ -105,3 +106,71 @@ def chat_completion(
     _rec.outcome = "success" if content else "parse_failed"
     llm_call_log.emit(_rec)
     return content
+
+
+def typesafe_judgment(
+    *,
+    api_key: str,
+    url: str,
+    model: str,
+    state: str,
+    instructions: str,
+    criteria: dict,
+    timeout: float,
+) -> str:
+    """TypeSafe System One 判断调用（非 OpenAI 兼容形态，B2-3 批3）。
+
+    与 chat_completion 同遵守 transport 单点纪律：LLMCallRecord 在此落盘
+    （node 由调用点经 record_node 注入）。返回 answers 的原始 JSON 文本，
+    解析与白名单校验由调用方负责。
+    """
+    _t0 = time.monotonic()
+    _rec = llm_call_log.LLMCallRecord(
+        call_id=llm_call_log.new_call_id(),
+        node=llm_call_log.current_node() or "unknown",
+        provider="typesafe",
+        model=model,
+        prompt_version=llm_call_log.current_prompt_version(),
+        review_id=llm_call_log.current_review_id(),
+        chars_sent=len(state) + len(instructions),
+        truncated=False,
+    )
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload = {
+        "state": state,
+        "model": model,
+        "questions": {
+            "category": {
+                "type": "choice",
+                "instructions": instructions,
+                "criteria": criteria,
+            }
+        },
+    }
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            resp = client.post(url, headers=headers, json=payload)
+            if resp.status_code >= 400:
+                raise httpx.HTTPStatusError(
+                    f"{resp.status_code} {resp.text[:300]}",
+                    request=resp.request, response=resp)
+            data = resp.json()
+    except httpx.TimeoutException as exc:
+        _rec.latency_ms = int((time.monotonic() - _t0) * 1000)
+        _rec.outcome = "timeout"
+        llm_call_log.emit(_rec)
+        raise exc
+    except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+        _rec.latency_ms = int((time.monotonic() - _t0) * 1000)
+        _rec.outcome = "provider_error"
+        _rec.error_detail = str(exc)[:200]
+        llm_call_log.emit(_rec)
+        raise exc
+    _rec.latency_ms = int((time.monotonic() - _t0) * 1000)
+    usage = data.get("usage", {})
+    _rec.usage = {"input_tokens": usage.get("input_tokens"),
+                  "output_tokens": usage.get("output_tokens")}
+    answers = data.get("answers", {})
+    _rec.gate_counts = {"answers": len(answers)}
+    llm_call_log.emit(_rec)
+    return json.dumps(answers.get("category", {}), ensure_ascii=False)

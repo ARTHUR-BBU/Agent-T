@@ -10,8 +10,10 @@
   行为与现状完全一致。
 - 拒收话术（老钱签认 2026-10-16）：「暂不在支持范围」，禁「有风险/不合规」。
 
-校准依据：docs/b23/threshold-analysis-jev-r1.md（GLM 通道：置信度无区分度，
-本层输出仅作建议展示，置信度 tier 仅影响文案，不做自动路由决策）。
+选型（用户 2026-10-17 拍板）：**Jev 主通道**——双模型对比 Jev 29/29 vs GLM 24/29
+（GLM 5 真错判含 3 个置信 1.0，置信度无区分度不可做分档文案）；计费实锤
+$0.041/M tokens（控制台 269,257 tokens=$0.0111），规模化约 $3.8/万份。
+校准依据：docs/b23/threshold-analysis-jev-r1.md。
 """
 from __future__ import annotations
 
@@ -19,12 +21,25 @@ import json
 import os
 import re
 import time
-import urllib.request
 from typing import Any, Optional
 
 from pydantic import BaseModel
 
+from app.services import llm_client
+
 PROMPT_VERSION = "cat-suggest-v1"
+
+# Jev 判定指令与八类定义（与校准批次 shadow_jev_calibration_20261017_173606
+# 的实际发送内容逐字节一致——提示词哈希纪律）
+JEV_INSTRUCTIONS = ("判断这份合同文本属于哪个品类。依据标题、当事人称谓与核心义务；"
+                    "空白模板按栏目结构判断。")
+JEV_CRITERIA = {
+    "procurement": "买卖/采购/供货合同", "lease": "租赁合同", "nda": "保密协议",
+    "technical_service": "技术服务合同（以技术知识解决特定技术问题）",
+    "consulting": "咨询合同（含技术/工程/管理咨询）",
+    "labor_dispatch": "劳务派遣/人力外包（三方结构）",
+    "tech_transfer": "技术转让/许可（权属移转或授权）", "other": "以上均不是",
+}
 
 PROMPT = """你是合同品类分诊器。判断给定合同文本属于以下哪个品类，只输出 JSON：
 {"category": "<八选一>", "confidence": <0-1 小数>}
@@ -105,39 +120,37 @@ def suggest_category(text: str, selected_category: str) -> SuggestOutcome:
         outcome.skip_reason = "disabled"
         return outcome
     env = _load_env()
-    key = env.get("GLM4F_API_KEY")
+    key = env.get("TYPESAFE_API_KEY")
     if not key:
         outcome.skip_reason = "no_llm_key"
         return outcome
 
     clipped, coverage = _clip_for_suggest(text)
     outcome.coverage = {"coverage": coverage, "selected_category": selected_category}
-    base = env.get("GLM4F_API_BASE", "https://open.bigmodel.cn/api/paas/v4").rstrip("/")
-    model = env.get("GLM4F_MODEL", "glm-4-flash")
-    outcome.provider = "glm"
+    base = env.get("TYPESAFE_API_URL", "https://api.typesafe.ai/v1").rstrip("/")
+    model = env.get("JEV_MODEL", "jev-latest")
+    outcome.provider = "typesafe"
     outcome.model_version = model
 
-    body = json.dumps({"model": model, "messages": [
-        {"role": "system", "content": PROMPT},
-        {"role": "user", "content": f"合同文本：\n{clipped}"}],
-        "temperature": 0}).encode()
-    req = urllib.request.Request(f"{base}/chat/completions", data=body, headers={
-        "Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+    # P1-1（肉饼门禁）：transport 走 llm_client.typesafe_judgment 单点——
+    # LLMCallRecord 账本只在彼处落盘，自建 HTTP 会绕过账本留痕空转
     t0 = time.time()
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
-            resp = json.loads(r.read())
-    except Exception as e:  # 降级留痕（保留请求模型与耗时）
+        raw = llm_client.typesafe_judgment(
+            api_key=key, url=f"{base}/systemone", model=model,
+            state=clipped, instructions=JEV_INSTRUCTIONS,
+            criteria=dict(JEV_CRITERIA), timeout=15.0,
+        )
+    except Exception as e:  # 降级留痕（保留请求模型与耗时；账本已由 transport 落）
         outcome.latency_s = round(time.time() - t0, 2)
         outcome.raw_output = str(e)[:300]
         outcome.skip_reason = f"llm_error: {type(e).__name__}"
         return outcome
     outcome.latency_s = round(time.time() - t0, 2)
-    usage = resp.get("usage", {})
-    outcome.cost_note = (f"in={usage.get('prompt_tokens')} "
-                         f"out={usage.get('completion_tokens')} tokens(免费档)")
-    raw = resp["choices"][0]["message"]["content"]
-    outcome.raw_output = raw[:500]
+    outcome.cost_note = "usage 由 llm_client 账本记录（LLMCallRecord.usage）"
+    # P2-5（肉饼门禁）：畸形响应 fail-closed——结构异常按 parse_failed 降级，
+    # 绝不上穿 500 阻断上传主流程
+    outcome.raw_output = (raw or "")[:500]
 
     parsed = _parse_verdict(raw)
     if parsed is None:
@@ -156,28 +169,42 @@ def _load_env() -> dict[str, str]:
         for line in dot_env.read_text(encoding="utf-8").splitlines():
             if "=" in line and not line.startswith("#"):
                 k, v = line.split("=", 1)
-                env[k.strip()] = v.strip()
-    env.update({k: v for k, v in os.environ.items() if k.startswith(("GLM4F_", "CATEGORY_SUGGEST"))})
+                v = v.strip()
+                # P3（肉饼门禁）：剥行内引号（KEY="v" 场景）
+                if len(v) >= 2 and v[0] == v[-1] and v[0] in {'"', "'"}:
+                    v = v[1:-1]
+                env[k.strip()] = v
+    env.update({k: v for k, v in os.environ.items()
+                if k.startswith(("TYPESAFE_", "JEV_", "CATEGORY_SUGGEST"))})
     return env
 
 
 def _parse_verdict(raw: str) -> Optional[Suggestion]:
     """JSON 解析+白名单校验（注入逃逸防线：白名单外一律 None）。"""
     text = (raw or "").strip()
-    fence = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", text)
-    if fence:
-        text = fence.group(1).strip()
-    m = re.search(r"\{[^{}]*\}", text, re.S)
-    if not m:
-        return None
+    # Jev answers 本身是完整 JSON（可含嵌套 probabilities）——先整体 loads，
+    # 失败再退正则截取（容忍围栏/前后杂讯）
     try:
-        obj = json.loads(m.group(0))
+        obj = json.loads(text)
     except json.JSONDecodeError:
+        fence = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", text)
+        if fence:
+            text = fence.group(1).strip()
+        m = re.search(r"\{[\s\S]*\}", text)
+        if not m:
+            return None
+        try:
+            obj = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(obj, dict):
         return None
-    if not isinstance(obj, dict) or obj.get("category") not in CATEGORIES:
+    # Jev answers.category 形态：{type, choice, probabilities, confidence}
+    category = obj.get("choice") or obj.get("category")
+    if category not in CATEGORIES:
         return None
     try:
         conf = max(0.0, min(1.0, float(obj.get("confidence", 0))))
     except (TypeError, ValueError):
         conf = 0.0
-    return Suggestion(category=obj["category"], confidence=conf)
+    return Suggestion(category=category, confidence=conf)

@@ -70,13 +70,18 @@ def _fake_urlopen(payload: dict):
 
 
 def test_parse_ok() -> None:
-    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "GLM4F_API_KEY": "k",
-                "GLM4F_API_BASE": "https://mock.local", "GLM4F_MODEL": "glm-4-flash"}
-    resp = {"choices": [{"message": {"content": json.dumps(
-        {"category": "lease", "confidence": 0.92})}}],
-        "model": "glm-4-flash",
-        "usage": {"prompt_tokens": 100, "completion_tokens": 10}}
-    with mock.patch.dict("os.environ", fake_env),             mock.patch.object(cs, "_load_env", return_value=dict(fake_env)),             mock.patch("urllib.request.urlopen", return_value=_fake_urlopen(resp)):
+    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "TYPESAFE_API_KEY": "k"}
+    with mock.patch.dict("os.environ", fake_env),             mock.patch.object(cs, "_load_env", return_value=dict(fake_env)),             mock.patch("app.services.llm_client.httpx.Client") as fake_client:
+        fake_client.return_value.__enter__ = lambda s: s
+        fake_client.return_value.__exit__ = lambda s, *a: False
+        fake_client.return_value.post.return_value.json.return_value = {
+            "model": "jev-latest",
+            "answers": {"category": {"type": "choice", "choice": "lease",
+                                     "probabilities": {"lease": 0.92},
+                                     "confidence": 0.92}},
+            "usage": {"input_tokens": 100, "output_tokens": 10},
+        }
+        fake_client.return_value.post.return_value.status_code = 200
         out = cs.suggest_category("房屋租赁合同文本" * 10, "procurement")
     assert out.performed is True
     assert out.result is not None
@@ -84,34 +89,68 @@ def test_parse_ok() -> None:
     assert out.result.confidence == pytest.approx(0.92)
     assert out.skip_reason is None
     # 留痕八字段（provider/model/延迟/费用/原始输出）
-    assert out.provider == "glm"
-    assert out.model_version == "glm-4-flash"
+    assert out.provider == "typesafe"
+    assert out.model_version == "jev-latest"
     assert out.latency_s is not None
-    assert "in=100" in (out.cost_note or "")
+    assert "账本" in (out.cost_note or "")
     assert out.raw_output
 
 
 def test_parse_rejects_nonwhitelist_category() -> None:
     """白名单外品类（注入逃逸防线）→ 强制 None+降级留痕。"""
-    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "GLM4F_API_KEY": "k"}
-    resp = {"choices": [{"message": {"content": json.dumps(
-        {"category": "hacked_category", "confidence": 1.0})}}],
-        "model": "glm-4-flash", "usage": {}}
-    with mock.patch.dict("os.environ", fake_env),             mock.patch.object(cs, "_load_env", return_value=dict(fake_env)),             mock.patch("urllib.request.urlopen", return_value=_fake_urlopen(resp)):
+    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "TYPESAFE_API_KEY": "k"}
+    with mock.patch.dict("os.environ", fake_env),             mock.patch.object(cs, "_load_env", return_value=dict(fake_env)),             mock.patch("app.services.llm_client.httpx.Client") as fake_client:
+        fake_client.return_value.__enter__ = lambda s: s
+        fake_client.return_value.__exit__ = lambda s, *a: False
+        fake_client.return_value.post.return_value.json.return_value = {
+            "answers": {"category": {"type": "choice",
+                                     "choice": "hacked_category",
+                                     "confidence": 1.0}},
+            "usage": {},
+        }
+        fake_client.return_value.post.return_value.status_code = 200
         out = cs.suggest_category("文本", "procurement")
     assert out.performed is False
     assert out.skip_reason == "parse_failed"
     assert out.result is None
 
 
+def test_llm_call_record_emitted() -> None:
+    """P1-1（肉饼门禁）：调用必须经 transport 单点落账本
+    （LLMCallRecord node=category_suggest，provider=typesafe）。"""
+    from app.services import llm_call_log
+
+    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "TYPESAFE_API_KEY": "k"}
+    with mock.patch.dict("os.environ", fake_env),             mock.patch.object(cs, "_load_env", return_value=dict(fake_env)),             mock.patch("app.services.llm_client.httpx.Client") as fake_client,             mock.patch.object(llm_call_log, "emit") as fake_emit:
+        fake_client.return_value.__enter__ = lambda s: s
+        fake_client.return_value.__exit__ = lambda s, *a: False
+        fake_client.return_value.post.return_value.json.return_value = {
+            "answers": {"category": {"type": "choice", "choice": "nda",
+                                     "confidence": 1.0}},
+            "usage": {"input_tokens": 50, "output_tokens": 5},
+        }
+        fake_client.return_value.post.return_value.status_code = 200
+        with llm_call_log.record_node("category_suggest",
+                                      prompt_version=cs.PROMPT_VERSION):
+            out = cs.suggest_category("保密协议文本", "procurement")
+    assert out.performed is True
+    assert fake_emit.called, "transport 未落账本（P1-1 复发）"
+    rec = fake_emit.call_args[0][0]
+    assert rec.node == "category_suggest"
+    assert rec.provider == "typesafe"
+    assert rec.usage.get("input_tokens") == 50
+
+
 def test_http_error_degrades_with_metadata() -> None:
     """HTTP 失败降级：保留请求模型与耗时（复核 P2 同款纪律）。"""
-    import urllib.error
-    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "GLM4F_API_KEY": "k"}
-    with mock.patch.dict("os.environ", fake_env),             mock.patch.object(cs, "_load_env", return_value=dict(fake_env)),             mock.patch("urllib.request.urlopen",
-                       side_effect=urllib.error.HTTPError("u", 503, "x", {}, None)):
+    import httpx
+    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "TYPESAFE_API_KEY": "k"}
+    with mock.patch.dict("os.environ", fake_env),             mock.patch.object(cs, "_load_env", return_value=dict(fake_env)),             mock.patch("app.services.llm_client.httpx.Client") as fake_client:
+        fake_client.return_value.__enter__ = lambda s: s
+        fake_client.return_value.__exit__ = lambda s, *a: False
+        fake_client.return_value.post.side_effect = httpx.ConnectError("down")
         out = cs.suggest_category("文本", "procurement")
     assert out.performed is False
     assert out.skip_reason and out.skip_reason.startswith("llm_error")
-    assert out.model_version == "glm-4-flash"
+    assert out.model_version == "jev-latest"
     assert out.latency_s is not None

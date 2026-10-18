@@ -310,6 +310,7 @@ async def upload(
                 category_suggest_service.suggest_category, contract_text, category
             )
         sug = sug_outcome.result
+        supported_ids = {c["id"] for c in list_categories()}
         if (sug_outcome.performed and sug is not None and sug.category
                 and sug.category not in {category, "other"}):
             tier = category_suggest_service.confidence_tier(sug.confidence or 0.0)
@@ -327,7 +328,10 @@ async def upload(
                     confidence=tier,
                     summary=summary,
                 ),
-                suggested_category=sug.category,
+                # P2-1（肉饼门禁）：不支持品类（consulting 等）置 None——
+                # 对齐预审 confirm 分支先例，防前端「切换」点击 422
+                suggested_category=(sug.category
+                                    if sug.category in supported_ids else None),
                 supported_categories=list_categories(),
             )
 
