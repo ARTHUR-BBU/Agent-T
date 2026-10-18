@@ -71,6 +71,7 @@ class SuggestOutcome(BaseModel):
     # 八字段留痕（spec-b2 硬接口 4）
     provider: Optional[str] = None
     model_version: Optional[str] = None
+    attempt: int = 1
     latency_s: Optional[float] = None
     cost_note: Optional[str] = None
     raw_output: Optional[str] = None
@@ -123,26 +124,43 @@ def suggest_category(text: str, selected_category: str) -> SuggestOutcome:
     outcome.coverage = {"coverage": coverage, "selected_category": selected_category}
     base = env.get("CF_AI_BASE", "https://api.cloudflare.com/client/v4").rstrip("/")
     account = env.get("CF_ACCOUNT_ID", "")
-    model = env.get("CF_CLEF_MODEL", "clef")
+    # P1-1（复核）：默认=clef-flash（校准同款+用户拍板最便宜档）——生产漏配
+    # CF_CLEF_MODEL 时不得静默升级 27B 贵档
+    model = env.get("CF_CLEF_MODEL", "clef-flash")
     outcome.provider = "clef"
     outcome.model_version = model
+    if not account:
+        # P1-1（复核）：缺 CF_ACCOUNT_ID 明确降级，不拼空账户 URL
+        outcome.skip_reason = "no_account_id"
+        return outcome
 
     # P1-1（肉饼门禁）：transport 走 llm_client.typesafe_judgment 单点——
     # LLMCallRecord 账本只在彼处落盘，自建 HTTP 会绕过账本留痕空转
     t0 = time.time()
-    try:
-        raw = llm_client.decision_judgment(
-            api_key=key, url=f"{base}/accounts/{account}/ai/run/@cf/cloudflare/{model}",
-            model=model, state=clipped, instructions=JEV_INSTRUCTIONS,
-            criteria=dict(JEV_CRITERIA), timeout=15.0,
-            truncated=(coverage != "full"),
-        )
-    except Exception as e:  # 降级留痕（保留请求模型与耗时；账本已由 transport 落）
-        outcome.latency_s = round(time.time() - t0, 2)
-        outcome.raw_output = str(e)[:300]
-        outcome.skip_reason = f"llm_error: {type(e).__name__}"
-        return outcome
+    raw: Optional[str] = None
+    last_err: Optional[Exception] = None
+    # P1-2（复核）：瞬态网络错误（断连/超时）有限重试一次——首轮受控试运行
+    # 留出集 1 例 RemoteDisconnected 即此类；白名单解析失败不重试
+    for attempt in (1, 2):
+        try:
+            raw = llm_client.decision_judgment(
+                api_key=key, url=f"{base}/accounts/{account}/ai/run/@cf/cloudflare/{model}",
+                model=model, state=clipped, instructions=JEV_INSTRUCTIONS,
+                criteria=dict(JEV_CRITERIA), timeout=15.0,
+                truncated=(coverage != "full"),
+            )
+            last_err = None
+            outcome.skip_reason = None  # 重试成功须清前次失败残留
+            outcome.attempt = attempt
+            break
+        except Exception as e:
+            last_err = e
+            outcome.skip_reason = f"llm_error: {type(e).__name__}"
+            outcome.attempt = attempt
     outcome.latency_s = round(time.time() - t0, 2)
+    if last_err is not None:  # 两次尝试均失败才降级
+        outcome.raw_output = str(last_err)[:300]
+        return outcome
     outcome.cost_note = "usage 由 llm_client 账本记录（LLMCallRecord.usage）"
     # P2-5（肉饼门禁）：畸形响应 fail-closed——结构异常按 parse_failed 降级，
     # 绝不上穿 500 阻断上传主流程

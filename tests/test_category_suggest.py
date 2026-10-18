@@ -145,3 +145,72 @@ def test_http_error_degrades_with_metadata() -> None:
     assert out.skip_reason and out.skip_reason.startswith("llm_error")
     assert out.model_version == "clef-flash"
     assert out.latency_s is not None
+
+
+def test_default_model_is_clef_flash(monkeypatch) -> None:
+    """复核 P1-1：未配 CF_CLEF_MODEL 时请求的也是 clef-flash（防静默升级 27B 贵档）。"""
+    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "CF_API_TOKEN": "k",
+                "CF_ACCOUNT_ID": "acct"}  # 故意不设 CF_CLEF_MODEL
+    captured = {}
+
+    def fake_post(url, **kw):
+        captured["url"] = url
+        captured["json"] = kw.get("json") or {}
+        r = mock.Mock(status_code=200)
+        r.json.return_value = {"success": True, "result": {
+            "answers": {"category": {"type": "choice", "choice": "lease",
+                                     "confidence": 0.9}},
+            "usage": {"input_tokens": 1, "output_tokens": 0}}}
+        return r
+
+    with mock.patch.dict("os.environ", fake_env), \
+            mock.patch.object(cs, "_load_env", return_value=dict(fake_env)), \
+            mock.patch("app.services.llm_client.httpx.Client") as fake_client:
+        fake_client.return_value.__enter__ = lambda s: s
+        fake_client.return_value.__exit__ = lambda s, *a: False
+        fake_client.return_value.post = mock.Mock(side_effect=fake_post)
+        out = cs.suggest_category("租赁文本", "procurement")
+    assert out.performed is True
+    assert out.model_version == "clef-flash"
+    assert "/clef-flash" in captured["url"], captured["url"]
+
+
+def test_missing_account_id_degrades(monkeypatch) -> None:
+    """复核 P1-1：缺 CF_ACCOUNT_ID 明确降级（no_account_id），不拼空账户 URL。"""
+    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "CF_API_TOKEN": "k"}
+    with mock.patch.dict("os.environ", fake_env), \
+            mock.patch.object(cs, "_load_env", return_value=dict(fake_env)), \
+            mock.patch("app.services.llm_client.httpx.Client",
+                       side_effect=AssertionError("缺账户仍发请求")):
+        out = cs.suggest_category("文本", "procurement")
+    assert out.performed is False
+    assert out.skip_reason == "no_account_id"
+
+
+def test_transient_error_retries_once(monkeypatch) -> None:
+    """复核 P1-2：瞬态网络错误有限重试一次——首试断连、重试成功。"""
+    import httpx
+    fake_env = {"CATEGORY_SUGGEST_ENABLED": "true", "CF_API_TOKEN": "k",
+                "CF_ACCOUNT_ID": "acct", "CF_CLEF_MODEL": "clef-flash"}
+    calls = []
+
+    def flaky_post(url, **kw):
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.RemoteDisconnected("first try drops")
+        r = mock.Mock(status_code=200)
+        r.json.return_value = {"success": True, "result": {
+            "answers": {"category": {"type": "choice", "choice": "lease",
+                                     "confidence": 0.9}},
+            "usage": {"input_tokens": 1, "output_tokens": 0}}}
+        return r
+
+    with mock.patch.dict("os.environ", fake_env), \
+            mock.patch.object(cs, "_load_env", return_value=dict(fake_env)), \
+            mock.patch("app.services.llm_client.httpx.Client") as fake_client:
+        fake_client.return_value.__enter__ = lambda s: s
+        fake_client.return_value.__exit__ = lambda s, *a: False
+        fake_client.return_value.post = mock.Mock(side_effect=flaky_post)
+        out = cs.suggest_category("租赁文本", "procurement")
+    assert len(calls) == 2, "应重试一次"
+    assert out.performed is True and out.attempt == 2
