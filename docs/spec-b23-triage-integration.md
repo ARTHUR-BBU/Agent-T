@@ -50,8 +50,9 @@
 2. **主通道选型变更（用户拍板 2026-10-17）**：GLM-4-Flash → **TypeSafe Jev**
    （计费实锤 $0.041/M + 双模型对比 29/29 vs 24/29）。GLM 免费档降为校准对照，
    不进生产。transport 经 llm_client.typesafe_judgment 单点（账本纪律延伸）。
-3. reject_notice（拒收话术）保留为公共函数（测试锁定口径），当前 unsupported
-   分支由预审层承接，建议层不对四收类用户弹拒收——语义接线随品类开放推进。
+3. reject_notice（拒收话术）已接线：模型建议=unsupported 品类时弹的是
+   **可拍板的 confirm 窗（文案=拒收话术）**，非硬拒收——用户仍可按原品类
+   继续（规则引擎照常判）。四收类用户的常规路径不受影响。
 4. **挂账（肉饼 P2-B）**：解析失败（parse_failed）时账本 outcome 仍记 success
    ——LLMCallRecord schema 无 raw 字段，transport 层无法感知下游解析结果；
    处置=建议层 SuggestOutcome.skip_reason 留痕（调用侧可查），账本细分随

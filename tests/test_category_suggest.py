@@ -34,7 +34,8 @@ def test_switch_on() -> None:
 def test_disabled_means_no_network() -> None:
     """开关关=零网络请求（施工卡红线）：urllib 一旦被碰就炸。"""
     with mock.patch.dict("os.environ", {"CATEGORY_SUGGEST_ENABLED": "false"}):
-        with mock.patch("urllib.request.urlopen", side_effect=AssertionError("开关关仍发请求")):
+        with mock.patch("app.services.llm_client.httpx.Client",
+                        side_effect=AssertionError("开关关仍发请求")):
             out = cs.suggest_category("任何文本", "procurement")
     assert out.performed is False
     assert out.skip_reason == "disabled"
@@ -42,7 +43,7 @@ def test_disabled_means_no_network() -> None:
 
 
 def test_no_key_skips() -> None:
-    """开关开但无 GLM4F key：skip no_key，不炸（env 隔离防真 .env 兜底）。"""
+    """开关开但无 TYPESAFE key：skip no_key，不炸（env 隔离防真 .env 兜底）。"""
     with mock.patch.dict("os.environ", {"CATEGORY_SUGGEST_ENABLED": "true"}, clear=False):
         with mock.patch.object(cs, "_load_env", return_value={}):
             out = cs.suggest_category("文本", "procurement")
