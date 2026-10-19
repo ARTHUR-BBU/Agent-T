@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="330" viewBox="0 0 1200 330" role="img" aria-labelledby="title desc">
+  <title id="title">Agent-T 产品定位</title>
+  <desc id="desc">Agent-T 是一个证据驱动、规则托底、人工负责最终决定的受约束合同审核 Agent。</desc>
+  <rect width="1200" height="330" rx="28" fill="#F2F7FF"/>
+  <rect x="0" y="0" width="14" height="330" rx="7" fill="#0B3D91"/>
+  <text x="600" y="72" text-anchor="middle" fill="#0B3D91" font-family="Inter, system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif" font-size="38" font-weight="700">
+    Agent-T 是一个合同审核 Agent 产品
+  </text>
+  <g text-anchor="middle" font-family="Inter, system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif" font-size="24">
+    <text x="600" y="132" fill="#173B6C">它以传统 Web 软件承载服务，以确定性规则形成正式核查结果，</text>
+    <text x="600" y="178" fill="#173B6C">以多个 AI 模块发现疑点和提出异议，并通过有界主动核验、</text>
+    <text x="600" y="224" fill="#173B6C">人工确认和再次核验构成 Agent 闭环。</text>
+    <text x="600" y="282" fill="#0B3D91" font-weight="700">它的自主权被证据、预算、规则和人工确认严格限制。</text>
+  </g>
+</svg>
