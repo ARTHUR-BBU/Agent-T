@@ -52,3 +52,51 @@
 - Jev 地域封锁为供应商硬限制，中国区生产服务器**不可用**（除非出口代理，不建议）。
 - 备选：建议层主通道回退官方智谱 glm-4-flash（国内直连免费；代码为 GLM→Jev 切换前形态，恢复成本低）；或维持开关关闭、建议层缓发。
 - 两项升级专项（留痕 trace_id+持久化、预算闸）不因试运行中止而取消，仍为「稳定开放」前置门。
+
+---
+
+# 第二轮受控试运行（Clef-flash 主通道，2026-10-18，v2）
+
+> 部署：agent-t:bfb8722（PR #120 合并后 main=bfb8722）；开关 CATEGORY_SUGGEST_ENABLED=true + CF_* 凭据（ssh 管道注入）。
+> 按 ChatGPT 终审后的 SOP 执行：**换容器前先备份账本**（agent-t-reviews-202610182323.db ✅）→换容器→安全门（200/401/401 ✅）→受控上传→fail-loud 核验。
+
+## 1. 核心结论
+
+**建议层在生产真正工作**：fail-loud 报警器输出 `PASS: 6 category_suggest calls`（首轮 3+2026-10-19 补演 3），且全部响应均为建议层专属拦截文案（precheck 兜底文案不同），佐证解析成功。
+
+**PASS 口径边界（Codex P2-1，如实注明）**：账本 success 仅证明 transport 层成功；若 Clef 返回 200 但品类缺失/畸形/白名单外，账本 outcome 仍记 success（解析层降级记录在 SuggestOutcome.skip_reason，不体现在账本——精度残留已在施工卡 v0.2 注记 4 挂账，随留痕升级专项修）。本轮佐证：三份响应的 detected_type 均为建议层中文话术格式，非 precheck 兜底格式。
+
+## 2. 六项验收实测（Clef 通道）
+
+**判定：受控通过。首轮 5 项实测+1 项未覆盖；2026-10-19 补演将未覆盖项（低置信文案）与 hidden 不可达的「支持类间不一致切换」分支均在生产实测补齐（3 次受控上传，账本 6 条全 success）——六项现全部有生产实测依据，公开示范文本来源红线不变。**
+
+| 场景 | 实测 | 判定 |
+|---|---|---|
+| 1 建议一致→正常审查 | uploaded+review_id（a92ef1752b7d） | ✅ |
+| 2 高置信不一致→category_confirm | category_confirm（Clef 判 tisvc→technical_service 0.97）。2026-10-19 补演：**「支持类之间不一致+切换选项」分支已在生产实测**——租赁样本×选采购上传，category_confirm+detected=租赁合同+suggested_category=lease（高置信档文案「与本合约类型不一致，请确认」，house-lease-gf-2025-2614）；hidden 的 technical_service 场景则走拒收话术+suggested=None（见 §3 口径说明，口径不变） | ✅（高置信补演实锤） |
+| 3 低置信不一致→confirm 改文案 | 2026-10-19 补演覆盖：租赁样本×选采购，Clef 判对但置信落低档→category_confirm+「把握较低，请确认按哪种类型继续」改文案（equipment-lease-construction-2000、zhejiang-vehicle-lease-2024 两例），与测试 test_disagree_low_confidence_still_confirms 行为一致 | ✅（低置信补演实锤） |
+| 4 force 确认重传→正常审查 | uploaded+review_id（ae18289c28da） | ✅ 无弹窗死循环 |
+| 5 不支持品类建议→拒收话术 | category_confirm+「暂不在支持范围」+suggested=None（detected=咨询合同） | ✅ |
+| 6 与开关关对照规则状态不变 | 本地全量 1161 passed+CI 双绿为据；force 后审查照常完成 | ✅ |
+
+## 3. 一项口径说明（hidden 开关连带效应，非缺陷）
+
+验收 2 中 tisvc 样例被 Clef 正确判为 technical_service（支持品类），但弹窗文案是拒收话术+suggested=None——因为 **technical_service 品类当前隐藏未开放**：`list_categories()` 过滤 hidden→路由层把它归「不在支持范围」。对当前产品状态该行为语义正确（未开放品类对用户=暂不支持）；品类开放（remove hidden）后自动变为「切换到技术服务」的正常确认弹窗。账本记录佐证：Clef 判定与校准一致。
+
+## 4. 试运行观测数据（批复要求项）
+
+- 部署版本：agent-t:bfb8722；开关：开启
+- 建议层调用数：累计 6 条（首轮 3 + 2026-10-19 补演 3），全 success；确认窗次数：6；失败数：0
+- 供应商侧实际费用：Clef-flash 免费额度内（账本 usage 记录于 llm_calls）
+- 用户最终选择一致性：受控上传均为脚本模拟（无真实用户选择），一致性留试运行期持续观测
+- 未保存合同原文与密钥 ✅
+
+## 5. 熔断条款（持续有效）
+
+自动切换品类/无法绕过确认窗/规则状态被模型改变/费用异常/供应商持续故障——任一出现立即关开关保留证据。本轮未触发。
+
+## 6. 遗留（「稳定开放」前置门，不因试运行通过而免除）
+
+1. 留痕硬接口升级：trace_id+八字段持久化+五路径可查询测试（ChatGPT P1 立项）
+2. 分类调用接入预算/限额闸
+3. 真实脱敏样本 ≥10 份→阈值定稿
