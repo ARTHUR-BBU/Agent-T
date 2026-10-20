@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="700" viewBox="0 0 720 700" role="img" aria-labelledby="title desc">
+  <title id="title">Agent-T 产品定位</title>
+  <desc id="desc">Agent-T 是一个证据驱动、规则托底、人工负责最终决定的受约束合同审核 Agent。</desc>
+  <rect width="720" height="700" rx="32" fill="#F2F7FF"/>
+  <rect x="0" y="0" width="14" height="700" rx="7" fill="#0B3D91"/>
+  <text x="360" y="82" text-anchor="middle" fill="#0B3D91" font-family="Inter, system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif" font-size="46" font-weight="700">Agent-T 是一个</text>
+  <text x="360" y="142" text-anchor="middle" fill="#0B3D91" font-family="Inter, system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif" font-size="46" font-weight="700">合同审核 Agent 产品</text>
+  <g text-anchor="middle" fill="#173B6C" font-family="Inter, system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif" font-size="32">
+    <text x="360" y="228">它以传统 Web 软件承载服务，</text>
+    <text x="360" y="278">以确定性规则形成正式核查结果，</text>
+    <text x="360" y="328">以多个 AI 模块发现疑点和提出异议，</text>
+    <text x="360" y="378">并通过有界主动核验、人工确认</text>
+    <text x="360" y="428">和再次核验构成 Agent 闭环。</text>
+  </g>
+  <g text-anchor="middle" fill="#0B3D91" font-family="Inter, system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif" font-size="34" font-weight="700">
+    <text x="360" y="532">它的自主权被证据、预算、规则</text>
+    <text x="360" y="586">和人工确认严格限制。</text>
+  </g>
+</svg>

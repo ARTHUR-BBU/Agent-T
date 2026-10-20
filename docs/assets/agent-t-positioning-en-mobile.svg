@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="760" viewBox="0 0 720 760" role="img" aria-labelledby="title desc">
+  <title id="title">Agent-T product positioning</title>
+  <desc id="desc">Agent-T is an evidence-driven, rule-grounded, human-accountable contract-review Agent.</desc>
+  <rect width="720" height="760" rx="32" fill="#F2F7FF"/>
+  <rect x="0" y="0" width="14" height="760" rx="7" fill="#0B3D91"/>
+  <text x="360" y="80" text-anchor="middle" fill="#0B3D91" font-family="Inter, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="40" font-weight="700">Agent-T is a contract-review</text>
+  <text x="360" y="132" text-anchor="middle" fill="#0B3D91" font-family="Inter, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="40" font-weight="700">Agent product</text>
+  <g text-anchor="middle" fill="#173B6C" font-family="Inter, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="29">
+    <text x="360" y="220">It runs in a traditional web application;</text>
+    <text x="360" y="266">deterministic rules produce formal findings.</text>
+    <text x="360" y="326">AI modules surface doubts and objections.</text>
+    <text x="360" y="386">Bounded verification, human confirmation,</text>
+    <text x="360" y="432">and re-verification form its Agent loop.</text>
+  </g>
+  <g text-anchor="middle" fill="#0B3D91" font-family="Inter, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="30" font-weight="700">
+    <text x="360" y="546">Its autonomy is strictly limited by</text>
+    <text x="360" y="592">evidence, budgets, rules,</text>
+    <text x="360" y="638">and human confirmation.</text>
+  </g>
+</svg>

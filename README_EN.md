@@ -8,7 +8,10 @@
 
 ### Before you sign, ask the questions that matter.
 
-<img src="docs/assets/agent-t-positioning-en.svg" width="1000" alt="Agent-T is a contract-review Agent product. It delivers its service through a traditional web application, uses deterministic rules to produce formal review findings, and uses multiple AI modules to surface doubts and objections. Bounded verification, human confirmation, and re-verification form the Agent loop. Evidence, budgets, rules, and human confirmation strictly limit its autonomy.">
+<picture>
+  <source media="(max-width: 600px)" srcset="docs/assets/agent-t-positioning-en-mobile.svg">
+  <img src="docs/assets/agent-t-positioning-en.svg" width="1000" alt="Agent-T is a contract-review Agent product. It delivers its service through a traditional web application, uses deterministic rules to produce formal review findings, and uses multiple AI modules to surface doubts and objections. Bounded verification, human confirmation, and re-verification form the Agent loop. Evidence, budgets, rules, and human confirmation strictly limit its autonomy.">
+</picture>
 
 **An AI contract review assistant that helps you spot clauses worth a closer look, understand their practical impact, and prepare concrete revisions for discussion.**
 

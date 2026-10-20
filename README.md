@@ -8,7 +8,10 @@
 
 ### 签合同前，把该问的问题问清楚。
 
-<img src="docs/assets/agent-t-positioning-zh.svg" width="1000" alt="Agent-T 是一个合同审核 Agent 产品。它以传统 Web 软件承载服务，以确定性规则形成正式核查结果，以多个 AI 模块发现疑点和提出异议，并通过有界主动核验、人工确认和再次核验构成 Agent 闭环。它的自主权被证据、预算、规则和人工确认严格限制。">
+<picture>
+  <source media="(max-width: 600px)" srcset="docs/assets/agent-t-positioning-zh-mobile.svg">
+  <img src="docs/assets/agent-t-positioning-zh.svg" width="1000" alt="Agent-T 是一个合同审核 Agent 产品。它以传统 Web 软件承载服务，以确定性规则形成正式核查结果，以多个 AI 模块发现疑点和提出异议，并通过有界主动核验、人工确认和再次核验构成 Agent 闭环。它的自主权被证据、预算、规则和人工确认严格限制。">
+</picture>
 
 **你的 AI 合同审查助手：找出值得关注的条款，读懂实际影响，带着修改建议去沟通。**
 
