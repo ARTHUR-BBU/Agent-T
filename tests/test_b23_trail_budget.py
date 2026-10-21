@@ -124,6 +124,29 @@ def test_settle_transitions_and_guard(tmp_path, monkeypatch) -> None:
         for r in llm_call_log.query())
 
 
+def test_successful_settlement_is_terminal(tmp_path, monkeypatch) -> None:
+    """Codex P2：成功结算即定格——重复/迟到结算不得改写回执或翻成 parse_failed。"""
+    monkeypatch.setenv("STORE_DB_PATH", str(tmp_path / "c.db"))
+    llm_call_log.emit(llm_call_log.LLMCallRecord(
+        call_id="t1", node="category_suggest", provider="cloudflare",
+        model="clef-flash", outcome="success"))
+    receipt = '{"category": "lease", "confidence": 0.9}'
+    assert llm_call_log.settle("t1", "success", receipt) is True
+    # 迟到结算被拒：不能改回执、更不能翻成 parse_failed
+    assert llm_call_log.settle("t1", "parse_failed", None, "late arrival") is False
+    row = llm_call_log.query()[0]
+    assert row["outcome"] == "success"
+    assert row["raw_output"] == receipt
+    # 未带回执的「成功结算」是空操作（回执即未结算标记的反面——语义要求必带）
+    llm_call_log.emit(llm_call_log.LLMCallRecord(
+        call_id="t2", node="category_suggest", provider="cloudflare",
+        model="clef-flash", outcome="success"))
+    assert llm_call_log.settle("t2", "success", None) is False
+    assert llm_call_log.query(trace_id=None) and all(
+        r["call_id"] != "t2" or r["raw_output"] is None
+        for r in llm_call_log.query())
+
+
 def test_settle_caps_raw_output_2048(tmp_path, monkeypatch) -> None:
     """长度兜底：超 2048 截断+标记（内容白名单由调用方保证，此处兜底）。"""
     monkeypatch.setenv("STORE_DB_PATH", str(tmp_path / "c.db"))

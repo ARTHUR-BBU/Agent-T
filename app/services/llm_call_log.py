@@ -264,21 +264,25 @@ def settle(
 ) -> bool:
     """解析后账本结算（B2-3 P1-3：先创建、后结算——「请求成功」≠「解析成功」）。
 
-    仅允许 success → {success, parse_failed} 迁移（provider_error/timeout 为
-    transport 终态，不可改写）；raw_output 超长在此截断（2048+标记，防模型
-    复述合同原文换字段重存——内容白名单由调用方保证，此处兜底长度）。
-    返回是否发生了结算（False=无匹配行或已被终态定格）。
+    仅允许 success → {success, parse_failed} 一次性迁移（provider_error/
+    timeout 为 transport 终态不可改写）。**已结算即定格**（Codex P2）：
+    成功结算必带回执（raw_output 非空）——`raw_output IS NULL` 即「未结算」
+    标记，重复/迟到结算被拒（否则可改写已存回执甚至翻成 parse_failed）。
+    raw_output 超长在此截断（2048+标记；内容白名单由调用方保证）。
+    返回是否发生了结算（False=无匹配行、未回执的成功结算、或已定格）。
     """
     try:
+        if outcome == "success" and raw_output is None:
+            return False  # 成功结算必须带回执（回执落库即「已结算」标记）
         if raw_output is not None and len(raw_output) > 2048:
             raw_output = raw_output[:2048] + "...[truncated]"
         conn = sqlite3.connect(_db_path())
         try:
             _ensure_table(conn)
             cur = conn.execute(
-                "UPDATE llm_calls SET outcome=?, raw_output=COALESCE(?, raw_output),"
+                "UPDATE llm_calls SET outcome=?, raw_output=?,"
                 " error_detail=COALESCE(?, error_detail)"
-                " WHERE call_id=? AND outcome='success'",
+                " WHERE call_id=? AND outcome='success' AND raw_output IS NULL",
                 (outcome, raw_output, error_detail, call_id),
             )
             conn.commit()
