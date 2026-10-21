@@ -11,7 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
 
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -317,6 +317,7 @@ async def upload(
     # 外部模型开关默认关（关=零请求零感知）；建议永不切换：与用户选择不一致
     # 一律 category_confirm（置信度只改文案）；other 兜底与 force 重传照常放行
     # （force=用户已在确认弹窗拍板，重传不二次弹）。
+    suggest_low_conf: Optional[float] = None  # B2-3 真实卷教训：低置信一致提示
     if (contract_text is not None and category_suggest_service.is_enabled()
             and not force):
         with llm_call_log.record_node(
@@ -358,6 +359,14 @@ async def upload(
                                     if sug.category in supported_ids else None),
                 supported_categories=list_categories(),
             )
+        elif (sug_outcome.performed and sug is not None
+                and sug.category == category
+                and category_suggest_service.confidence_tier(
+                    sug.confidence or 0.0) == "low"):
+            # B2-3 真实卷静默盲区教训（final-exam-real-report §2）：建议与用户
+            # 一致但把握<0.90——「模型和用户一起错」时现行设计零提示。照常开审，
+            # 稍后在报告头挂「品类存疑」非阻断提示（不弹窗/不拦审/不换品类）。
+            suggest_low_conf = sug.confidence
 
     if contract_text is not None:
         # 宪法 P0-D1：precheck 时 review_id 尚未生成（create 在预审后），
@@ -414,6 +423,23 @@ async def upload(
                 "stance_notice": stance_notice,
                 "coverage": outcome.coverage,  # 宪法 P0-D2：正常 proceed 路径同账
             }
+
+    # B2-3 静默盲区补丁：低置信一致→报告头「品类存疑」非阻断提示。
+    # 不弹窗/不拦审/不换品类；文案服务端单一来源（category_suggest）。
+    if suggest_low_conf is not None:
+        notice = category_suggest_service.low_conf_agree_notice(suggest_low_conf)
+        if precheck_record is None:
+            precheck_record = {
+                "performed": True,
+                "detected_type": category_suggest_service.category_zh(category),
+                "confidence": "low",
+                "summary": notice,
+                "suspect": True,
+                "coverage": sug_outcome.coverage,  # 宪法 P0-D2：正常 proceed 路径同账
+            }
+        else:
+            precheck_record = {**precheck_record, "suspect": True,
+                               "summary": f"{precheck_record.get('summary', '')}；{notice}"}
 
     # 占并发槽位：满则 429（无界线程池被脚本刷 500 次上传 = 500 个 LLM 调用）
     if not _review_slots.acquire(blocking=False):

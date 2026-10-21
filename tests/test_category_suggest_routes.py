@@ -143,3 +143,31 @@ def test_cross_supported_disagree_no_english_id(monkeypatch) -> None:
     assert body["precheck"]["detected_type"] == "租赁合同"
     assert "lease" not in body["precheck"]["summary"]
     assert "lease" not in body["precheck"]["detected_type"]
+
+
+def test_agree_low_confidence_suspect_note(monkeypatch) -> None:
+    """真实卷静默盲区补丁：建议一致但把握<0.90→照常开审+报告头品类存疑提示。"""
+    monkeypatch.setenv("CATEGORY_SUGGEST_ENABLED", "true")
+    with mock.patch.object(cs, "suggest_category",
+                           return_value=_suggestion("lease", 0.62)),             mock.patch.object(precheck_service, "is_precheck_enabled",
+                              return_value=False):
+        r = _upload(category="lease")
+    assert r.status_code == 200
+    assert r.json()["status"] == "uploaded"  # 不弹窗不拦审
+    row = client.get(f"/api/review/{r.json()['review_id']}").json()
+    pc = row["precheck"]
+    assert pc["suspect"] is True
+    assert "把握较低" in pc["summary"]
+
+
+def test_agree_high_confidence_no_note(monkeypatch) -> None:
+    """高置信一致→零提示（现状不变）。"""
+    monkeypatch.setenv("CATEGORY_SUGGEST_ENABLED", "true")
+    with mock.patch.object(cs, "suggest_category",
+                           return_value=_suggestion("lease", 0.95)),             mock.patch.object(precheck_service, "is_precheck_enabled",
+                              return_value=False):
+        r = _upload(category="lease")
+    assert r.status_code == 200
+    row = client.get(f"/api/review/{r.json()['review_id']}").json()
+    pc = row.get("precheck")
+    assert not pc or not pc.get("suspect")
