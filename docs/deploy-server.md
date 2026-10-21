@@ -79,18 +79,33 @@ ssh root@<IP> 'cd /opt/agent-t && tar xzf /opt/agent-t.tar.gz && \
 ssh root@<IP> 'docker exec agent-t python3 -c "
 import sqlite3, sys
 con = sqlite3.connect("/tmp/agent-t-reviews.db")
-rows = con.execute("SELECT outcome, error_detail FROM llm_calls WHERE node=:n", {"n": "category_suggest"}).fetchall()
+rows = con.execute("SELECT outcome, error_detail, trace_id, prompt_hash, raw_output FROM llm_calls WHERE node=:n", {"n": "category_suggest"}).fetchall()
 if not rows:
     raise SystemExit("FAIL: 未发现 category_suggest 调用；请先完成受控上传")
 bad = [r for r in rows if r[0] != "success"]
 if bad:
     raise SystemExit(f"FAIL: 建议层存在失败/降级记录：{bad}")
-print("PASS:", len(rows), "category_suggest calls")
+# B2-3 两项升级专项：留痕硬接口完整性（trace/指纹必填，结算后回执非空）
+missing = [r[1] for r in rows if not r[2] or not r[3] or not r[4]]
+if missing:
+    raise SystemExit(f"FAIL: 建议层账本行缺 trace_id/prompt_hash/raw_output：{missing}")
+print("PASS:", len(rows), "category_suggest calls, trail complete")
 "'
 # 同时核对容器 env 含 CF_API_TOKEN 与 CF_ACCOUNT_ID（变量名核对即可，勿回显值）；
 # 降级名单黑话：no_llm_key=缺 CF_API_TOKEN / no_account_id=缺 CF_ACCOUNT_ID
-# （出现即配置缺失，建议层未真正工作）
+# （出现即配置缺失，建议层未真正工作）；
+# budget_exceeded=预算闸拦截（emit_skip 显式账，非故障——核对额度配置是否合理）
 ```
+
+## 账本（llm_calls）schema 与回滚纪律（B2-3 两项升级专项起生效）
+
+- 账本表结构**只增不删、向前兼容**：新列（trace_id/raw_output/prompt_hash）由
+  启动时幂等迁移自动添加（`PRAGMA table_info` 检缺列再 ALTER，并发首启有锁守卫）。
+- **常规回滚 = 回退到同样使用显式列名写入的兼容版本，或前向热修**。
+  **禁止**以「删列（DROP COLUMN）」或「恢复旧备份库」作为常规回滚手段——
+  删列丢新留痕、恢复旧库丢部署期间新产生的审查与账本。
+- 「恢复部署前备份库 / DROP COLUMN」仅保留给**灾难恢复场景**（库损坏/数据污染）；
+  与常规回滚是两回事，执行前必须向用户报备。
 
 ## 部署验收安全门（每次部署/更新后必跑）
 

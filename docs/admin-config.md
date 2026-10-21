@@ -205,6 +205,7 @@ pytest -q
 | CF_ACCOUNT_ID | （无） | Cloudflare Account ID；**缺失时建议层明确降级 no_account_id**，不拼空账户 URL |
 | CF_AI_BASE | https://api.cloudflare.com/client/v4 | Cloudflare API 端点（一般无需改） |
 | CF_CLEF_MODEL | **clef-flash** | 决策模型（默认最便宜档；漏配不会静默升级 27B 贵档） |
+| LLM_SUGGEST_BUDGET_PER_UPLOAD | **2** | 建议层独立预算（每次上传：判定 1+瞬态重试 1）。超限静默跳过建议（用户无感，审查照常），账本落 `budget_exceeded`（emit_skip 显式账）。**`0`/负数=不限，仅限开发与紧急回退；生产配置必须为正数**（正式开放配置批将加启动强制拒绝+危险开关审计，见 spec-b23-trail-budget §6-③）。预算误拦时的正常回退=关闭 `CATEGORY_SUGGEST_ENABLED`，不是改成不限 |
 
 部署核对：开启开关后看日志/账本，不得出现 `no_llm_key` / `no_account_id`
 降级（出现=配置缺失，建议层未真正工作）。生产启用前阈值表须用户复批

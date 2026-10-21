@@ -27,7 +27,9 @@ import httpx
 
 from pydantic import BaseModel
 
+from app.services import llm_call_log
 from app.services import llm_client
+from app.services import llm_budget
 
 PROMPT_VERSION = "cat-suggest-v1"
 
@@ -110,8 +112,32 @@ def reject_notice(category_id: str) -> str:
     return f"您上传的合同疑似{zh}，本产品当前支持采购、租赁、保密协议、技术服务四类，暂不在支持范围。"
 
 
-def suggest_category(text: str, selected_category: str) -> SuggestOutcome:
-    """快思考建议（同步调用，路由层用 run_in_threadpool 包裹）。"""
+def _budget_reject(
+    outcome: SuggestOutcome, budget: llm_budget.ReviewBudget, model: str
+) -> SuggestOutcome:
+    """预算拒绝：对用户静默跳过，对账本 emit_skip 显式落账（施工卡 §1.3
+    硬事三——拦截不落账=收银台私账，对账查无此事）。"""
+    outcome.skip_reason = "budget_exceeded"
+    llm_call_log.emit_skip(
+        "category_suggest", "cloudflare", model,
+        trace_id=llm_call_log.current_trace_id(),
+        prompt_version=PROMPT_VERSION,
+        outcome="budget_exceeded",
+        error_detail=f"suggest_budget_limit={budget.limit()}",
+    )
+    return outcome
+
+
+def suggest_category(
+    text: str,
+    selected_category: str,
+    budget: Optional[llm_budget.ReviewBudget] = None,
+) -> SuggestOutcome:
+    """快思考建议（同步调用，路由层用 run_in_threadpool 包裹）。
+
+    budget（B2-3 §1.3）：独立小额度收银台（默认 2=判定 1+重试 1）；
+    None=不限直通。拒绝→budget_exceeded 静默跳过+emit_skip 落账。
+    """
     outcome = SuggestOutcome()
     if not is_enabled():
         outcome.skip_reason = "disabled"
@@ -135,21 +161,26 @@ def suggest_category(text: str, selected_category: str) -> SuggestOutcome:
         # P1-1（复核）：缺 CF_ACCOUNT_ID 明确降级，不拼空账户 URL
         outcome.skip_reason = "no_account_id"
         return outcome
+    # 预算闸入口扣减（硬事三）：拒绝=零网络请求+emit_skip 显式落账
+    if budget is not None and not budget.try_consume(1):
+        return _budget_reject(outcome, budget, model)
 
     # P1-1（肉饼门禁）：transport 走 llm_client.typesafe_judgment 单点——
     # LLMCallRecord 账本只在彼处落盘，自建 HTTP 会绕过账本留痕空转
     t0 = time.time()
     raw: Optional[str] = None
+    call_id: Optional[str] = None
     last_err: Optional[Exception] = None
     # P1-2（复核修正）：**仅瞬态网络异常**允许重试一次（断连/读超时/协议错误）；
     # 401 凭据错/400 配置错/451 地域封锁等永久性拒绝只请求一次——重试白名单
-    # 与施工口径一致（ChatGPT 复核：全异常重试会给永久拒绝白白多打一次）
+    # 与施工口径一致（ChatGPT 复核：全异常重试会给永久拒绝白白多打一次）。
+    # 重试前二次扣减（硬事三）：重试也是真金白银的调用
     transient = (httpx.TimeoutException, httpx.ConnectError,
                  httpx.ReadError, httpx.RemoteProtocolError)
     attempt = 1
     while True:
         try:
-            raw = llm_client.decision_judgment(
+            call_id, raw = llm_client.decision_judgment(
                 api_key=key, url=f"{base}/accounts/{account}/ai/run/@cf/cloudflare/{model}",
                 model=model, state=clipped, instructions=JEV_INSTRUCTIONS,
                 criteria=dict(JEV_CRITERIA), timeout=15.0,
@@ -165,6 +196,8 @@ def suggest_category(text: str, selected_category: str) -> SuggestOutcome:
                 outcome.skip_reason = f"llm_error: {type(e).__name__}"
                 outcome.attempt = attempt
                 break
+            if budget is not None and not budget.try_consume(1):
+                return _budget_reject(outcome, budget, model)
             attempt = 2  # 瞬态：重试一次
             continue
         except Exception as e:  # 永久性拒绝（401/400/451 等）：不重试
@@ -181,10 +214,26 @@ def suggest_category(text: str, selected_category: str) -> SuggestOutcome:
     # 绝不上穿 500 阻断上传主流程
     outcome.raw_output = (raw or "")[:500]
 
-    parsed = _parse_verdict(raw)
-    if parsed is None:
+    # 先创建后结算（§1.2 硬事二）：transport 已落临时态 success，此处按业务
+    # 解析终态结算——白名单外/结构坏=parse_failed，账本不留 success 假绿
+    try:
+        parsed = _parse_verdict(raw)
+    except Exception:  # noqa: BLE001  解析器自身异常同归 parse_failed
+        parsed = None
+    if parsed is None or call_id is None:
+        # 隐私线（§2.2）：不存原始响应体——受控摘要+指纹（可对账不可复原）
+        llm_call_log.settle(
+            call_id or "", "parse_failed", None,
+            f"parse_failed: verdict structure invalid; raw_sha={llm_call_log.short_hash(raw or '')}",
+        )
         outcome.skip_reason = "parse_failed"
         return outcome
+    # 白名单结构化回执（§2.2）：只存判断字段，模型复述的原文进不了账本
+    llm_call_log.settle(
+        call_id, "success",
+        json.dumps({"category": parsed.category, "confidence": parsed.confidence},
+                   ensure_ascii=False),
+    )
     outcome.performed = True
     outcome.result = parsed
     return outcome

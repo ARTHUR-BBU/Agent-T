@@ -104,6 +104,7 @@ def _start_review(
     budget: object | None,
     precheck_record: dict | None,
     parsed_text: str | None = None,
+    trace_id: str | None = None,
 ) -> str:
     """建档 + 启动后台审查线程（外部审计二轮 PR-C 从 upload 抽取）。
 
@@ -112,6 +113,9 @@ def _start_review(
     finally——「一定成对释放」不依赖 worker 是否真的跑起来。
     """
     rid = store.create(
+        # B2-3 §2.1 审查单锚点（终审 P1-1）：trace 持久化进审查单——
+        # review_id→trace_id→账本全链反查（reviews.data JSON 字段，零迁移）
+        trace_id=trace_id,
         filename=filename,
         category=category,
         category_label=category,
@@ -149,7 +153,11 @@ def _start_review(
     def _run_review_worker(
         review_id: str, fname: str, content: bytes, cat: str, budget: object | None,
         reused_text: str | None, stance: str = "neutral",
+        trace_id: str | None = None,
     ) -> None:
+        # B2-3 §2.1：daemon 线程 contextvar 不自动继承——worker 顶部显式续证，
+        # 管线内 record_node/transport 天然读到同一 trace（全链同号）
+        trace_tok = llm_call_log.set_trace(trace_id) if trace_id else None
         # stage 回调：pipeline 节点入口上报 → 逐步落库；update 自身有兜底，
         # 回调失败不影响审查（pipeline 侧还包了一层 try/except）
         def on_stage(stage: str) -> None:
@@ -223,13 +231,18 @@ def _start_review(
             # 兜底（小智娘 P3-3）：update 自身失败（如 DB 锁超时）不得裸抛线程
             logger.exception("后台审查状态写入失败 review_id=%s", review_id)
         finally:
+            if trace_tok is not None:
+                llm_call_log.reset_trace(trace_tok)
             _review_slots.release()
 
     threading.Thread(
         target=_run_review_worker,
-        args=(rid, filename, raw, category, budget, parsed_text, stance),
+        args=(rid, filename, raw, category, budget, parsed_text, stance, trace_id),
         daemon=True,
     ).start()
+    # B2-3 §2.1：建单后按 trace 回填此前未关联的调用行（幂等，失败仅告警）
+    if trace_id:
+        llm_call_log.backfill_review_id(rid, trace_id)
     return rid
 
 
@@ -273,6 +286,10 @@ async def upload(
     # 按引用贯穿预审与审查线程，随 GC 清理；force 重传天然新预算。
     # 创建于预审之前（预审也计入预算），关闭态返回 None 全程直通。
     budget = llm_budget.new_review_budget()
+    # B2-3 两项升级专项（§1.3/§2.1）：建议层独立小额度 + 一次上传一张证
+    # （trace 单点生成于入口——模块禁止自生成，施工卡 §2.1）
+    suggest_budget = llm_budget.new_suggest_budget()
+    trace_id = llm_call_log.new_call_id()
 
     # LLM 预审（spec-llm-precheck）：分类 ≠ 裁判——只决定用哪把尺子/要不要审，
     # 档位仍 100% 出自规则引擎。任何失败降级为照旧开审，绝不阻断主流程。
@@ -305,9 +322,11 @@ async def upload(
         with llm_call_log.record_node(
                 "category_suggest",
                 prompt_version=category_suggest_service.PROMPT_VERSION,
+                trace_id=trace_id,
         ):
             sug_outcome = await run_in_threadpool(
-                category_suggest_service.suggest_category, contract_text, category
+                category_suggest_service.suggest_category, contract_text, category,
+                suggest_budget,
             )
         sug = sug_outcome.result
         if (sug_outcome.performed and sug is not None and sug.category
@@ -342,10 +361,12 @@ async def upload(
 
     if contract_text is not None:
         # 宪法 P0-D1：precheck 时 review_id 尚未生成（create 在预审后），
-        # 账本先记 node 标签，review 关联留待后续补全
+        # 账本先记 node 标签——review 关联已由建单后 backfill_review_id 统一补全
+        # （B2-3 §2.1）；trace 随本证贯穿
         with llm_call_log.record_node(
                 "precheck",
                 prompt_version=precheck_prompts.PROMPT_VERSION,
+                trace_id=trace_id,
             ):
             outcome = await run_in_threadpool(
                 precheck_service.run_precheck, contract_text, category, None, budget, stance
@@ -405,7 +426,7 @@ async def upload(
         rid = _start_review(
             filename=filename, raw=raw, category=category,
             stance=stance, budget=budget, precheck_record=precheck_record,
-            parsed_text=contract_text,
+            parsed_text=contract_text, trace_id=trace_id,
         )
     except Exception:
         _review_slots.release()
@@ -601,9 +622,11 @@ def ask(body: AskRequest):
         raise HTTPException(status_code=404, detail="清单项不存在")
 
     # 宪法 P0-D1/D5：Ask 也进 LLM 调用账本（不能成为观测盲区）
+    # B2-3 §2.1：ask 是独立入口——每次追问生成一张自己的证（关联 review 既有值）
     with llm_call_log.record_node(
         "ask", body.review_id,
-        prompt_version=llm_ask.PROMPT_VERSION):
+        prompt_version=llm_ask.PROMPT_VERSION,
+        trace_id=llm_call_log.new_call_id()):
             result = llm_ask.ask_about_item(
             question=body.question,
             item=item,

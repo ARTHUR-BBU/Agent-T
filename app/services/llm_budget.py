@@ -59,6 +59,10 @@ class ReviewBudget:
         with self._lock:
             return self._left if self._limit > 0 else -1  # -1 = 不限
 
+    def limit(self) -> int:
+        """配置上限（-1 语义不用于此：返回原始 limit 值，0=不限）。"""
+        return self._limit
+
 
 def limit_from_env() -> int:
     """读 LLM_BUDGET_PER_REVIEW；垃圾值回退默认（运行时兜底）；
@@ -77,6 +81,38 @@ def limit_from_env() -> int:
 def new_review_budget() -> ReviewBudget | None:
     """每次 upload 请求调用一次；关闭态（limit<=0）返回 None，全程零开销直通。"""
     limit = limit_from_env()
+    if limit <= 0:
+        return None
+    return ReviewBudget(limit)
+
+
+# B2-3 两项升级专项（spec-b23-trail-budget §1.3）：建议层独立小额度——
+# 不动主预算 18 的「异议层排末位」优先级语义，建议层可单独熔断。
+# 默认 2 = 判定 1 + 瞬态重试 1。
+# ⚠️ 0/负数=不限 仅限开发与紧急回退；生产配置必须为正数（正式开放配置批
+# 加启动强制拒绝+危险开关审计，见施工卡 §6-③ 挂账）。
+DEFAULT_SUGGEST_BUDGET = 2
+
+
+def suggest_limit_from_env() -> int:
+    """读 LLM_SUGGEST_BUDGET_PER_UPLOAD；垃圾值回退默认；<=0 = 不限（仅开发）。"""
+    raw = (os.getenv("LLM_SUGGEST_BUDGET_PER_UPLOAD") or "").strip()
+    if not raw:
+        return DEFAULT_SUGGEST_BUDGET
+    try:
+        val = int(raw)
+    except ValueError:
+        logger.warning(
+            "LLM_SUGGEST_BUDGET_PER_UPLOAD=%r 不是整数，回退默认 %s",
+            raw, DEFAULT_SUGGEST_BUDGET,
+        )
+        return DEFAULT_SUGGEST_BUDGET
+    return val  # 0/负 = 不限（ReviewBudget 语义），生产禁用见上注
+
+
+def new_suggest_budget() -> ReviewBudget | None:
+    """每次 upload 请求调用一次；不限态返回 None 直通（与主预算同语义）。"""
+    limit = suggest_limit_from_env()
     if limit <= 0:
         return None
     return ReviewBudget(limit)
