@@ -52,6 +52,24 @@ def _docx_text(path: pathlib.Path) -> str:
     return "\n".join(parts)
 
 
+def judge(pred, gold_conclusion: str, gold_id, performed: bool = True) -> tuple[bool, str]:
+    """单题判分（纯函数，供单测）。
+
+    收类：判中金标品类才算对。拒收（Codex 勘正 2026-10-22）：只有显式拒类
+    （consulting/labor_dispatch/tech_transfer）才算拒收命中——other 是「存疑
+    按用户原选择继续」不是拒收；None（未判/基础设施故障）更不是。"""
+    if gold_conclusion == "收":
+        ok = (pred == gold_id)
+        verdict = ("对" if ok else
+                   "误收" if pred in _SUPPORTED else
+                   "误拒" if pred in _EXPLICIT_REJECT else "判other")
+    else:
+        ok = bool(performed and pred in _EXPLICIT_REJECT)
+        verdict = ("对（显式拒类）" if ok else
+                   f"未通过（{'未判' if not performed else pred or 'other 存疑放行'}）")
+    return ok, verdict
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--exam-dir", required=True)
@@ -111,11 +129,8 @@ def main() -> None:
                        "误收" if pred in _SUPPORTED else
                        "误拒" if pred in _EXPLICIT_REJECT else "判other")
         else:
-            # 假绿防线（真实卷 run2 教训）：基础设施故障 pred=None 不是「未收」
-            ok = bool(out.performed and pred and pred not in _SUPPORTED)
-            verdict = ("对（显式拒类）" if pred in _EXPLICIT_REJECT else
-                       "对（other 存疑放行）" if pred == "other" else
-                       f"误收（{pred}）" if pred else f"未判（{out.skip_reason}）")
+            # 假绿防线（真实卷 run2 教训 + Codex 勘正）：None 与 other 都不算拒收命中
+            ok, verdict = judge(pred, gold_conclusion, gold_id, performed=out.performed)
         rows.append({
             "paper": paper.name, "title": ans.get("合同标题") or ans.get("title", ""),
             "gold_conclusion": gold_conclusion, "gold": gold_id,
