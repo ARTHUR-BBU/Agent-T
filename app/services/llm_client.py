@@ -47,6 +47,9 @@ def chat_completion(
         prompt_version=llm_call_log.current_prompt_version(),
         review_id=llm_call_log.current_review_id(),
         chars_sent=len(system) + len(user),
+        # B2-3 两项升级专项：trace 全链关联+提示词指纹（哈希不含原文）
+        trace_id=llm_call_log.current_trace_id(),
+        prompt_hash=llm_call_log.short_hash(f"{system}\x00{user}"),
     )
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -119,13 +122,17 @@ def decision_judgment(
     timeout: float,
     truncated: bool = False,
     attempt: int = 1,
-) -> str:
+) -> tuple[str, str]:
     """决策模型判断调用（TypeSafe Jev / Cloudflare Clef 同构形态，B2-3 批3）。
 
     请求 {state, model, questions} → 响应 answers（choice/置信度），两家同构；
     Clef 响应多一层 result 包裹，在此剥平。与 chat_completion 同遵守 transport
     单点纪律：LLMCallRecord 在此落盘（node 由调用点经 record_node 注入）。
-    返回 answers 的原始 JSON 文本，解析与白名单校验由调用方负责。
+
+    B2-3 两项升级专项（spec-b23-trail-budget §1.2 先创建后结算）：成功时返回
+    `(call_id, 原始 answers JSON 文本)`——transport 只判 transport 层事实
+    （HTTP/协议层坏=provider_error，超时=timeout）；业务解析成败由调用方拿
+    call_id 走 llm_call_log.settle 终态结算（success/parse_failed）。
     """
     _t0 = time.monotonic()
     provider = "cloudflare" if "cloudflare" in url or "/ai/run/" in url else "typesafe"
@@ -139,6 +146,11 @@ def decision_judgment(
         chars_sent=len(state) + len(instructions),
         truncated=truncated,
         attempt=attempt,
+        trace_id=llm_call_log.current_trace_id(),
+        prompt_hash=llm_call_log.short_hash(
+            json.dumps({"instructions": instructions, "criteria": criteria,
+                        "state": state}, ensure_ascii=False)
+        ),
     )
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
@@ -185,5 +197,6 @@ def decision_judgment(
     # Clef（Workers AI）多一层 result 包裹；TypeSafe 直出 answers
     answers = data.get("answers") or data.get("result", {}).get("answers") or {}
     _rec.gate_counts = {"answers": len(answers)}
+    # 先创建（临时态 success=「transport 层成功」）：业务终态由调用方 settle
     llm_call_log.emit(_rec)
-    return json.dumps(answers.get("category", {}), ensure_ascii=False)
+    return _rec.call_id, json.dumps(answers.get("category", {}), ensure_ascii=False)
