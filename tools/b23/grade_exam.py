@@ -66,8 +66,27 @@ def main() -> None:
     _ensure_ignored(exam_dir)
 
     csv_path = next(answer_dir.glob("*.csv"))
-    answers = {row["文件名"]: row for row in csv.DictReader(
-        csv_path.read_text(encoding="utf-8-sig").splitlines())}
+    raw_rows = list(csv.DictReader(csv_path.read_text(encoding="utf-8-sig").splitlines()))
+    # 双 schema 兼容：高仿卷用 文件名/期望结论/期望品类；真实卷用
+    # 样本编号/期望品类(含「野样本·X(应拒收)」)/是否野样本(应拒收)。
+    answers = {}
+    for row in raw_rows:
+        if "文件名" in row:  # 高仿卷 schema
+            answers[row["文件名"]] = {
+                "conclusion": row["期望结论"].strip(),
+                "gold_zh": row["期望品类"].strip(),
+                "difficulty": row.get("难度", ""),
+                "trap": row.get("设计意图/易错点", ""),
+            }
+        else:  # 真实卷 schema（溯源清单）
+            is_wild = row.get("是否野样本(应拒收)", "").strip() == "是"
+            answers[f"{row['样本编号'].strip()}.docx"] = {
+                "title": row.get("原合同名称", ""),
+                "conclusion": "拒收" if is_wild else "收",
+                "gold_zh": row["期望品类"].strip(),
+                "difficulty": "边界样本" if row.get("是否边界样本", "").strip() == "是" else "常规",
+                "trap": row.get("难度与备注", ""),
+            }
 
     from app.services import category_suggest as cs
     if not cs.is_enabled():
@@ -78,8 +97,8 @@ def main() -> None:
     t0 = time.time()
     for paper in papers:
         ans = answers[paper.name]
-        gold_conclusion = ans["期望结论"].strip()          # 收 | 拒收
-        gold_zh = ans["期望品类"].strip()
+        gold_conclusion = ans["conclusion"]                # 收 | 拒收
+        gold_zh = ans["gold_zh"]
         gold_id = _ZH_TO_ID.get(gold_zh)                   # 拒收题为 None
         text = _docx_text(paper)
         out = cs.suggest_category(text, args.selected)
@@ -92,16 +111,17 @@ def main() -> None:
                        "误收" if pred in _SUPPORTED else
                        "误拒" if pred in _EXPLICIT_REJECT else "判other")
         else:
-            ok = pred not in _SUPPORTED
+            # 假绿防线（真实卷 run2 教训）：基础设施故障 pred=None 不是「未收」
+            ok = bool(out.performed and pred and pred not in _SUPPORTED)
             verdict = ("对（显式拒类）" if pred in _EXPLICIT_REJECT else
                        "对（other 存疑放行）" if pred == "other" else
                        f"误收（{pred}）" if pred else f"未判（{out.skip_reason}）")
         rows.append({
-            "paper": paper.name, "title": ans["合同标题"],
+            "paper": paper.name, "title": ans.get("合同标题") or ans.get("title", ""),
             "gold_conclusion": gold_conclusion, "gold": gold_id,
             "pred": pred, "conf": round(conf, 4) if conf else None,
             "tier": tier, "ok": ok, "verdict": verdict,
-            "difficulty": ans["难度"], "trap": ans["设计意图/易错点"],
+            "difficulty": ans["difficulty"], "trap": ans["trap"],
             "skip": out.skip_reason,
         })
         time.sleep(0.3)
