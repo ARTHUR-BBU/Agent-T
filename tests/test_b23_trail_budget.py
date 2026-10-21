@@ -327,38 +327,73 @@ def test_daemon_thread_trace_context(tmp_path, monkeypatch) -> None:
 
 
 def test_upload_full_chain_review_backfill(tmp_path, monkeypatch) -> None:
-    """§3.6 终审 P1-1 验收：正常上传后 review_id→trace_id→建议层账本行反查链。
+    """§3.6 终审 P1-1 验收（真三段）：正常上传后同一 trace_id 下存在
+    category_suggest + precheck + 后台审查节点三类账本行，且全部关联
+    同一 review_id——「审查单→trace→建议层/预审/后台审查」全链实证。
 
-    从最终 review_id 出发读到 trace_id，并按该 trace 查到建议层调用行
-    （建单后 backfill 同步完成）；回填不重复不遗漏。
+    建单前路径（建议层/预审）靠 backfill_review_id 回填；后台行由
+    worker 的 record_trace 续证+管线显式 review_id 关联。
     """
+    import time as _time
+
     from fastapi.testclient import TestClient
     from app.main import app
-    from app.services import precheck as precheck_service
     from app.services import store as store_service
 
     monkeypatch.setenv("STORE_DB_PATH", str(tmp_path / "c.db"))
     monkeypatch.setenv("CATEGORY_SUGGEST_ENABLED", "true")
+    # conftest 全局关预审（确定性红线）——本测试恰恰要验证预审链路，显式打开
+    monkeypatch.setenv("PRECHECK_ENABLED", "true")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")  # 预审+管线真发调用
     client = TestClient(app)
     fixture = "房屋租赁合同\n甲方出租乙方承租。".encode("utf-8")
+
+    def _resp(data):
+        m = mock.Mock()
+        m.status_code = 200
+        m.json.return_value = data
+        return m
+
+    def _post(url=None, headers=None, json=None, **kw):
+        # 分流：决策形态（建议层）vs 对话形态（预审/评分/质量/异议）
+        if json and "questions" in json:
+            return _resp(_ok_payload("lease", 0.95))
+        return _resp({"choices": [{"message": {"content": "{\"ok\": true"}}],
+                      "usage": {}})
+
     with mock.patch.object(cs, "_load_env", return_value=dict(FAKE_ENV)), \
-            mock.patch("app.services.llm_client.httpx.Client") as fake, \
-            mock.patch.object(precheck_service, "is_precheck_enabled",
-                              return_value=False):
-        fake.return_value = _client_mock(_ok_payload("lease", 0.95)).return_value
+            mock.patch("app.services.llm_client.httpx.Client") as fake:
+        fake.return_value.__enter__ = lambda s: s
+        fake.return_value.__exit__ = lambda s, *a: False
+        fake.return_value.post.side_effect = _post
         r = client.post("/api/upload",
                         files={"file": ("c.txt", fixture, "text/plain")},
                         data={"category": "lease"})
-    assert r.status_code == 200
-    rid = r.json()["review_id"]
-    review = store_service.store.get(rid)
-    assert review is not None
-    # 反查链第一跳：审查单持久化 trace_id
-    assert review.get("trace_id")
-    # 第二跳：按 trace 查到建议层账本行，且已回填本审查单（不重复不遗漏）
+        assert r.status_code == 200
+        rid = r.json()["review_id"]
+        review = store_service.store.get(rid)
+        assert review is not None
+        # 反查链第一跳：审查单持久化 trace_id
+        assert review.get("trace_id")
+
+        # 等后台审查线程完成——**必须留在 mock 作用域内**：worker 线程比
+        # 请求活得久，mock 退出后它会把假 key 打到真端点（测试纪律）
+        deadline = _time.time() + 30
+        while (store_service.store.get(rid) or {}).get("status") == "processing" \
+                and _time.time() < deadline:
+            _time.sleep(0.1)
+
+    # 第二跳：同一 trace 下三类节点并存（建议层+预审+后台审查至少一类）
     rows = llm_call_log.query(trace_id=review["trace_id"])
-    assert len(rows) == 1
-    assert rows[0]["node"] == "category_suggest"
-    assert rows[0]["review_id"] == rid
-    # 第三跳：review_id→trace 一致（从审查单出发可复原全链）
-    assert llm_call_log.query(review_id=rid)[0]["trace_id"] == review["trace_id"]
+    nodes = {row["node"] for row in rows}
+    assert "category_suggest" in nodes, f"缺建议层行：{nodes}"
+    assert "precheck" in nodes, f"缺预审行：{nodes}"
+    backend = nodes - {"category_suggest", "precheck"}
+    assert backend, f"缺后台审查节点行：{nodes}"
+    # 第三跳：全链关联同一审查单（建单前路径已回填、后台行显式关联）
+    assert all(row["review_id"] == rid for row in rows), \
+        f"review_id 关联不一致：{[(r['node'], r['review_id']) for r in rows]}"
+    # 从审查单出发可复原全链（review_id→trace 一致）
+    assert llm_call_log.query(review_id=rid)
+    assert {row["trace_id"] for row in llm_call_log.query(review_id=rid)} == {
+        review["trace_id"]}
