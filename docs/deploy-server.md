@@ -132,6 +132,12 @@ curl -s -o /dev/null -w "%{http_code}" -u <账号>:<密码> http://<IP>:8080/  #
 
 ## 注意事项
 
+- **凭据文件解析必须剥标签+断言 ASCII**（2026-10-22 部署事故教训）：
+  cloudflare.txt 等人工凭据文件可能带中文标签（「账户：」「令牌：」）——
+  直接整行灌进 env 会把标签混进 API Token，外部调用全部静默降级
+  （建议层 llm_error，账本留痕、fail-loud 零调用拦住，未误报上线）。
+  规矩：①解析时剥「：/:」前缀标签；②注入前断言值纯 ASCII；
+  ③降级话术黑话（no_llm_key/llm_error）出现在受控上传响应=立即查凭据注入
 - **实例按量付费/试用有期限**：到期释放会丢公网 IP 和数据；长期用转包年包月或绑 EIP
 - 容器内是内存存储：重启容器 = 清空审查记录（隐私上反而是优点）
 - 改 Basic Auth 账密 / ZHIPU Key：`docker rm -f agent-t` 后重跑 docker run 换 env
