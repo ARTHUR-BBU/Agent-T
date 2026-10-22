@@ -438,7 +438,11 @@ async def upload(
                 "coverage": sug_outcome.coverage,  # 宪法 P0-D2：正常 proceed 路径同账
             }
         else:
+            # Codex 勘正（PR #129）：suspect 语义由低置信条件承载——合并时
+            # confidence 跟随警示源置 low（否则出现 suspect=True 却
+            # confidence=high 的矛盾对象，API 消费方无法识别警示来源）
             precheck_record = {**precheck_record, "suspect": True,
+                               "confidence": "low",
                                "summary": f"{precheck_record.get('summary', '')}；{notice}"}
 
     # 占并发槽位：满则 429（无界线程池被脚本刷 500 次上传 = 500 个 LLM 调用）
