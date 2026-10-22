@@ -43,13 +43,14 @@ def _ensure_ignored(exam_dir: pathlib.Path) -> None:
 
 
 def _docx_text(path: pathlib.Path) -> str:
-    import docx  # python-docx（生产解析同款库）
-    d = docx.Document(str(path))
-    parts = [p.text for p in d.paragraphs]
-    for table in d.tables:  # 卷面含清单/SLA 表格（考官明示的信号载体）
-        for row in table.rows:
-            parts.append("\t".join(c.text for c in row.cells))
-    return "\n".join(parts)
+    # Codex 勘正（PR #128）：必须走生产解析通道——旧自建提取先扫段落再扫
+    # 表格，会把夹在条款中间的表甩到文末（条款归属错位）；生产镜像无
+    # Docling，docx 实际走 extract._try_python_docx（按文档顺序交错）。
+    from app.services.extract import extract_text
+    text = extract_text(path.name, path.read_bytes())
+    if not text:
+        raise SystemExit(f"FAIL: {path.name} 生产通道提取为空")
+    return text
 
 
 def judge(pred, gold_conclusion: str, gold_id, performed: bool = True) -> tuple[bool, str]:
