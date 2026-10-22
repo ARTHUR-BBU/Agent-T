@@ -29,7 +29,7 @@ def test_real_archives_union_is_17() -> None:
 
 def test_roster_drift_fails_loud(tmp_path: pathlib.Path) -> None:
     """留档名册变动（少一卷）→ SystemExit，不许悄悄跑旧卷。"""
-    real = sorted(_real_roster())
+    assert EXPECTED_ROSTER_SIZE == len(_real_roster())  # 基线自检
     for rel in ARCHIVES:
         data = json.loads((REPO_ROOT / rel).read_bytes())
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
