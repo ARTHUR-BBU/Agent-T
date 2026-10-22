@@ -8,7 +8,8 @@ import pathlib
 import pytest
 
 from tools.m65.final_replay import (ARCHIVES, EXPECTED_ROSTER_SIZE,
-                                    check_revision, load_roster)
+                                    check_revision, estimate_cost,
+                                    load_roster)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -67,3 +68,10 @@ def test_revision_non_sha_tag_rejects() -> None:
     for tag in ("latest", "v1.0", "agent-t", ""):
         ok, reason = check_revision("ff6b64456c557c7696ae89a1b7f606ce746d2e33", tag)
         assert not ok and "Git SHA" in reason
+
+
+def test_estimate_cost_uses_conservative_price_table() -> None:
+    """费用上限单牌价：2 倍冗余（输入 ¥4/M、输出 ¥6/M）。"""
+    assert estimate_cost(1_000_000, 0) == pytest.approx(4.0)
+    assert estimate_cost(0, 1_000_000) == pytest.approx(6.0)
+    assert estimate_cost(2_600_000, 350_000) == pytest.approx(12.5)

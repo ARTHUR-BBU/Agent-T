@@ -160,6 +160,57 @@ def server_revision(host: str, container: str = "agent-t") -> str:
     return image.split(":")[-1] if ":" in image else image
 
 
+# ---- 费用上限单（Codex 要求：实际发请求前报数字；数字须可验证）----
+# 牌价口径：DeepSeek 官方 deepseek-chat 牌价约输入 ¥2/M、输出 ¥3/M；
+# 本单按 **2 倍冗余** 计（输入 ¥4/M、输出 ¥6/M），牌价变动以官方页为准。
+PRICE_IN_CNY_PER_M = 4.0
+PRICE_OUT_CNY_PER_M = 6.0
+MAX_COST_CNY = 30.0          # 硬上限（预估 ~¥12 的 2.5 倍冗余；余额 ¥42.80 兜底）
+ALERT_COST_CNY = 15.0        # 跑中告警线（50%）
+
+
+def estimate_cost(in_tokens: float, out_tokens: float) -> float:
+    """按冗余牌价估算人民币成本。"""
+    return in_tokens / 1e6 * PRICE_IN_CNY_PER_M + out_tokens / 1e6 * PRICE_OUT_CNY_PER_M
+
+
+def deepseek_balance(api_key: str) -> float:
+    """查 DeepSeek 账户 CNY 余额（key 从 auth 文件读，不落命令行/日志）。"""
+    import urllib.request
+    req = urllib.request.Request("https://api.deepseek.com/user/balance",
+                                 headers={"Authorization": f"Bearer {api_key}"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read())
+    for info in data.get("balance_infos", []):
+        if info.get("currency") == "CNY":
+            return float(info["total_balance"])
+    raise SystemExit("FAIL: 余额接口无 CNY 条目")
+
+
+def spent_since(server_host: str, container: str, since_ts: float) -> tuple[int, int]:
+    """查生产账本本批累计 tokens（llm_calls.created_at ≥ since_ts）。
+
+    生产账本在服务器容器内——经 ssh 读（与部署工具同通道）。远端统计脚本
+    经 stdin 送入（不经命令行，免嵌套引号地狱）。
+    """
+    remote_code = (
+        "import sqlite3,json,sys\n"
+        "con = sqlite3.connect('/tmp/agent-t-reviews.db')\n"
+        "start = float(sys.argv[1])\n"
+        "rows = con.execute('SELECT usage FROM llm_calls WHERE created_at >= ?',"
+        " (start,)).fetchall()\n"
+        "ins = sum(json.loads(u[0]).get('input_tokens') or 0 for u in rows)\n"
+        "outs = sum(json.loads(u[0]).get('output_tokens') or 0 for u in rows)\n"
+        "print(json.dumps([ins, outs]))\n"
+    )
+    r = subprocess.run(
+        ["ssh", server_host,
+         f"docker exec -i {container} python3 - {since_ts:.3f}"],
+        input=remote_code, capture_output=True, text=True, check=True)
+    i, o = json.loads(r.stdout.strip().splitlines()[-1])
+    return int(i), int(o)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fixtures", default="fixtures-real")
@@ -170,6 +221,9 @@ def main() -> None:
                     help="只出靶向证据链与骨架（不跑 LLM 全集，供模板预览）")
     ap.add_argument("--server-host", default="root@59.110.13.13",
                     help="生产主机（ssh 可达），用于读容器镜像标签=部署版本")
+    ap.add_argument("--max-cost-cny", type=float, default=MAX_COST_CNY,
+                    help=f"费用硬上限（默认 ¥{MAX_COST_CNY}）；跑中按账本用量实时核算，超限终止")
+    ap.add_argument("--auth-file", default=r"F:\合同审查Agent\.deploy-credentials.txt")
     args = ap.parse_args()
 
     repo_root = pathlib.Path.cwd()
@@ -211,8 +265,31 @@ def main() -> None:
         print(f"[靶向] {r['paper']} 「{r['term']}」: {r['autopsy_verdict']}"
               f" 位置={r.get('table_position') or r.get('paragraph_hits')}")
 
-    # ② LLM 全集跑批（委托既有跑道；成本需用户批准后执行）
+    # ② LLM 全集跑批（委托既有跑道；费用上限单见 record["cost_memo"]）
     if not args.skip_llm:
+        # 费用预检（Codex 要求：发请求前报数字+余额兜底核验）
+        cred = {}
+        for line in pathlib.Path(args.auth_file).read_text(encoding="utf-8").splitlines():
+            if "=" in line:
+                k, _, v = line.partition("=")
+                cred[k.strip()] = v.strip()
+        balance = deepseek_balance(cred["deepseek_key"])
+        record["cost_memo"] = {
+            "牌价口径": f"官方牌价约输入¥2/M 输出¥3/M；本单按 2 倍冗余计"
+                        f"（输入¥{PRICE_IN_CNY_PER_M}/M 输出¥{PRICE_OUT_CNY_PER_M}/M）",
+            "预估成本": "约 ¥12（保守 token 估算 2.6M 入 + 0.35M 出）",
+            "硬上限人民币": args.max_cost_cny,
+            "告警线人民币": ALERT_COST_CNY,
+            "超限方式": "每 60s 按生产账本累计 usage 实时核算；≥告警线打印、"
+                        "≥硬上限终止 run_eval 子进程；账户余额 ¥42.80 物理兜底"
+                        "（耗尽=402 优雅降级，规则层照常，M6.5 已实证）",
+            "deepseek_balance_cny": balance,
+        }
+        if balance < args.max_cost_cny:
+            raise SystemExit(f"FAIL: 余额 ¥{balance} < 硬上限 ¥{args.max_cost_cny}"
+                             f"——先充值再跑（费用上限单见记录）")
+        print(f"[费用上限单] 硬上限 ¥{args.max_cost_cny} / 告警 ¥{ALERT_COST_CNY}"
+              f" / 余额 ¥{balance}")
         names = ",".join(roster)
         run_out = str(pathlib.Path(args.out).parent / "final-replay-run.json")
         cmd = [sys_exec(), "-X", "utf8", "tools/m65/run_eval.py",
@@ -221,7 +298,28 @@ def main() -> None:
         if args.insecure:
             cmd.append("--insecure")
         print("全集跑批（约 40-60 分钟，DeepSeek 计费）：", " ".join(cmd[2:]))
-        subprocess.run(cmd, check=True)
+        start_ts = time.time()
+        proc = subprocess.Popen(cmd)
+        while proc.poll() is None:
+            time.sleep(60)
+            if proc.poll() is not None:
+                break
+            try:
+                i_tok, o_tok = spent_since(args.server_host, "agent-t", start_ts)
+                cost = estimate_cost(i_tok, o_tok)
+                print(f"[费用哨兵] 已用 入{i_tok}/出{o_tok} tokens ≈ ¥{cost:.2f}")
+                if cost >= args.max_cost_cny:
+                    proc.kill()
+                    raise SystemExit(f"FAIL: 费用 ¥{cost:.2f} ≥ 硬上限 "
+                                     f"¥{args.max_cost_cny}——已终止跑批")
+                if cost >= ALERT_COST_CNY:
+                    print(f"[费用告警] ¥{cost:.2f} ≥ 告警线 ¥{ALERT_COST_CNY}")
+            except SystemExit:
+                raise
+            except Exception as exc:  # 哨兵自身故障不误杀跑批，打印继续
+                print("[费用哨兵] 查询失败（不终止）：", type(exc).__name__)
+        if proc.returncode != 0:
+            raise SystemExit(f"FAIL: run_eval 退出码 {proc.returncode}")
         record["run_eval_output"] = run_out
     else:
         record["run_eval_output"] = None
