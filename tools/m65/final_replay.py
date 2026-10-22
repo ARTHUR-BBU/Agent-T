@@ -135,6 +135,21 @@ def evidence_chain(fixtures: pathlib.Path) -> list[dict]:
     return records
 
 
+_HEX = set("0123456789abcdefABCDEF")
+
+
+def check_revision(caller_head: str, server_rev: str) -> tuple[bool, str]:
+    """版本比对（Codex P1 最小标准）：调用方恒存 40 位全 SHA 归档；服务端
+    标签只接受「合法 Git SHA 且为调用方全 SHA 的前缀」（同提交短标签放行、
+    不同 SHA 拒绝、非 SHA 标签拒绝）。返回 (是否一致, 不一致原因)。"""
+    tag = server_rev.strip()
+    if not (7 <= len(tag) <= 40) or any(c not in _HEX for c in tag):
+        return False, f"服务端标签不是合法 Git SHA：{tag!r}"
+    if not caller_head.lower().startswith(tag.lower()):
+        return False, f"服务端 {tag} 不是调用方 {caller_head} 的前缀（不同提交）"
+    return True, ""
+
+
 def server_revision(host: str, container: str = "agent-t") -> str:
     """读服务端实际部署版本（容器镜像标签）——「同批同哈希」以它为准。"""
     r = subprocess.run(
@@ -178,14 +193,15 @@ def main() -> None:
     server_rev = server_revision(args.server_host)
     record["caller_head"] = record.pop("git_hash")
     record["server_revision"] = server_rev
-    if record["caller_head"] != server_rev:
+    rev_ok, rev_reason = check_revision(record["caller_head"], server_rev)
+    record["revision_verdict"] = "一致" if rev_ok else f"不一致（{rev_reason}）"
+    if not rev_ok:
         if args.skip_llm:
-            print(f"[干跑] 版本错位备案：HEAD {record['caller_head']} ≠ "
-                  f"服务端 {server_rev}（不影响本地证据链；真跑批前须对齐）")
+            print(f"[干跑] 版本不一致备案：{rev_reason}（不影响本地证据链；"
+                  f"真跑批前须对齐）")
         else:
-            raise SystemExit(
-                f"FAIL: 版本错位——调用方 HEAD {record['caller_head']} ≠ "
-                f"服务端部署 {server_rev}。先部署对齐再跑「同批同哈希」。")
+            raise SystemExit(f"FAIL: 版本不一致——{rev_reason}。"
+                             f"先部署对齐再跑「同批同哈希」。")
     print("冻结哈希（调用方）:", record["caller_head"][:12],
           "| 服务端部署:", server_rev, "| 名册:", len(roster), "卷")
 
