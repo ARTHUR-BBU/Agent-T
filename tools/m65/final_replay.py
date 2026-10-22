@@ -12,40 +12,52 @@
 - 漏报对照必须区分「体例特异性漏报」与「通用词表缺口漏报」，老体例启动判据只计前者；
 - 引用位置判定一律以抽取层原始文本为准，不以 Ask 层引用为准（残-4 提醒）。
 
-用法（需生产在跑、成本按 M6.5 体积分级规矩）：
-    python -X utf8 tools/m65/final_replay.py --out docs/m65/final-replay.json
+用法（需生产在跑、成本按 M6.5 体积分级规矩；必须在仓库根目录以模块方式跑）：
+    python -X utf8 -m tools.m65.final_replay --out docs/m65/final-replay.json
 实际 LLM 跑批委托 tools/m65/run_eval.py（同一 --base/--auth 通道），本脚本负责
-靶向证据链与两份结论骨架。运行前须用户批准成本。
+靶向证据链与**原始证据产物**——两份结论由人工按 docs/m65/final-replay-record-template.md
+填写，本脚本不自动出结论（Codex P2）。运行前须用户批准成本。
+
+名册纪律（Codex P1）：全集卷名从 run1.json+run2.json 两轮留档机器取并集，
+校验恰为 17 卷；源留档哈希与最终名册写入产物。留档名册变动→集数漂移→直接报错。
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from typing import Any
 import pathlib
 import subprocess
 import time
 
-# 17 份全集（run1 7 + run2 10，与 run2-report 口径一致）
-FULL_SET = [  # 两轮留档（run1.json+run2.json files 并集）机器取数，17 卷
-    "agri-produce-sale-samr-2025.docx",
-    "business-cooperation-nda-guangdong.docx",
-    "cement-sale-gf-2008.docx",
-    "construction-work-contract-2017.docx",
-    "data-processing-service-2025.docx",
-    "energy-hosting-service-2026.docx",
-    "equipment-lease-construction-2000.docx",
-    "food-procurement-xinjiang-2025.docx",
-    "gov-procurement-goods-mof-2024.docx",
-    "house-lease-gf-2025-2614.docx",
-    "mandate-contract-samr-2025.docx",
-    "raw-milk-purchase-2016.docx",
-    "school-uniform-procurement-guangzhou.docx",
-    "shanghai-residential-lease-2014.docx",
-    "trade-secret-nda-guangdong.docx",
-    "work-contract-gf-2000.docx",
-    "zhejiang-vehicle-lease-2024.docx",
-]
+# 名册来源（两轮实测留档；卷名一律机器取数，禁手写清单——Codex P1）
+ARCHIVES = ("docs/m65/run1.json", "docs/m65/run2.json")
+EXPECTED_ROSTER_SIZE = 17
+
+
+def load_roster(repo_root: pathlib.Path) -> tuple[list[str], dict[str, str]]:
+    """从两轮留档机取名册并校验；返回 (排序名册, 源留档哈希表)。
+
+    集合漂移（并集≠17）直接 SystemExit——防留档变动后脚本悄悄跑旧卷。
+    """
+    roster: set[str] = set()
+    source_hashes: dict[str, str] = {}
+    for rel in ARCHIVES:
+        path = repo_root / rel
+        if not path.exists():
+            raise SystemExit(f"FAIL: 名册来源缺失 {rel}")
+        data = path.read_bytes()
+        source_hashes[rel] = hashlib.sha256(data).hexdigest()[:16]
+        files = json.loads(data).get("files") or []
+        if not files:
+            raise SystemExit(f"FAIL: {rel} 无 files 名册（留档格式变动？）")
+        roster.update(files)
+    if len(roster) != EXPECTED_ROSTER_SIZE:
+        raise SystemExit(
+            f"FAIL: 名册集数漂移——并集 {len(roster)} 卷 ≠ 预期 {EXPECTED_ROSTER_SIZE}"
+            f"（来源：{ARCHIVES}）。留档变动须经老钱/外审确认后再改预期值。")
+    return sorted(roster), source_hashes
 
 # 表格靶向证据链目标（残-2 勘正版：按证物实际位置分列）
 TARGETS = {
@@ -118,8 +130,10 @@ def main() -> None:
                     help="只出靶向证据链与骨架（不跑 LLM 全集，供模板预览）")
     args = ap.parse_args()
 
-    fixtures = pathlib.Path(args.fixtures)
-    missing = [f for f in FULL_SET if not (fixtures / f).exists()]
+    repo_root = pathlib.Path.cwd()
+    roster, roster_sources = load_roster(repo_root)
+    fixtures = repo_root / args.fixtures
+    missing = [f for f in roster if not (fixtures / f).exists()]
     if missing:
         raise SystemExit(f"FAIL: 全集缺卷 {missing}")
 
@@ -128,8 +142,11 @@ def main() -> None:
         "git_hash": git_hash(),
         "started_at": time.strftime("%Y-%m-%d %H:%M"),
         "freeze_note": "单批锁单一 git 哈希（裁定残-3 执行条件 1）",
+        # Codex P1：名册机器取数+来源哈希入产物（集数漂移已在 load_roster 报错）
+        "roster_source_hashes": roster_sources,
+        "roster": roster,
     }
-    print("冻结哈希:", record["git_hash"])
+    print("冻结哈希:", record["git_hash"], "| 名册:", len(roster), "卷")
 
     # ① 靶向证据链（本地抽取层，零 LLM 成本）
     record["evidence_chain"] = evidence_chain(fixtures)
@@ -139,7 +156,7 @@ def main() -> None:
 
     # ② LLM 全集跑批（委托既有跑道；成本需用户批准后执行）
     if not args.skip_llm:
-        names = ",".join(FULL_SET)
+        names = ",".join(roster)
         run_out = str(pathlib.Path(args.out).parent / "final-replay-run.json")
         cmd = [sys_exec(), "-X", "utf8", "tools/m65/run_eval.py",
                "--fixtures", str(fixtures), "--names", names,
@@ -153,7 +170,8 @@ def main() -> None:
         record["run_eval_output"] = None
         print("[skip-llm] 仅出证据链与骨架")
 
-    # ③ 两份结论骨架（判据分列，裁定残-3 执行条件 2；数据由 run_eval 产出后填充）
+    # ③ 原始证据产物到此为止——两份结论由人工按 final-replay-record-template.md
+    # 填写（Codex P2：本脚本不自动出结论）。以下仅预置判据与待填字段。
     record["conclusion_1_table_closure"] = {
         "判据": "残-2：food 表格路径命中+work 正文位置命中，证据链齐备",
         "结果": "待跑批后填充",
