@@ -8,6 +8,7 @@ import pathlib
 import pytest
 
 from tools.m65.final_replay import (ARCHIVES, EXPECTED_ROSTER_SIZE,
+                                    PRICE_IN_CNY_PER_M, PRICE_OUT_CNY_PER_M,
                                     check_revision, estimate_cost,
                                     load_roster)
 
@@ -70,8 +71,9 @@ def test_revision_non_sha_tag_rejects() -> None:
         assert not ok and "Git SHA" in reason
 
 
-def test_estimate_cost_uses_conservative_price_table() -> None:
-    """费用上限单牌价：2 倍冗余（输入 ¥4/M、输出 ¥6/M）。"""
-    assert estimate_cost(1_000_000, 0) == pytest.approx(4.0)
-    assert estimate_cost(0, 1_000_000) == pytest.approx(6.0)
-    assert estimate_cost(2_600_000, 350_000) == pytest.approx(12.5)
+def test_estimate_cost_uses_official_peak_v4pro_price() -> None:
+    """费用上限单牌价 v2：官方页最贵 v4-pro 峰值（入 $1.32/M、出 $3.96/M × 7.3）。"""
+    assert PRICE_IN_CNY_PER_M == pytest.approx(9.636)
+    assert PRICE_OUT_CNY_PER_M == pytest.approx(28.908)
+    assert estimate_cost(1_000_000, 0) == pytest.approx(9.636)
+    assert estimate_cost(0, 1_000_000) == pytest.approx(28.908)

@@ -160,13 +160,20 @@ def server_revision(host: str, container: str = "agent-t") -> str:
     return image.split(":")[-1] if ":" in image else image
 
 
-# ---- 费用上限单（Codex 要求：实际发请求前报数字；数字须可验证）----
-# 牌价口径：DeepSeek 官方 deepseek-chat 牌价约输入 ¥2/M、输出 ¥3/M；
-# 本单按 **2 倍冗余** 计（输入 ¥4/M、输出 ¥6/M），牌价变动以官方页为准。
-PRICE_IN_CNY_PER_M = 4.0
-PRICE_OUT_CNY_PER_M = 6.0
-MAX_COST_CNY = 30.0          # 硬上限（预估 ~¥12 的 2.5 倍冗余；余额 ¥42.80 兜底）
-ALERT_COST_CNY = 15.0        # 跑中告警线（50%）
+# ---- 费用上限单 v2（Codex P1/P2 勘正后机算重写；原 ¥4/¥6、¥30 上限作废）----
+# 牌价依据（官方页 api-docs.deepseek.com/quick_start/pricing，2026-10-22 抓取原文）：
+#   现售模型=deepseek-flash / deepseek-v4-pro（生产模型名 deepseek-chat 为 legacy，
+#   页面未标其映射价——故按**页上最贵的 v4-pro 峰值**计：入 $1.32/M、出 $3.96/M，
+#   汇率 7.3）。生产 DEEPSEEK_MODEL 实际版本以 env 为准，回测记录如实登记。
+# 最坏情况界（机算 2026-10-22，17 卷真实抽取字数 186,134 字）：
+#   1 token/字（中文实际约 0.6-0.7，取 1 冗余）× 每卷 20 次调用（预算 18+余量）
+#   × 每次带 3k prompt 开销 + 输出每次 ≤2k → 入 4.74M + 出 0.68M ≈ **¥65.36**
+# 余额 ¥42.80 不足最坏情况界 → **跑前必须充值 ≥ ¥66**，否则拒绝开跑。
+USD_CNY = 7.3
+PRICE_IN_CNY_PER_M = 1.32 * USD_CNY    # ¥9.636/M（v4-pro 峰值 cache miss）
+PRICE_OUT_CNY_PER_M = 3.96 * USD_CNY   # ¥28.908/M（峰值）
+MAX_COST_CNY = 66.0                    # = 最坏情况界（机算；改动须走 PR）
+ALERT_COST_CNY = 33.0                  # 50%
 
 
 def estimate_cost(in_tokens: float, out_tokens: float) -> float:
@@ -221,8 +228,8 @@ def main() -> None:
                     help="只出靶向证据链与骨架（不跑 LLM 全集，供模板预览）")
     ap.add_argument("--server-host", default="root@59.110.13.13",
                     help="生产主机（ssh 可达），用于读容器镜像标签=部署版本")
-    ap.add_argument("--max-cost-cny", type=float, default=MAX_COST_CNY,
-                    help=f"费用硬上限（默认 ¥{MAX_COST_CNY}）；跑中按账本用量实时核算，超限终止")
+    # 费用硬上限=模块常量 MAX_COST_CNY（Codex P1：可改大的上限不是硬上限；
+    # 改动须走 PR 审计），不设 CLI 旗标
     ap.add_argument("--auth-file", default=r"F:\合同审查Agent\.deploy-credentials.txt")
     args = ap.parse_args()
 
@@ -275,20 +282,22 @@ def main() -> None:
                 cred[k.strip()] = v.strip()
         balance = deepseek_balance(cred["deepseek_key"])
         record["cost_memo"] = {
-            "牌价口径": f"官方牌价约输入¥2/M 输出¥3/M；本单按 2 倍冗余计"
-                        f"（输入¥{PRICE_IN_CNY_PER_M}/M 输出¥{PRICE_OUT_CNY_PER_M}/M）",
-            "预估成本": "约 ¥12（保守 token 估算 2.6M 入 + 0.35M 出）",
-            "硬上限人民币": args.max_cost_cny,
+            "牌价依据": "官方页最贵 v4-pro 峰值：入 $1.32/M、出 $3.96/M × 汇率 7.3"
+                        "（生产模型名 deepseek-chat 为 legacy，页未标映射价——按最贵计）",
+            "最坏情况界": "¥65.36（17 卷真实 186,134 字 × 1 token/字 × 20 调用"
+                          " × 3k prompt 开销 + 出 ≤2k/次，机算可复现）",
+            "硬上限人民币": MAX_COST_CNY,
             "告警线人民币": ALERT_COST_CNY,
-            "超限方式": "每 60s 按生产账本累计 usage 实时核算；≥告警线打印、"
-                        "≥硬上限终止 run_eval 子进程；账户余额 ¥42.80 物理兜底"
-                        "（耗尽=402 优雅降级，规则层照常，M6.5 已实证）",
+            "超限方式": "跑前余额≥硬上限否则拒绝；跑中每 60s 按生产账本累计 usage"
+                        " 实时核算，≥告警线打印、≥硬上限终止子进程；末次结算必做，"
+                        "实际花费超界→记录标记「结论作废待人工复核」",
             "deepseek_balance_cny": balance,
         }
-        if balance < args.max_cost_cny:
-            raise SystemExit(f"FAIL: 余额 ¥{balance} < 硬上限 ¥{args.max_cost_cny}"
-                             f"——先充值再跑（费用上限单见记录）")
-        print(f"[费用上限单] 硬上限 ¥{args.max_cost_cny} / 告警 ¥{ALERT_COST_CNY}"
+        if balance < MAX_COST_CNY:
+            raise SystemExit(
+                f"FAIL: 余额 ¥{balance} < 最坏情况界 ¥{MAX_COST_CNY}"
+                f"——先充值 ≥ ¥{MAX_COST_CNY - balance:.2f} 再跑（费用上限单见记录）")
+        print(f"[费用上限单] 硬上限(最坏情况界) ¥{MAX_COST_CNY} / 告警 ¥{ALERT_COST_CNY}"
               f" / 余额 ¥{balance}")
         names = ",".join(roster)
         run_out = str(pathlib.Path(args.out).parent / "final-replay-run.json")
@@ -308,10 +317,10 @@ def main() -> None:
                 i_tok, o_tok = spent_since(args.server_host, "agent-t", start_ts)
                 cost = estimate_cost(i_tok, o_tok)
                 print(f"[费用哨兵] 已用 入{i_tok}/出{o_tok} tokens ≈ ¥{cost:.2f}")
-                if cost >= args.max_cost_cny:
+                if cost >= MAX_COST_CNY:
                     proc.kill()
                     raise SystemExit(f"FAIL: 费用 ¥{cost:.2f} ≥ 硬上限 "
-                                     f"¥{args.max_cost_cny}——已终止跑批")
+                                     f"¥{MAX_COST_CNY}——已终止跑批")
                 if cost >= ALERT_COST_CNY:
                     print(f"[费用告警] ¥{cost:.2f} ≥ 告警线 ¥{ALERT_COST_CNY}")
             except SystemExit:
@@ -320,6 +329,16 @@ def main() -> None:
                 print("[费用哨兵] 查询失败（不终止）：", type(exc).__name__)
         if proc.returncode != 0:
             raise SystemExit(f"FAIL: run_eval 退出码 {proc.returncode}")
+        # 末次结算必做（Codex P1：最后一轮检查后的花费不流失）
+        i_fin, o_fin = spent_since(args.server_host, "agent-t", start_ts)
+        final_cost = estimate_cost(i_fin, o_fin)
+        record["final_settlement"] = {
+            "input_tokens": i_fin, "output_tokens": o_fin,
+            "cost_cny": round(final_cost, 2),
+            "verdict": ("在界内" if final_cost <= MAX_COST_CNY
+                        else "超界——本批结论作废，待人工复核"),
+        }
+        print(f"[末次结算] ¥{final_cost:.2f} → {record['final_settlement']['verdict']}")
         record["run_eval_output"] = run_out
     else:
         record["run_eval_output"] = None
