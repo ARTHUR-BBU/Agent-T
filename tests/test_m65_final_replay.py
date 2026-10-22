@@ -71,9 +71,9 @@ def test_revision_non_sha_tag_rejects() -> None:
         assert not ok and "Git SHA" in reason
 
 
-def test_estimate_cost_uses_official_peak_v4pro_price() -> None:
-    """费用上限单牌价 v2：官方页最贵 v4-pro 峰值（入 $1.32/M、出 $3.96/M × 7.3）。"""
-    assert PRICE_IN_CNY_PER_M == pytest.approx(9.636)
-    assert PRICE_OUT_CNY_PER_M == pytest.approx(28.908)
-    assert estimate_cost(1_000_000, 0) == pytest.approx(9.636)
-    assert estimate_cost(0, 1_000_000) == pytest.approx(28.908)
+def test_estimate_cost_uses_flash_peak_price() -> None:
+    """费用单 v3 牌价：生产 deepseek-v4-flash（官方中文页 Flash 列峰值）。"""
+    assert PRICE_IN_CNY_PER_M == pytest.approx(2.0)
+    assert PRICE_OUT_CNY_PER_M == pytest.approx(8.0)
+    assert estimate_cost(1_000_000, 0) == pytest.approx(2.0)
+    assert estimate_cost(0, 1_000_000) == pytest.approx(8.0)

@@ -160,20 +160,21 @@ def server_revision(host: str, container: str = "agent-t") -> str:
     return image.split(":")[-1] if ":" in image else image
 
 
-# ---- 费用上限单 v2（Codex P1/P2 勘正后机算重写；原 ¥4/¥6、¥30 上限作废）----
-# 牌价依据（官方页 api-docs.deepseek.com/quick_start/pricing，2026-10-22 抓取原文）：
-#   现售模型=deepseek-flash / deepseek-v4-pro（生产模型名 deepseek-chat 为 legacy，
-#   页面未标其映射价——故按**页上最贵的 v4-pro 峰值**计：入 $1.32/M、出 $3.96/M，
-#   汇率 7.3）。生产 DEEPSEEK_MODEL 实际版本以 env 为准，回测记录如实登记。
+# ---- 费用上限单 v3（用户纠正确认：生产模型=deepseek-v4-flash，官方中文页牌价）----
+# 牌价依据（api-docs.deepseek.com/zh-cn/quick_start/pricing，2026-10-22 抓取原文）：
+#   生产 env DEEPSEEK_MODEL=deepseek-v4-flash；官方注(1)：旧模型名由
+#   DeepSeek-V4.1-Flash-1017 服务、**按 Flash 价格计费**。
+#   Flash 牌价（元/百万 tokens）：输入（缓存未命中）高峰 2 / 空闲 1；输出高峰 8 / 空闲 4。
+#   （v4-pro 列 9/4.5、27/13.5——生产不用该列。）
+# 峰谷（官方注(2)）：高峰=北京时间周一至五 9-12、14-18；其余（含周末节假日）=空闲半价。
 # 最坏情况界（机算 2026-10-22，17 卷真实抽取字数 186,134 字）：
 #   1 token/字（中文实际约 0.6-0.7，取 1 冗余）× 每卷 20 次调用（预算 18+余量）
-#   × 每次带 3k prompt 开销 + 输出每次 ≤2k → 入 4.74M + 出 0.68M ≈ **¥65.36**
-# 余额 ¥42.80 不足最坏情况界 → **跑前必须充值 ≥ ¥66**，否则拒绝开跑。
-USD_CNY = 7.3
-PRICE_IN_CNY_PER_M = 1.32 * USD_CNY    # ¥9.636/M（v4-pro 峰值 cache miss）
-PRICE_OUT_CNY_PER_M = 3.96 * USD_CNY   # ¥28.908/M（峰值）
-MAX_COST_CNY = 66.0                    # = 最坏情况界（机算；改动须走 PR）
-ALERT_COST_CNY = 33.0                  # 50%
+#   × 每次带 3k prompt 开销 + 输出每次 ≤2k → 入 4.74M×¥2 + 出 0.68M×¥8 ≈ **¥14.92**
+# 余额 ¥42.80 足够，**无需充值**；建议排非高峰时段跑（费用再省约一半）。
+PRICE_IN_CNY_PER_M = 2.0    # Flash 高峰·缓存未命中（空闲 1 元）
+PRICE_OUT_CNY_PER_M = 8.0   # Flash 高峰输出（空闲 4 元）
+MAX_COST_CNY = 15.0         # = 最坏情况界 ¥14.92 取整（机算；改动须走 PR）
+ALERT_COST_CNY = 7.5        # 50%
 
 
 def estimate_cost(in_tokens: float, out_tokens: float) -> float:
@@ -282,10 +283,14 @@ def main() -> None:
                 cred[k.strip()] = v.strip()
         balance = deepseek_balance(cred["deepseek_key"])
         record["cost_memo"] = {
-            "牌价依据": "官方页最贵 v4-pro 峰值：入 $1.32/M、出 $3.96/M × 汇率 7.3"
-                        "（生产模型名 deepseek-chat 为 legacy，页未标映射价——按最贵计）",
-            "最坏情况界": "¥65.36（17 卷真实 186,134 字 × 1 token/字 × 20 调用"
-                          " × 3k prompt 开销 + 出 ≤2k/次，机算可复现）",
+            "模型依据": "生产 env DEEPSEEK_MODEL=deepseek-v4-flash（用户确认）；"
+                        "官方注：旧名由 V4.1-Flash-1017 服务、按 Flash 价格计费",
+            "牌价依据": "官方中文页 Flash 列峰值：输入 ¥2/M（缓存未命中）、输出 ¥8/M"
+                        "（空闲半价；api-docs.deepseek.com/zh-cn/quick_start/pricing，"
+                        "2026-10-22 抓取原文）",
+            "最坏情况界": "¥14.92（17 卷真实 186,134 字 × 1 token/字 × 20 调用"
+                          " × 3k prompt 开销 + 出 ≤2k/次，机算可复现）；"
+                          "非高峰时段跑约再省一半",
             "硬上限人民币": MAX_COST_CNY,
             "告警线人民币": ALERT_COST_CNY,
             "超限方式": "跑前余额≥硬上限否则拒绝；跑中每 60s 按生产账本累计 usage"
@@ -298,7 +303,7 @@ def main() -> None:
                 f"FAIL: 余额 ¥{balance} < 最坏情况界 ¥{MAX_COST_CNY}"
                 f"——先充值 ≥ ¥{MAX_COST_CNY - balance:.2f} 再跑（费用上限单见记录）")
         print(f"[费用上限单] 硬上限(最坏情况界) ¥{MAX_COST_CNY} / 告警 ¥{ALERT_COST_CNY}"
-              f" / 余额 ¥{balance}")
+              f" / 余额 ¥{balance}（充足，无需充值）")
         names = ",".join(roster)
         run_out = str(pathlib.Path(args.out).parent / "final-replay-run.json")
         cmd = [sys_exec(), "-X", "utf8", "tools/m65/run_eval.py",
