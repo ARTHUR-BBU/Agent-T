@@ -112,6 +112,13 @@ def reject_notice(category_id: str) -> str:
     return f"您上传的合同疑似{zh}，本产品当前支持采购、租赁、保密协议、技术服务四类，暂不在支持范围。"
 
 
+def low_conf_agree_notice(confidence: float) -> str:
+    """低置信一致提示（真实卷静默盲区教训，final-exam-real-report §2）：
+    建议与用户一致但把握<0.90——不弹窗/不拦审/不换品类，报告头非阻断提示。
+    文案服务端单一来源（对齐 stance_notice_text 先例，前端只渲染不拼接）。"""
+    return f"快模型对本品类判断把握较低（{confidence:.2f}），请留意品类选择是否正确。"
+
+
 def _budget_reject(
     outcome: SuggestOutcome, budget: llm_budget.ReviewBudget, model: str
 ) -> SuggestOutcome:
