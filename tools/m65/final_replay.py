@@ -20,14 +20,22 @@
 
 名册纪律（Codex P1）：全集卷名从 run1.json+run2.json 两轮留档机器取并集，
 校验恰为 17 卷；源留档哈希与最终名册写入产物。留档名册变动→集数漂移→直接报错。
+版本纪律（Codex 勘正）：调用方 HEAD 与**服务端部署版本**（--server-host 的容器
+镜像标签）都记录；不一致直接报错——「同批同哈希」指的是服务端实际跑的版本。
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import sys
 from typing import Any
 import pathlib
+
+# 直跑引导（Codex 勘正：python tools/m65/final_replay.py 直跑时 sys.path 是
+# tools/m65，摸不到仓库根的 app 包——与既有可直接执行工具同款引导）
+if __package__ in (None, ""):
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 import subprocess
 import time
 
@@ -110,14 +118,31 @@ def evidence_chain(fixtures: pathlib.Path) -> list[dict]:
             rec["autopsy_verdict"] = ("表格内实锤" if hits else
                                       "表格与正文均未读到——抽取缺口嫌疑")
         else:
-            paras = [p.text.strip() for p in
-                     __import__("docx").Document(str(path)).paragraphs
-                     if spec["term"] in p.text]
-            rec["paragraph_hits"] = paras
-            rec["autopsy_verdict"] = (f"正文实锤（{len(paras)} 处）" if paras
+            # 段落命中带编号，基准=抽取文本非空行号（残-4：以抽取层原始文本为准）。
+            # 勘正注：A1 验尸的 P06/P13 编号基准不可复现（现行抽取层为行 7/16）；
+            # 回测记录以「抽取文本行号+原文摘录」为准，内容比对证明同一证物。
+            lines = text.splitlines()
+            paras = [(i, ln.strip()) for i, ln in enumerate(lines, 1)
+                     if spec["term"] in ln.strip()]
+            rec["numbering_basis"] = "抽取文本非空行号（1 基）"
+            rec["a1_autopsy_note"] = "A1 验尸记 P06/P13，编号基准与现行抽取层不同；以原文内容比对为准"
+            rec["paragraph_hits"] = [{"line": i, "text": t} for i, t in paras]
+            rec["autopsy_verdict"] = (f"正文实锤（{len(paras)} 处：行 "
+                                      f"{'/'.join(str(i) for i, _ in paras)}）"
+                                      if paras
                                       else "正文与表格均未读到——抽取缺口嫌疑")
         records.append(rec)
     return records
+
+
+def server_revision(host: str, container: str = "agent-t") -> str:
+    """读服务端实际部署版本（容器镜像标签）——「同批同哈希」以它为准。"""
+    r = subprocess.run(
+        ["ssh", host,
+         f"docker inspect {container} --format '{{{{.Config.Image}}}}'"],
+        capture_output=True, text=True, check=True)
+    image = r.stdout.strip()
+    return image.split(":")[-1] if ":" in image else image
 
 
 def main() -> None:
@@ -128,6 +153,8 @@ def main() -> None:
     ap.add_argument("--insecure", action="store_true")
     ap.add_argument("--skip-llm", action="store_true",
                     help="只出靶向证据链与骨架（不跑 LLM 全集，供模板预览）")
+    ap.add_argument("--server-host", default="root@59.110.13.13",
+                    help="生产主机（ssh 可达），用于读容器镜像标签=部署版本")
     args = ap.parse_args()
 
     repo_root = pathlib.Path.cwd()
@@ -146,7 +173,21 @@ def main() -> None:
         "roster_source_hashes": roster_sources,
         "roster": roster,
     }
-    print("冻结哈希:", record["git_hash"], "| 名册:", len(roster), "卷")
+    # Codex 勘正：记录服务端部署版本；与调用方 HEAD 不一致直接报错
+    #（--skip-llm 干跑纯本地零服务端调用，只记录不拦——版本纪律管的是 LLM 批）
+    server_rev = server_revision(args.server_host)
+    record["caller_head"] = record.pop("git_hash")
+    record["server_revision"] = server_rev
+    if record["caller_head"] != server_rev:
+        if args.skip_llm:
+            print(f"[干跑] 版本错位备案：HEAD {record['caller_head']} ≠ "
+                  f"服务端 {server_rev}（不影响本地证据链；真跑批前须对齐）")
+        else:
+            raise SystemExit(
+                f"FAIL: 版本错位——调用方 HEAD {record['caller_head']} ≠ "
+                f"服务端部署 {server_rev}。先部署对齐再跑「同批同哈希」。")
+    print("冻结哈希（调用方）:", record["caller_head"][:12],
+          "| 服务端部署:", server_rev, "| 名册:", len(roster), "卷")
 
     # ① 靶向证据链（本地抽取层，零 LLM 成本）
     record["evidence_chain"] = evidence_chain(fixtures)
