@@ -168,11 +168,12 @@ def server_revision(host: str, container: str = "agent-t") -> str:
 #   Flash 牌价（元/百万 tokens）：输入（缓存未命中）高峰 2 / 空闲 1；输出高峰 8 / 空闲 4。
 #   （v4-pro 列 9/4.5、27/13.5——生产不用该列。）
 # 峰谷（官方注(2)）：高峰=北京时间周一至五 9-12、14-18；其余（含周末节假日）=空闲半价。
-# 最坏情况界 v4（2026-10-23，codex 口径）：
-#   输出 = 每卷 18 次调用全按 DEFAULT 16k 阀门 → 270k/卷 × 17 卷 = 4.59M
-#          × ¥8/M（Flash 峰值输出）= **¥36.72**
-#   输入 = 17 卷 186,134 字 × 1 token/字（冗余）× 20 调用 × +3k prompt 开销
-#          ≈ 4.74M × ¥2/M（Flash 峰值输入·缓存未命中）= **¥9.48**
+# 最坏情况界 v4.1（2026-10-23，codex 勘正版：逐节点公式读 #137 阀门常量）：
+#   输出/卷 = precheck 2×3k + model_review 6×13k + quality 6×25k
+#             + objection 2×10k + ask 2×8k = **270k**（函数实时读阀门表算出）
+#   × 17 卷 = 4.59M × ¥8/M（Flash 峰值输出）= **¥36.72**
+#   输入 = 17 卷 186,134 字 × 1 token/字（冗余）× 20 调用（冗余，非实际调用数）
+#          × +3k prompt 开销 ≈ 4.74M × ¥2/M（Flash 峰值·缓存未命中）= **¥9.48**
 #   合计最坏 ≈ **¥46.2** → 硬上限取整 **¥47**。
 # 余额 ¥42.80 < ¥47 → 跑前须充值 ≥ ¥5（代码预检强制）；实际输出远小于阀门时
 # 真实花费将远低于此界（60s 哨兵实时盯账）；建议排非高峰时段（输出费减半）。
@@ -222,6 +223,26 @@ def spent_since(server_host: str, container: str, since_ts: float) -> tuple[int,
         input=remote_code, capture_output=True, text=True, check=True)
     i, o = json.loads(r.stdout.strip().splitlines()[-1])
     return int(i), int(o)
+
+
+# 每卷调用数上界（与审查预算 18 对账：2+6+6+2+2=18；Codex P1 口径）
+CALLS_PER_NODE = {
+    "precheck": 2,
+    "model_review": 6,
+    "quality": 6,
+    "objection": 2,
+    "ask": 2,
+}
+
+
+def worst_case_output_tokens_per_contract() -> int:
+    """单卷最坏输出 tokens——直接读 #137 阀门常量逐节点累加。
+
+    阀门调大、新增节点或调用数变化而费用上限未同步 → 下游测试必红。"""
+    from app.services.llm_client import (DEFAULT_MAX_OUTPUT_TOKENS,
+                                         NODE_MAX_OUTPUT_TOKENS)
+    return sum(calls * NODE_MAX_OUTPUT_TOKENS.get(node, DEFAULT_MAX_OUTPUT_TOKENS)
+               for node, calls in CALLS_PER_NODE.items())
 
 
 def main() -> None:
@@ -293,9 +314,10 @@ def main() -> None:
             "牌价依据": "官方中文页 Flash 列峰值：输入 ¥2/M（缓存未命中）、输出 ¥8/M"
                         "（空闲半价；api-docs.deepseek.com/zh-cn/quick_start/pricing，"
                         "2026-10-22 抓取原文）",
-            "最坏情况界": "¥46.2（codex 口径 v4：输出=每卷 18 调用全按 16k 阀门"
-                          "→4.59M×¥8=¥36.72；输入 4.74M×¥2=¥9.48；机算可复现）；"
-                          "非高峰时段跑输出费减半，实际输出远小于阀门时更低",
+            "最坏情况界": "¥46.2（逐节点公式 worst_case_output_tokens_per_contract()"
+                          "=270k/卷 ×17 卷 ×¥8=¥36.72；输入 4.74M×¥2=¥9.48——"
+                          "20 次为冗余非实际调用数）；非高峰时段跑输出费减半，"
+                          "实际输出远小于阀门时更低",
             "硬上限人民币": MAX_COST_CNY,
             "告警线人民币": ALERT_COST_CNY,
             "超限方式": "跑前余额≥硬上限否则拒绝；跑中每 60s 按生产账本累计 usage"
@@ -303,6 +325,13 @@ def main() -> None:
                         "实际花费超界→记录标记「结论作废待人工复核」",
             "deepseek_balance_cny": balance,
         }
+        # 自检：硬上限必须 ≥ 机算最坏（阀门调大忘改上限=此处当场红）
+        worst_out_total = worst_case_output_tokens_per_contract() * len(roster)
+        worst_cost = estimate_cost(worst_out_total, 0) + 4.74  # 输入界 ¥9.48 固定项
+        if MAX_COST_CNY < worst_cost:
+            raise SystemExit(
+                f"FAIL: 硬上限 ¥{MAX_COST_CNY} < 机算最坏 ¥{worst_cost:.2f}"
+                f"——阀门/调用数已变，费用上限须走 PR 同步")
         if balance < MAX_COST_CNY:
             raise SystemExit(
                 f"FAIL: 余额 ¥{balance} < 最坏情况界 ¥{MAX_COST_CNY}"

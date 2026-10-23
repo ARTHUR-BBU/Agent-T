@@ -7,10 +7,12 @@ import pathlib
 
 import pytest
 
-from tools.m65.final_replay import (ARCHIVES, EXPECTED_ROSTER_SIZE,
+from tools.m65.final_replay import (ARCHIVES, CALLS_PER_NODE,
+                                    EXPECTED_ROSTER_SIZE, MAX_COST_CNY,
                                     PRICE_IN_CNY_PER_M, PRICE_OUT_CNY_PER_M,
                                     check_revision, estimate_cost,
-                                    load_roster)
+                                    load_roster,
+                                    worst_case_output_tokens_per_contract)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -77,3 +79,16 @@ def test_estimate_cost_uses_flash_peak_price() -> None:
     assert PRICE_OUT_CNY_PER_M == pytest.approx(8.0)
     assert estimate_cost(1_000_000, 0) == pytest.approx(2.0)
     assert estimate_cost(0, 1_000_000) == pytest.approx(8.0)
+
+
+def test_worst_case_output_matches_ruling() -> None:
+    """Codex P1：逐节点公式读 #137 阀门常量，单卷最坏=270k（裁决口径冻结）。"""
+    assert sum(CALLS_PER_NODE.values()) == 18  # 与审查预算对账
+    assert worst_case_output_tokens_per_contract() == 270_000
+
+
+def test_max_cost_covers_worst_case() -> None:
+    """阀门/调用数变化而费用上限未同步 → 此测试必红（漂移警报）。"""
+    worst_out = worst_case_output_tokens_per_contract() * 17
+    worst_cost = estimate_cost(worst_out, 0) + 9.48  # 输入界
+    assert MAX_COST_CNY >= worst_cost
