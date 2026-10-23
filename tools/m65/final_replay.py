@@ -201,28 +201,46 @@ def deepseek_balance(api_key: str) -> float:
     raise SystemExit("FAIL: 余额接口无 CNY 条目")
 
 
-def spent_since(server_host: str, container: str, since_ts: float) -> tuple[int, int]:
-    """查生产账本本批累计 tokens（llm_calls.created_at ≥ since_ts）。
-
-    生产账本在服务器容器内——经 ssh 读（与部署工具同通道）。远端统计脚本
-    经 stdin 送入（不经命令行，免嵌套引号地狱）。
+def spent_for_reviews(server_host: str, container: str,
+                      review_ids: list[str]) -> tuple[int, int]:
+    """按本批 review_id 精确圈账（Codex 勘正：时间戳口径会把并发用户审查
+    算进回测费用，污染记录且可能误触发杀批）。远端统计脚本经 stdin 送入
+    （不经命令行，免嵌套引号地狱）。
     """
+    if not review_ids:
+        return 0, 0
     remote_code = (
         "import sqlite3,json,sys\n"
         "con = sqlite3.connect('/tmp/agent-t-reviews.db')\n"
-        "start = float(sys.argv[1])\n"
-        "rows = con.execute('SELECT usage FROM llm_calls WHERE created_at >= ?',"
-        " (start,)).fetchall()\n"
+        "ids = sys.argv[1].split(',')\n"
+        "marks = ','.join('?' for _ in ids)\n"
+        "rows = con.execute(f'SELECT usage FROM llm_calls WHERE review_id IN"
+        " ({marks})', ids).fetchall()\n"
         "ins = sum(json.loads(u[0]).get('input_tokens') or 0 for u in rows)\n"
         "outs = sum(json.loads(u[0]).get('output_tokens') or 0 for u in rows)\n"
         "print(json.dumps([ins, outs]))\n"
     )
     r = subprocess.run(
         ["ssh", server_host,
-         f"docker exec -i {container} python3 - {since_ts:.3f}"],
+         f"docker exec -i {container} python3 - {','.join(review_ids)}"],
         input=remote_code, capture_output=True, text=True, check=True)
     i, o = json.loads(r.stdout.strip().splitlines()[-1])
     return int(i), int(o)
+
+
+def read_review_ids(ids_path: pathlib.Path) -> list[str]:
+    """读 run_eval 逐卷落盘的 review_id JSONL（增量安全：缺文件/半行容忍）。"""
+    if not ids_path.exists():
+        return []
+    out = []
+    for line in ids_path.read_text(encoding="utf-8").splitlines():
+        try:
+            rid = json.loads(line).get("review_id")
+            if rid:
+                out.append(str(rid))
+        except json.JSONDecodeError:
+            continue  # 半行（写入中）容忍
+    return out
 
 
 # 每卷调用数上界（与审查预算 18 对账：2+6+6+2+2=18；Codex P1 口径）
@@ -380,23 +398,29 @@ def main() -> None:
               f" / 余额 ¥{balance}（充足，无需充值）")
         names = ",".join(roster)
         run_out = str(pathlib.Path(args.out).parent / "final-replay-run.json")
+        ids_out = str(pathlib.Path(args.out).parent / "final-replay-review-ids.jsonl")
+        pathlib.Path(ids_out).unlink(missing_ok=True)  # 增量文件清零开跑
         cmd = [sys_exec(), "-X", "utf8", "tools/m65/run_eval.py",
                "--fixtures", str(fixtures), "--names", names,
                "--out", run_out, "--base", args.base,
                # Codex 勘正：auth-file 必须透传子进程（否则子进程回退自己的
                # 默认路径，操作者自定义的凭据文件被静默忽略）
-               "--auth-file", args.auth_file]
+               "--auth-file", args.auth_file,
+               # Codex 勘正②：review_id 逐卷落盘——费用哨兵按本批 review_id
+               # 精确圈账，不把并发用户审查算进回测
+               "--review-ids-out", ids_out]
         if args.insecure:
             cmd.append("--insecure")
         print("全集跑批（约 40-60 分钟，DeepSeek 计费）：", " ".join(cmd[2:]))
-        start_ts = time.time()
         proc = subprocess.Popen(cmd)
         while proc.poll() is None:
             time.sleep(60)
             if proc.poll() is not None:
                 break
             try:
-                i_tok, o_tok = spent_since(args.server_host, "agent-t", start_ts)
+                i_tok, o_tok = spent_for_reviews(
+                    args.server_host, "agent-t",
+                    read_review_ids(pathlib.Path(ids_out)))
                 cost = estimate_cost(i_tok, o_tok)
                 print(f"[费用哨兵] 已用 入{i_tok}/出{o_tok} tokens ≈ ¥{cost:.2f}")
                 if cost >= MAX_COST_CNY:
@@ -409,7 +433,9 @@ def main() -> None:
                     settled_rounds, deadline = 0, time.time() + 600
                     while time.time() < deadline and settled_rounds < 2:
                         time.sleep(60)
-                        cur = spent_since(args.server_host, "agent-t", start_ts)
+                        cur = spent_for_reviews(
+                            args.server_host, "agent-t",
+                            read_review_ids(pathlib.Path(ids_out)))
                         growth = (cur[0] - prev[0]) + (cur[1] - prev[1])
                         overshoot = max(estimate_cost(*cur) - MAX_COST_CNY, 0.0)
                         print(f"[排空] 累计 ¥{estimate_cost(*cur):.2f}"
@@ -429,7 +455,9 @@ def main() -> None:
         if proc.returncode != 0:
             raise SystemExit(f"FAIL: run_eval 退出码 {proc.returncode}")
         # 末次结算必做（Codex P1：最后一轮检查后的花费不流失）
-        i_fin, o_fin = spent_since(args.server_host, "agent-t", start_ts)
+        i_fin, o_fin = spent_for_reviews(
+            args.server_host, "agent-t",
+            read_review_ids(pathlib.Path(ids_out)))
         final_cost = estimate_cost(i_fin, o_fin)
         record["final_settlement"] = {
             "input_tokens": i_fin, "output_tokens": o_fin,
