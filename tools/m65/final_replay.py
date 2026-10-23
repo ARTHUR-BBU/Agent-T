@@ -382,7 +382,10 @@ def main() -> None:
         run_out = str(pathlib.Path(args.out).parent / "final-replay-run.json")
         cmd = [sys_exec(), "-X", "utf8", "tools/m65/run_eval.py",
                "--fixtures", str(fixtures), "--names", names,
-               "--out", run_out, "--base", args.base]
+               "--out", run_out, "--base", args.base,
+               # Codex 勘正：auth-file 必须透传子进程（否则子进程回退自己的
+               # 默认路径，操作者自定义的凭据文件被静默忽略）
+               "--auth-file", args.auth_file]
         if args.insecure:
             cmd.append("--insecure")
         print("全集跑批（约 40-60 分钟，DeepSeek 计费）：", " ".join(cmd[2:]))
@@ -398,8 +401,25 @@ def main() -> None:
                 print(f"[费用哨兵] 已用 入{i_tok}/出{o_tok} tokens ≈ ¥{cost:.2f}")
                 if cost >= MAX_COST_CNY:
                     proc.kill()
-                    raise SystemExit(f"FAIL: 费用 ¥{cost:.2f} ≥ 硬上限 "
-                                     f"¥{MAX_COST_CNY}——已终止跑批")
+                    # Codex P1：上传接口返回后服务端 daemon 审查线程仍在跑——
+                    # kill 客户端不停账。排空在途审查（有界：每卷受 llm_budget
+                    # 18 调用+阀门双重限制）再结算，溢出部分如实记账。
+                    print("[费用哨兵] 达硬上限：客户端已终止，等待服务端在途审查排空…")
+                    prev = (i_tok, o_tok)
+                    settled_rounds, deadline = 0, time.time() + 600
+                    while time.time() < deadline and settled_rounds < 2:
+                        time.sleep(60)
+                        cur = spent_since(args.server_host, "agent-t", start_ts)
+                        growth = (cur[0] - prev[0]) + (cur[1] - prev[1])
+                        overshoot = max(estimate_cost(*cur) - MAX_COST_CNY, 0.0)
+                        print(f"[排空] 累计 ¥{estimate_cost(*cur):.2f}"
+                              f"（超限溢出 ¥{overshoot:.2f}）增量 {growth} tokens")
+                        settled_rounds = settled_rounds + 1 if growth == 0 else 0
+                        prev = cur
+                    raise SystemExit(
+                        f"FAIL: 费用 ¥{estimate_cost(*prev):.2f} ≥ 硬上限 "
+                        f"¥{MAX_COST_CNY}——已终止并排空在途审查，"
+                        f"溢出 ¥{overshoot:.2f} 已记账")
                 if cost >= ALERT_COST_CNY:
                     print(f"[费用告警] ¥{cost:.2f} ≥ 告警线 ¥{ALERT_COST_CNY}")
             except SystemExit:
