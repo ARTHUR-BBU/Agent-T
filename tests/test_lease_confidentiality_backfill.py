@@ -78,6 +78,31 @@ def test_denial_never_climbs_to_hardline() -> None:
     assert it["rule_class"] == "heuristic"
 
 
+@pytest.mark.parametrize("text,expect_status,expect_blank", [
+    # codex P1-1：门禁=下游信号超集——否认词/义务句词单独在场不得被门挡成 na
+    ("双方约定对本项目技术资料无需保密。", "需关注", False),
+    ("双方对知悉的商业秘密不得泄露。", "通过", False),
+    # codex P1-2：全角下划线占位不是实质内容 → 未找到+旗标
+    ("保密要求：＿＿＿＿＿＿", "未找到", True),
+    # codex P1-3：裸词「保密责任/保密义务」+冒号非实质后缀不得洗成通过
+    ("保密责任：无", "需关注", False),
+    ("保密责任：另行协商", "需关注", False),
+    ("保密义务：＿＿＿＿", "未找到", True),
+    # codex P2：悬置/否认标签组含全部栏目词（保密条款/保密责任形态）
+    ("保密条款：另行协商", "需关注", False),
+    ("保密条款：无", "需关注", False),
+    # 回归护栏：跨行实质义务形态仍判通过（「保密义务如下：\n承担保密责任」）
+    ("保密义务如下：\n承担保密责任", "通过", False),
+    # 冒号+实质内容仍放行（裸词禁行不误伤）
+    ("保密责任：双方对在履行中知悉的对方资料予以保密", "通过", False),
+])
+def test_codex_gate_superset_and_label_guards(text: str, expect_status: str,
+                                              expect_blank: bool) -> None:
+    it = _conf(text)
+    assert it["status"] == expect_status, f"{text!r} 期望 {expect_status}，实际 {it['status']}"
+    assert it["blank_flag"] is expect_blank
+
+
 def test_gate_whitelist_on_replay_corpus() -> None:
     """翻转白名单门禁：15 份回放卷仅第 1 卷出「通过」，其余全部本类不适用。
 
