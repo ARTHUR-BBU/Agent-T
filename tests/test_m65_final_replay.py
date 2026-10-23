@@ -11,7 +11,7 @@ from tools.m65.final_replay import (ARCHIVES, CALLS_PER_NODE,
                                     EXPECTED_ROSTER_SIZE, MAX_COST_CNY,
                                     PRICE_IN_CNY_PER_M, PRICE_OUT_CNY_PER_M,
                                     check_revision, estimate_cost,
-                                    load_roster,
+                                    load_roster, preflight_cost_check,
                                     worst_case_cost_cny,
                                     worst_case_output_tokens_per_contract)
 
@@ -105,3 +105,24 @@ def test_valve_bump_makes_preflight_fail(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_max_cost_covers_worst_case() -> None:
     """阀门/调用数变化而费用上限未同步 → 此测试必红（漂移警报）——共用同一函数。"""
     assert MAX_COST_CNY >= worst_case_cost_cny()
+
+
+def test_preflight_real_path_balance_short_fails() -> None:
+    """真实预检路径：余额 ¥42.80 < ¥47 → 拦截并提示充值金额（Codex P1 覆盖）。"""
+    with pytest.raises(SystemExit, match="充值"):
+        preflight_cost_check(42.80)
+
+
+def test_preflight_real_path_balance_ok_returns_verdict() -> None:
+    verdict = preflight_cost_check(50.0)
+    assert verdict == {"worst_cost_cny": 46.21, "hard_cap_cny": 47.0,
+                       "balance_cny": 50.0}
+
+
+def test_preflight_real_path_valve_drift_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """真实预检路径：阀门调大→机算最坏超硬上限→即使余额充足也拦（漂移警报）。"""
+    from app.services import llm_client
+
+    monkeypatch.setitem(llm_client.NODE_MAX_OUTPUT_TOKENS, "model_review", 26_000)
+    with pytest.raises(SystemExit, match="费用上限须走 PR 同步"):
+        preflight_cost_check(50.0)

@@ -275,6 +275,24 @@ def worst_case_cost_cny(contracts: int = 17,
                          out_per * contracts)
 
 
+def preflight_cost_check(balance: float, contracts: int = 17) -> dict[str, float]:
+    """费用预检（运行时唯一入口，测试直测本函数=覆盖真实预检路径）。
+
+    两条拦截：①阀门漂移（硬上限<机算最坏）②余额不足。
+    """
+    worst_cost = worst_case_cost_cny(contracts)
+    if MAX_COST_CNY < worst_cost:
+        raise SystemExit(
+            f"FAIL: 硬上限 ¥{MAX_COST_CNY} < 机算最坏 ¥{worst_cost:.2f}"
+            f"——阀门/调用数已变，费用上限须走 PR 同步")
+    if balance < MAX_COST_CNY:
+        raise SystemExit(
+            f"FAIL: 余额 ¥{balance} < 最坏情况界 ¥{MAX_COST_CNY}"
+            f"——先充值 ≥ ¥{MAX_COST_CNY - balance:.2f} 再跑（费用上限单见记录）")
+    return {"worst_cost_cny": round(worst_cost, 2),
+            "hard_cap_cny": MAX_COST_CNY, "balance_cny": balance}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fixtures", default="fixtures-real")
@@ -355,18 +373,9 @@ def main() -> None:
                         "实际花费超界→记录标记「结论作废待人工复核」",
             "deepseek_balance_cny": balance,
         }
-        # 自检：硬上限必须 ≥ 机算最坏（阀门调大忘改上限=此处当场红）
-        worst_out_total = worst_case_output_tokens_per_contract() * len(roster)
-        worst_cost = estimate_cost(worst_out_total,
-                                   worst_case_input_tokens(len(roster)))
-        if MAX_COST_CNY < worst_cost:
-            raise SystemExit(
-                f"FAIL: 硬上限 ¥{MAX_COST_CNY} < 机算最坏 ¥{worst_cost:.2f}"
-                f"——阀门/调用数已变，费用上限须走 PR 同步")
-        if balance < MAX_COST_CNY:
-            raise SystemExit(
-                f"FAIL: 余额 ¥{balance} < 最坏情况界 ¥{MAX_COST_CNY}"
-                f"——先充值 ≥ ¥{MAX_COST_CNY - balance:.2f} 再跑（费用上限单见记录）")
+        # 费用预检：唯一入口=preflight_cost_check（与测试共用同一函数——
+        # Codex P1：预检路径必须被测试覆盖，不许第二套手搓算法）
+        record["cost_preflight"] = preflight_cost_check(balance, len(roster))
         print(f"[费用上限单] 硬上限(最坏情况界) ¥{MAX_COST_CNY} / 告警 ¥{ALERT_COST_CNY}"
               f" / 余额 ¥{balance}（充足，无需充值）")
         names = ",".join(roster)
