@@ -91,7 +91,18 @@ def chat_completion(
                     request=resp.request,
                     response=resp,
                 )
-            data = resp.json()
+            # 畸形 200 响应同归 provider_error（GLM 审计+codex 裁定 2026-10-23）：
+            # HTTP 200 但 JSON 坏/缺 choices/结构错 = 请求可能已计费而账本无行，
+            # 费用哨兵与证据链的盲区——必须在抛出前落账。
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                raise ValueError(f"invalid_json_response: {exc}") from exc
+            choices = data.get("choices") if isinstance(data, dict) else None
+            if (not choices or not isinstance(choices[0], dict)
+                    or not isinstance(choices[0].get("message"), dict)):
+                raise ValueError(
+                    f"malformed_success_response: choices={str(choices)[:120]}")
     except httpx.TimeoutException as exc:
         _rec.latency_ms = int((time.monotonic() - _t0) * 1000)
         _rec.outcome = "timeout"
@@ -111,6 +122,14 @@ def chat_completion(
         _rec.error_detail = f"request_error: {type(exc).__name__}"
         llm_call_log.emit(_rec)
         raise exc
+    except ValueError as exc:
+        # 畸形 200 响应（坏 JSON/缺 choices/结构错）：落账后按原异常受控上抛
+        # （ValueError 与 httpx 异常族互斥，不存在双重落账）
+        _rec.latency_ms = int((time.monotonic() - _t0) * 1000)
+        _rec.outcome = "provider_error"
+        _rec.error_detail = str(exc)[:200]
+        llm_call_log.emit(_rec)
+        raise
     _rec.latency_ms = int((time.monotonic() - _t0) * 1000)
     usage = data.get("usage") or {}
     if usage:
