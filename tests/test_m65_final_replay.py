@@ -8,7 +8,9 @@ import pathlib
 import pytest
 
 from tools.m65.final_replay import (ARCHIVES, EXPECTED_ROSTER_SIZE,
-                                    check_revision, load_roster)
+                                    PRICE_IN_CNY_PER_M, PRICE_OUT_CNY_PER_M,
+                                    check_revision, estimate_cost,
+                                    load_roster)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
@@ -67,3 +69,11 @@ def test_revision_non_sha_tag_rejects() -> None:
     for tag in ("latest", "v1.0", "agent-t", ""):
         ok, reason = check_revision("ff6b64456c557c7696ae89a1b7f606ce746d2e33", tag)
         assert not ok and "Git SHA" in reason
+
+
+def test_estimate_cost_uses_flash_peak_price() -> None:
+    """费用单 v3 牌价：生产 deepseek-v4-flash（官方中文页 Flash 列峰值）。"""
+    assert PRICE_IN_CNY_PER_M == pytest.approx(2.0)
+    assert PRICE_OUT_CNY_PER_M == pytest.approx(8.0)
+    assert estimate_cost(1_000_000, 0) == pytest.approx(2.0)
+    assert estimate_cost(0, 1_000_000) == pytest.approx(8.0)
