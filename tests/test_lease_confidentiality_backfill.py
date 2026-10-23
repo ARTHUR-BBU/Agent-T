@@ -79,8 +79,13 @@ def test_denial_never_climbs_to_hardline() -> None:
 
 
 def test_gate_whitelist_on_replay_corpus() -> None:
-    """翻转白名单门禁：15 份回放卷仅第 1 卷出「通过」，其余全部本类不适用。"""
-    for p in sorted(REPLAY.glob("lease_replay_[0-9][0-9].txt")):
+    """翻转白名单门禁：15 份回放卷仅第 1 卷出「通过」，其余全部本类不适用。
+
+    覆盖边界如实交代：回放卷 03-15 为 git 排除的本机语料（上游校准期决定），
+    CI 只覆盖已入库的 01/02——本机跑批才是全量 15 卷口径。"""
+    vols = sorted(REPLAY.glob("lease_replay_[0-9][0-9].txt"))
+    assert vols, "回放卷一个都不在=语料挂载异常，门禁空转必须报红"
+    for p in vols:
         it = _conf(p.read_text(encoding="utf-8"))
         if p.name == "lease_replay_01.txt":
             assert it["status"] == "通过", f"{p.name} 期望通过，实际 {it['status']}"
@@ -92,17 +97,27 @@ def test_gate_whitelist_on_replay_corpus() -> None:
 
 def test_zero_flip_against_frozen_baseline() -> None:
     """33 份语料既有判定零翻转（基线=改码前冻结，字段逐项对照；
-    lease 卷排除新项 confidentiality，其余品类原样全对照）。"""
+    lease 卷排除新项 confidentiality，其余品类原样全对照）。
+
+    覆盖边界：回放卷 03-15 为 git 排除的本机语料，源文件缺失（CI）时
+    跳过该卷对照——本机跑批即全量 33 份口径；跳过量在输出中留痕。"""
     baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
     assert len(baseline) == 33
+    skipped: list[str] = []
+    checked = 0
     for key, old in baseline.items():
         if key.startswith("replay/"):
-            text = (REPLAY / key.split("/", 1)[1]).read_text(encoding="utf-8")
+            src = REPLAY / key.split("/", 1)[1]
+            if not src.exists():
+                skipped.append(key)
+                continue
+            text = src.read_text(encoding="utf-8")
             cat = "lease"
         else:
             p = REPO / "fixtures-real" / key.split("/", 1)[1]
             text = None  # 延迟读取（docx 走生产抽取通道）
             cat = old["category"]
+        checked += 1
         drop = {"confidentiality"} if cat == "lease" else set()
         if text is None:
             from app.services.extract import extract_text
@@ -116,6 +131,9 @@ def test_zero_flip_against_frozen_baseline() -> None:
             assert (n["status"], n["blank_flag"], n["category_na"]) == \
                 (o["status"], o["blank_flag"], o["category_na"]), \
                 f"{key}/{o['id']} 翻转: {o['status']} -> {n['status']}"
+    # 至少对照到已入库的 20 份（33-13 本机语料）；跳过清单留痕不静默
+    assert checked >= 20, f"零翻转对照量异常：仅 {checked} 份"
+    print(f"zero-flip checked={checked} skipped(local-only)={len(skipped)}: {skipped}")
 
 
 def test_no_signal_gate_in_other_categories() -> None:
