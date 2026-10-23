@@ -103,6 +103,22 @@ def chat_completion(
                     or not isinstance(choices[0].get("message"), dict)):
                 raise ValueError(
                     f"malformed_success_response: choices={str(choices)[:120]}")
+            # codex P1 边界补全（2026-10-23，content=42 实锤）：后续会被读取的
+            # 字段全部在此限定正确类型——漏一个就是「解析层 AttributeError、
+            # 账本 0 行」的同款盲区
+            msg = choices[0]["message"]
+            content = msg.get("content")
+            if content is not None and not isinstance(content, str):
+                raise ValueError(
+                    f"malformed_success_response: content 非字符串（{type(content).__name__}）")
+            if fallback_reasoning:
+                rc = msg.get("reasoning_content")
+                if rc is not None and not isinstance(rc, str):
+                    raise ValueError(
+                        f"malformed_success_response: reasoning_content 非字符串（{type(rc).__name__}）")
+            usage = data.get("usage")
+            if usage is not None and not isinstance(usage, dict):
+                raise ValueError("malformed_success_response: usage 非对象")
     except httpx.TimeoutException as exc:
         _rec.latency_ms = int((time.monotonic() - _t0) * 1000)
         _rec.outcome = "timeout"

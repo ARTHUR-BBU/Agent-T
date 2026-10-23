@@ -59,7 +59,7 @@ def test_caps_table_matches_ruling_evidence() -> None:
 # 「请求可能已计费、账本却 0 行」是费用哨兵与证据链的盲区：
 # 200 + 坏 JSON / 200 + 缺 choices / 结构错 → provider_error 账一行 + 受控上抛。
 
-def _run_malformed(resp_json) -> tuple[list, BaseException]:
+def _run_malformed(resp_json, **kwargs) -> tuple[list, BaseException]:
     """直跑 chat_completion，捕获账本 emit 行与抛出的异常。"""
     emitted: list = []
     resp = mock.Mock()
@@ -75,7 +75,8 @@ def _run_malformed(resp_json) -> tuple[list, BaseException]:
                 try:
                     llm_client.chat_completion(
                         api_key="k", url="https://api.deepseek.com/v1",
-                        model="m", system="s", user="u", temperature=0, timeout=5)
+                        model="m", system="s", user="u", temperature=0, timeout=5,
+                        **kwargs)
                 except (ValueError, KeyError, IndexError, TypeError) as exc:
                     err: BaseException = exc
                 else:
@@ -99,9 +100,35 @@ def test_malformed_choices_lands_provider_error_row() -> None:
     for payload in ({"usage": {}},                    # 缺 choices
                     {"choices": []},                  # 空数组
                     {"choices": [{"message": "x"}]},  # message 非 dict
-                    "not-a-dict"):                    # 顶层都不是对象
+                    "not-a-dict",                     # 顶层都不是对象
+                    # codex P1 边界（content=42 实锤）：后续读取字段类型错
+                    {"choices": [{"message": {"content": 42}}]},
+                    {"choices": [{"message": {"content": ["a"]}}]}):
         emitted, err = _run_malformed(lambda p=payload: p)
         assert isinstance(err, ValueError) and "malformed_success_response" in str(err)
         assert len(emitted) == 1, f"{payload!r} 落账行数异常"
         assert emitted[0].outcome == "provider_error"
         assert "malformed_success_response" in (emitted[0].error_detail or "")
+
+
+def test_malformed_reasoning_and_usage_lands_provider_error_row() -> None:
+    """codex P1 边界补全：启用回退时 reasoning_content 非字符串、usage 非对象
+    → 同走 provider_error 单行落账（正常字符串/省略不受影响）。"""
+    # reasoning_content 非字符串（fallback 开启才读取，须在读取前拦下）
+    emitted, err = _run_malformed(
+        lambda: {"choices": [{"message": {"content": "", "reasoning_content": 42}}]},
+        fallback_reasoning=True)
+    assert isinstance(err, ValueError) and "reasoning_content" in str(err)
+    assert len(emitted) == 1 and emitted[0].outcome == "provider_error"
+    # usage 非对象
+    emitted, err = _run_malformed(
+        lambda: {"choices": [{"message": {"content": "ok"}}], "usage": "x"})
+    assert isinstance(err, ValueError) and "usage" in str(err)
+    assert len(emitted) == 1 and emitted[0].outcome == "provider_error"
+    # 合法形态回归：content 合法+usage 合法 → 不抛畸形异常，正常落账
+    emitted, err = _run_malformed(
+        lambda: {"choices": [{"message": {"content": "ok"}}],
+                 "usage": {"prompt_tokens": 1, "completion_tokens": 2}})
+    assert isinstance(err, AssertionError), f"合法 200 响应不应抛异常：{err!r}"
+    assert len(emitted) == 1
+    assert emitted[0].outcome == "success"
