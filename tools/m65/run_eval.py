@@ -196,12 +196,19 @@ def run_unsupported_probe(client: httpx.Client, base: str, rid: str,
                 "seconds": round(time.time() - t0, 1)}
 
 
-def eval_contract(client: httpx.Client, base: str, path: Path, category: str) -> dict:
+def eval_contract(client: httpx.Client, base: str, path: Path, category: str,
+                  review_ids_out: str = "") -> dict:
     text_chars_full = 0
     rec: dict = {"file": path.name, "category": category}
     try:
         rid = upload_contract(client, base, path, category)
         rec["review_id"] = rid
+        # M6.5 收官回测（费用闸）：review_id 逐卷落盘供哨兵精确圈账
+        # （按 review_id 过滤账本，避免把并发用户审查算进回测费用）
+        if review_ids_out:
+            with open(review_ids_out, "a", encoding="utf-8") as idf:
+                idf.write(json.dumps({"file": path.name, "review_id": rid},
+                                     ensure_ascii=False) + "\n")
         row = poll_review(client, base, rid)
         rec["status"] = row.get("status")
         rec["error"] = row.get("error")
@@ -346,6 +353,8 @@ def main() -> None:
                     help="允许向非 HTTPS 非回环地址发送 Basic 凭据与合同全文（自担风险）")
     ap.add_argument("--names", default="",
                     help="逗号分隔的文件名子集（必须在 manifest 名册内；空=全部）")
+    ap.add_argument("--review-ids-out", default="",
+                    help="（可选）逐卷追加 review_id 的 JSONL 路径——费用哨兵精确圈账用")
     args = ap.parse_args()
 
     fixtures = ROOT / args.fixtures
@@ -395,7 +404,8 @@ def main() -> None:
         for p in files:
             cat = detect_category(p.name, manifest)
             print(f"[m65] {p.name} -> {cat} ...", flush=True)
-            rec = eval_contract(client, args.base, p, cat)
+            rec = eval_contract(client, args.base, p, cat,
+                                review_ids_out=args.review_ids_out)
             m = rec.get("metrics") or {}
             print(f"      status={rec.get('status')} 需关注 {m.get('attention_items')}/{m.get('items_total')}"
                   f" | claim_id率 {m.get('claim_id_rate')} | quality={m.get('quality_available')}"
@@ -406,7 +416,8 @@ def main() -> None:
         for p in extra_files:
             cat = str(extra_manifest.get(p.name) or "").strip()
             print(f"[m65][extra] {p.name} -> {cat}（非合同场景，不入汇总）...", flush=True)
-            rec = eval_contract(client, args.base, p, cat)
+            rec = eval_contract(client, args.base, p, cat,
+                                review_ids_out=args.review_ids_out)
             rec["scenario"] = "extra-non-contract"
             extras.append(rec)
             m = rec.get("metrics") or {}

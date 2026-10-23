@@ -160,6 +160,162 @@ def server_revision(host: str, container: str = "agent-t") -> str:
     return image.split(":")[-1] if ":" in image else image
 
 
+# ---- 费用上限单 v4（2026-10-23 codex 口径：按 #137 真水龙头 caps 算最坏输出）----
+# （v3 的 flash 牌价不变；输出最坏情况从「估算 0.68M」改为「caps 全开 4.59M」）----
+# 牌价依据（api-docs.deepseek.com/zh-cn/quick_start/pricing，2026-10-22 抓取原文）：
+#   生产 env DEEPSEEK_MODEL=deepseek-v4-flash；官方注(1)：旧模型名由
+#   DeepSeek-V4.1-Flash-1017 服务、**按 Flash 价格计费**。
+#   Flash 牌价（元/百万 tokens）：输入（缓存未命中）高峰 2 / 空闲 1；输出高峰 8 / 空闲 4。
+#   （v4-pro 列 9/4.5、27/13.5——生产不用该列。）
+# 峰谷（官方注(2)）：高峰=北京时间周一至五 9-12、14-18；其余（含周末节假日）=空闲半价。
+# 最坏情况界 v4.1（2026-10-23，codex 勘正版：逐节点公式读 #137 阀门常量）：
+#   输出/卷 = precheck 2×3k + model_review 6×13k + quality 6×25k
+#             + objection 2×10k + ask 2×8k = **270k**（函数实时读阀门表算出）
+#   × 17 卷 = 4.59M × ¥8/M（Flash 峰值输出）= **¥36.72**
+#   输入 = 17 卷 186,134 字 × 1 token/字（冗余）× 20 调用（冗余，非实际调用数）
+#          × +3k prompt 开销 ≈ 4.74M × ¥2/M（Flash 峰值·缓存未命中）= **¥9.48**
+#   合计最坏 ≈ **¥46.2** → 硬上限取整 **¥47**。
+# 余额 ¥42.80 < ¥47 → 跑前须充值 ≥ ¥5（代码预检强制）；实际输出远小于阀门时
+# 真实花费将远低于此界（60s 哨兵实时盯账）；建议排非高峰时段（输出费减半）。
+PRICE_IN_CNY_PER_M = 2.0    # Flash 高峰·缓存未命中（空闲 1 元）
+PRICE_OUT_CNY_PER_M = 8.0   # Flash 高峰输出（空闲 4 元）
+MAX_COST_CNY = 47.0         # = 最坏情况界 ¥46.2 取整（codex 口径；改动须走 PR）
+ALERT_COST_CNY = 23.5       # 50%
+
+
+def estimate_cost(in_tokens: float, out_tokens: float) -> float:
+    """按冗余牌价估算人民币成本。"""
+    return in_tokens / 1e6 * PRICE_IN_CNY_PER_M + out_tokens / 1e6 * PRICE_OUT_CNY_PER_M
+
+
+def deepseek_balance(api_key: str) -> float:
+    """查 DeepSeek 账户 CNY 余额（key 从 auth 文件读，不落命令行/日志）。"""
+    import urllib.request
+    req = urllib.request.Request("https://api.deepseek.com/user/balance",
+                                 headers={"Authorization": f"Bearer {api_key}"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        data = json.loads(resp.read())
+    for info in data.get("balance_infos", []):
+        if info.get("currency") == "CNY":
+            return float(info["total_balance"])
+    raise SystemExit("FAIL: 余额接口无 CNY 条目")
+
+
+# 远端圈账脚本（argv: 库路径, 逗号分隔 review_id）——抽成常量供单测直跑
+# （Codex 勘正：SQL 按 review_id IN 精确过滤，隔壁桌的钱不算进来）
+SPENT_REMOTE_CODE = (
+    "import sqlite3,json,sys\n"
+    "con = sqlite3.connect(sys.argv[1])\n"
+    "ids = sys.argv[2].split(',')\n"
+    "marks = ','.join('?' for _ in ids)\n"
+    "rows = con.execute('SELECT usage FROM llm_calls WHERE review_id IN"
+    " (' + marks + ')', ids).fetchall()\n"
+    "ins = sum(json.loads(u[0]).get('input_tokens') or 0 for u in rows)\n"
+    "outs = sum(json.loads(u[0]).get('output_tokens') or 0 for u in rows)\n"
+    "print(json.dumps([ins, outs]))\n"
+)
+
+
+def spent_for_reviews(server_host: str, container: str,
+                      review_ids: list[str]) -> tuple[int, int]:
+    """按本批 review_id 精确圈账（Codex 勘正：时间戳口径会把并发用户审查
+    算进回测费用，污染记录且可能误触发杀批）。远端统计脚本经 stdin 送入
+    （不经命令行，免嵌套引号地狱）。
+    """
+    if not review_ids:
+        return 0, 0
+    r = subprocess.run(
+        ["ssh", server_host,
+         f"docker exec -i {container} python3 - /tmp/agent-t-reviews.db"
+         f" {','.join(review_ids)}"],
+        input=SPENT_REMOTE_CODE, capture_output=True, text=True, check=True)
+    i, o = json.loads(r.stdout.strip().splitlines()[-1])
+    return int(i), int(o)
+
+
+def read_review_ids(ids_path: pathlib.Path) -> list[str]:
+    """读 run_eval 逐卷落盘的 review_id JSONL（增量安全：缺文件/半行容忍）。"""
+    if not ids_path.exists():
+        return []
+    out = []
+    for line in ids_path.read_text(encoding="utf-8").splitlines():
+        try:
+            rid = json.loads(line).get("review_id")
+            if rid:
+                out.append(str(rid))
+        except json.JSONDecodeError:
+            continue  # 半行（写入中）容忍
+    return out
+
+
+# 每卷调用数上界（与审查预算 18 对账：2+6+6+2+2=18；Codex P1 口径）
+CALLS_PER_NODE = {
+    "precheck": 2,
+    "model_review": 6,
+    "quality": 6,
+    "objection": 2,
+    "ask": 2,
+}
+
+
+def worst_case_output_tokens_per_contract() -> int:
+    """单卷最坏输出 tokens——直接读 #137 阀门常量逐节点累加。
+
+    阀门调大、新增节点或调用数变化而费用上限未同步 → 下游测试必红。"""
+    from app.services.llm_client import (DEFAULT_MAX_OUTPUT_TOKENS,
+                                         NODE_MAX_OUTPUT_TOKENS)
+    return sum(calls * NODE_MAX_OUTPUT_TOKENS.get(node, DEFAULT_MAX_OUTPUT_TOKENS)
+               for node, calls in CALLS_PER_NODE.items())
+
+
+# 17 卷抽取文本实测合计（2026-10-22 机算；生产同构抽取）
+TOTAL_CORPUS_CHARS = 186_134
+PROMPT_OVERHEAD_TOK = 3_000
+
+
+def worst_case_input_tokens(contracts: int = 17) -> int:
+    """输入界（冗余口径，非实际调用数）：合同字数 × 1 token/字冗余
+    × 20 调用冗余 × +3k prompt 开销。"""
+    calls_per = 20  # 冗余口径（预算 18+余量），与费用单文本一致
+    chars_per = TOTAL_CORPUS_CHARS / contracts
+    return int(contracts * calls_per * (chars_per + PROMPT_OVERHEAD_TOK))
+
+
+def worst_case_cost_cny(contracts: int = 17,
+                        valves_override: dict[str, int] | None = None) -> float:
+    """最坏情况总费用（输入+输出同一来源；运行时预检与测试共用）。
+
+    valves_override：模拟调大阀门用（测试「阀门变而上限未同步」必红场景）。
+    """
+    out_per = worst_case_output_tokens_per_contract()
+    if valves_override:
+        from app.services.llm_client import (DEFAULT_MAX_OUTPUT_TOKENS,
+                                             NODE_MAX_OUTPUT_TOKENS)
+        valves = {**NODE_MAX_OUTPUT_TOKENS, **valves_override}
+        out_per = sum(calls * valves.get(node, DEFAULT_MAX_OUTPUT_TOKENS)
+                      for node, calls in CALLS_PER_NODE.items())
+    return estimate_cost(worst_case_input_tokens(contracts),
+                         out_per * contracts)
+
+
+def preflight_cost_check(balance: float, contracts: int = 17) -> dict[str, float]:
+    """费用预检（运行时唯一入口，测试直测本函数=覆盖真实预检路径）。
+
+    两条拦截：①阀门漂移（硬上限<机算最坏）②余额不足。
+    """
+    worst_cost = worst_case_cost_cny(contracts)
+    if MAX_COST_CNY < worst_cost:
+        raise SystemExit(
+            f"FAIL: 硬上限 ¥{MAX_COST_CNY} < 机算最坏 ¥{worst_cost:.2f}"
+            f"——阀门/调用数已变，费用上限须走 PR 同步")
+    if balance < MAX_COST_CNY:
+        raise SystemExit(
+            f"FAIL: 余额 ¥{balance} < 最坏情况界 ¥{MAX_COST_CNY}"
+            f"——先充值 ≥ ¥{MAX_COST_CNY - balance:.2f} 再跑（费用上限单见记录）")
+    return {"worst_cost_cny": round(worst_cost, 2),
+            "hard_cap_cny": MAX_COST_CNY, "balance_cny": balance}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fixtures", default="fixtures-real")
@@ -170,6 +326,9 @@ def main() -> None:
                     help="只出靶向证据链与骨架（不跑 LLM 全集，供模板预览）")
     ap.add_argument("--server-host", default="root@59.110.13.13",
                     help="生产主机（ssh 可达），用于读容器镜像标签=部署版本")
+    # 费用硬上限=模块常量 MAX_COST_CNY（Codex P1：可改大的上限不是硬上限；
+    # 改动须走 PR 审计），不设 CLI 旗标
+    ap.add_argument("--auth-file", default=r"F:\合同审查Agent\.deploy-credentials.txt")
     args = ap.parse_args()
 
     repo_root = pathlib.Path.cwd()
@@ -211,17 +370,107 @@ def main() -> None:
         print(f"[靶向] {r['paper']} 「{r['term']}」: {r['autopsy_verdict']}"
               f" 位置={r.get('table_position') or r.get('paragraph_hits')}")
 
-    # ② LLM 全集跑批（委托既有跑道；成本需用户批准后执行）
+    # ② LLM 全集跑批（委托既有跑道；费用上限单见 record["cost_memo"]）
     if not args.skip_llm:
+        # 费用预检（Codex 要求：发请求前报数字+余额兜底核验）
+        cred = {}
+        for line in pathlib.Path(args.auth_file).read_text(encoding="utf-8").splitlines():
+            if "=" in line:
+                k, _, v = line.partition("=")
+                cred[k.strip()] = v.strip()
+        balance = deepseek_balance(cred["deepseek_key"])
+        record["cost_memo"] = {
+            "模型依据": "生产 env DEEPSEEK_MODEL=deepseek-v4-flash（用户确认）；"
+                        "官方注：旧名由 V4.1-Flash-1017 服务、按 Flash 价格计费",
+            "牌价依据": "官方中文页 Flash 列峰值：输入 ¥2/M（缓存未命中）、输出 ¥8/M"
+                        "（空闲半价；api-docs.deepseek.com/zh-cn/quick_start/pricing，"
+                        "2026-10-22 抓取原文）",
+            "最坏情况界": "¥46.2（逐节点公式 worst_case_output_tokens_per_contract()"
+                          "=270k/卷 ×17 卷 ×¥8=¥36.72；输入 4.74M×¥2=¥9.48——"
+                          "20 次为冗余非实际调用数）；非高峰时段跑输出费减半，"
+                          "实际输出远小于阀门时更低",
+            "硬上限人民币": MAX_COST_CNY,
+            "告警线人民币": ALERT_COST_CNY,
+            "超限方式": "跑前余额≥硬上限否则拒绝；跑中每 60s 按生产账本累计 usage"
+                        " 实时核算，≥告警线打印、≥硬上限终止子进程；末次结算必做，"
+                        "实际花费超界→记录标记「结论作废待人工复核」",
+            "deepseek_balance_cny": balance,
+        }
+        # 费用预检：唯一入口=preflight_cost_check（与测试共用同一函数——
+        # Codex P1：预检路径必须被测试覆盖，不许第二套手搓算法）
+        record["cost_preflight"] = preflight_cost_check(balance, len(roster))
+        print(f"[费用上限单] 硬上限(最坏情况界) ¥{MAX_COST_CNY} / 告警 ¥{ALERT_COST_CNY}"
+              f" / 余额 ¥{balance}（充足，无需充值）")
         names = ",".join(roster)
         run_out = str(pathlib.Path(args.out).parent / "final-replay-run.json")
+        ids_out = str(pathlib.Path(args.out).parent / "final-replay-review-ids.jsonl")
+        pathlib.Path(ids_out).unlink(missing_ok=True)  # 增量文件清零开跑
         cmd = [sys_exec(), "-X", "utf8", "tools/m65/run_eval.py",
                "--fixtures", str(fixtures), "--names", names,
-               "--out", run_out, "--base", args.base]
+               "--out", run_out, "--base", args.base,
+               # Codex 勘正：auth-file 必须透传子进程（否则子进程回退自己的
+               # 默认路径，操作者自定义的凭据文件被静默忽略）
+               "--auth-file", args.auth_file,
+               # Codex 勘正②：review_id 逐卷落盘——费用哨兵按本批 review_id
+               # 精确圈账，不把并发用户审查算进回测
+               "--review-ids-out", ids_out]
         if args.insecure:
             cmd.append("--insecure")
         print("全集跑批（约 40-60 分钟，DeepSeek 计费）：", " ".join(cmd[2:]))
-        subprocess.run(cmd, check=True)
+        proc = subprocess.Popen(cmd)
+        while proc.poll() is None:
+            time.sleep(60)
+            if proc.poll() is not None:
+                break
+            try:
+                i_tok, o_tok = spent_for_reviews(
+                    args.server_host, "agent-t",
+                    read_review_ids(pathlib.Path(ids_out)))
+                cost = estimate_cost(i_tok, o_tok)
+                print(f"[费用哨兵] 已用 入{i_tok}/出{o_tok} tokens ≈ ¥{cost:.2f}")
+                if cost >= MAX_COST_CNY:
+                    proc.kill()
+                    # Codex P1：上传接口返回后服务端 daemon 审查线程仍在跑——
+                    # kill 客户端不停账。排空在途审查（有界：每卷受 llm_budget
+                    # 18 调用+阀门双重限制）再结算，溢出部分如实记账。
+                    print("[费用哨兵] 达硬上限：客户端已终止，等待服务端在途审查排空…")
+                    prev = (i_tok, o_tok)
+                    settled_rounds, deadline = 0, time.time() + 600
+                    while time.time() < deadline and settled_rounds < 2:
+                        time.sleep(60)
+                        cur = spent_for_reviews(
+                            args.server_host, "agent-t",
+                            read_review_ids(pathlib.Path(ids_out)))
+                        growth = (cur[0] - prev[0]) + (cur[1] - prev[1])
+                        overshoot = max(estimate_cost(*cur) - MAX_COST_CNY, 0.0)
+                        print(f"[排空] 累计 ¥{estimate_cost(*cur):.2f}"
+                              f"（超限溢出 ¥{overshoot:.2f}）增量 {growth} tokens")
+                        settled_rounds = settled_rounds + 1 if growth == 0 else 0
+                        prev = cur
+                    raise SystemExit(
+                        f"FAIL: 费用 ¥{estimate_cost(*prev):.2f} ≥ 硬上限 "
+                        f"¥{MAX_COST_CNY}——已终止并排空在途审查，"
+                        f"溢出 ¥{overshoot:.2f} 已记账")
+                if cost >= ALERT_COST_CNY:
+                    print(f"[费用告警] ¥{cost:.2f} ≥ 告警线 ¥{ALERT_COST_CNY}")
+            except SystemExit:
+                raise
+            except Exception as exc:  # 哨兵自身故障不误杀跑批，打印继续
+                print("[费用哨兵] 查询失败（不终止）：", type(exc).__name__)
+        if proc.returncode != 0:
+            raise SystemExit(f"FAIL: run_eval 退出码 {proc.returncode}")
+        # 末次结算必做（Codex P1：最后一轮检查后的花费不流失）
+        i_fin, o_fin = spent_for_reviews(
+            args.server_host, "agent-t",
+            read_review_ids(pathlib.Path(ids_out)))
+        final_cost = estimate_cost(i_fin, o_fin)
+        record["final_settlement"] = {
+            "input_tokens": i_fin, "output_tokens": o_fin,
+            "cost_cny": round(final_cost, 2),
+            "verdict": ("在界内" if final_cost <= MAX_COST_CNY
+                        else "超界——本批结论作废，待人工复核"),
+        }
+        print(f"[末次结算] ¥{final_cost:.2f} → {record['final_settlement']['verdict']}")
         record["run_eval_output"] = run_out
     else:
         record["run_eval_output"] = None
