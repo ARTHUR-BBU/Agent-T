@@ -245,6 +245,36 @@ def worst_case_output_tokens_per_contract() -> int:
                for node, calls in CALLS_PER_NODE.items())
 
 
+# 17 卷抽取文本实测合计（2026-10-22 机算；生产同构抽取）
+TOTAL_CORPUS_CHARS = 186_134
+PROMPT_OVERHEAD_TOK = 3_000
+
+
+def worst_case_input_tokens(contracts: int = 17) -> int:
+    """输入界（冗余口径，非实际调用数）：合同字数 × 1 token/字冗余
+    × 20 调用冗余 × +3k prompt 开销。"""
+    calls_per = 20  # 冗余口径（预算 18+余量），与费用单文本一致
+    chars_per = TOTAL_CORPUS_CHARS / contracts
+    return int(contracts * calls_per * (chars_per + PROMPT_OVERHEAD_TOK))
+
+
+def worst_case_cost_cny(contracts: int = 17,
+                        valves_override: dict[str, int] | None = None) -> float:
+    """最坏情况总费用（输入+输出同一来源；运行时预检与测试共用）。
+
+    valves_override：模拟调大阀门用（测试「阀门变而上限未同步」必红场景）。
+    """
+    out_per = worst_case_output_tokens_per_contract()
+    if valves_override:
+        from app.services.llm_client import (DEFAULT_MAX_OUTPUT_TOKENS,
+                                             NODE_MAX_OUTPUT_TOKENS)
+        valves = {**NODE_MAX_OUTPUT_TOKENS, **valves_override}
+        out_per = sum(calls * valves.get(node, DEFAULT_MAX_OUTPUT_TOKENS)
+                      for node, calls in CALLS_PER_NODE.items())
+    return estimate_cost(worst_case_input_tokens(contracts),
+                         out_per * contracts)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fixtures", default="fixtures-real")
@@ -327,7 +357,8 @@ def main() -> None:
         }
         # 自检：硬上限必须 ≥ 机算最坏（阀门调大忘改上限=此处当场红）
         worst_out_total = worst_case_output_tokens_per_contract() * len(roster)
-        worst_cost = estimate_cost(worst_out_total, 0) + 4.74  # 输入界 ¥9.48 固定项
+        worst_cost = estimate_cost(worst_out_total,
+                                   worst_case_input_tokens(len(roster)))
         if MAX_COST_CNY < worst_cost:
             raise SystemExit(
                 f"FAIL: 硬上限 ¥{MAX_COST_CNY} < 机算最坏 ¥{worst_cost:.2f}"

@@ -12,6 +12,7 @@ from tools.m65.final_replay import (ARCHIVES, CALLS_PER_NODE,
                                     PRICE_IN_CNY_PER_M, PRICE_OUT_CNY_PER_M,
                                     check_revision, estimate_cost,
                                     load_roster,
+                                    worst_case_cost_cny,
                                     worst_case_output_tokens_per_contract)
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -87,8 +88,20 @@ def test_worst_case_output_matches_ruling() -> None:
     assert worst_case_output_tokens_per_contract() == 270_000
 
 
+def test_worst_case_total_is_46_20() -> None:
+    """总额固化断言：输入+输出同一函数来源，合计=¥46.20（费用单口径）。"""
+    assert worst_case_cost_cny() == pytest.approx(46.20, abs=0.01)
+
+
+def test_valve_bump_makes_preflight_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    """模拟调大一个阀门（model_review 13k→26k）→ 预检必须失败。"""
+    from app.services import llm_client
+
+    monkeypatch.setitem(llm_client.NODE_MAX_OUTPUT_TOKENS, "model_review", 26_000)
+    bumped = worst_case_cost_cny(valves_override={"model_review": 26_000})
+    assert bumped > MAX_COST_CNY, "阀门调大后最坏费用必须超出现有硬上限"
+
+
 def test_max_cost_covers_worst_case() -> None:
-    """阀门/调用数变化而费用上限未同步 → 此测试必红（漂移警报）。"""
-    worst_out = worst_case_output_tokens_per_contract() * 17
-    worst_cost = estimate_cost(worst_out, 0) + 9.48  # 输入界
-    assert MAX_COST_CNY >= worst_cost
+    """阀门/调用数变化而费用上限未同步 → 此测试必红（漂移警报）——共用同一函数。"""
+    assert MAX_COST_CNY >= worst_case_cost_cny()
