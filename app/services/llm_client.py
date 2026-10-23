@@ -91,7 +91,34 @@ def chat_completion(
                     request=resp.request,
                     response=resp,
                 )
-            data = resp.json()
+            # 畸形 200 响应同归 provider_error（GLM 审计+codex 裁定 2026-10-23）：
+            # HTTP 200 但 JSON 坏/缺 choices/结构错 = 请求可能已计费而账本无行，
+            # 费用哨兵与证据链的盲区——必须在抛出前落账。
+            try:
+                data = resp.json()
+            except ValueError as exc:
+                raise ValueError(f"invalid_json_response: {exc}") from exc
+            choices = data.get("choices") if isinstance(data, dict) else None
+            if (not choices or not isinstance(choices[0], dict)
+                    or not isinstance(choices[0].get("message"), dict)):
+                raise ValueError(
+                    f"malformed_success_response: choices={str(choices)[:120]}")
+            # codex P1 边界补全（2026-10-23，content=42 实锤）：后续会被读取的
+            # 字段全部在此限定正确类型——漏一个就是「解析层 AttributeError、
+            # 账本 0 行」的同款盲区
+            msg = choices[0]["message"]
+            content = msg.get("content")
+            if content is not None and not isinstance(content, str):
+                raise ValueError(
+                    f"malformed_success_response: content 非字符串（{type(content).__name__}）")
+            if fallback_reasoning:
+                rc = msg.get("reasoning_content")
+                if rc is not None and not isinstance(rc, str):
+                    raise ValueError(
+                        f"malformed_success_response: reasoning_content 非字符串（{type(rc).__name__}）")
+            usage = data.get("usage")
+            if usage is not None and not isinstance(usage, dict):
+                raise ValueError("malformed_success_response: usage 非对象")
     except httpx.TimeoutException as exc:
         _rec.latency_ms = int((time.monotonic() - _t0) * 1000)
         _rec.outcome = "timeout"
@@ -111,6 +138,14 @@ def chat_completion(
         _rec.error_detail = f"request_error: {type(exc).__name__}"
         llm_call_log.emit(_rec)
         raise exc
+    except ValueError as exc:
+        # 畸形 200 响应（坏 JSON/缺 choices/结构错）：落账后按原异常受控上抛
+        # （ValueError 与 httpx 异常族互斥，不存在双重落账）
+        _rec.latency_ms = int((time.monotonic() - _t0) * 1000)
+        _rec.outcome = "provider_error"
+        _rec.error_detail = str(exc)[:200]
+        llm_call_log.emit(_rec)
+        raise
     _rec.latency_ms = int((time.monotonic() - _t0) * 1000)
     usage = data.get("usage") or {}
     if usage:
