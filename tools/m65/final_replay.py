@@ -201,6 +201,21 @@ def deepseek_balance(api_key: str) -> float:
     raise SystemExit("FAIL: 余额接口无 CNY 条目")
 
 
+# 远端圈账脚本（argv: 库路径, 逗号分隔 review_id）——抽成常量供单测直跑
+# （Codex 勘正：SQL 按 review_id IN 精确过滤，隔壁桌的钱不算进来）
+SPENT_REMOTE_CODE = (
+    "import sqlite3,json,sys\n"
+    "con = sqlite3.connect(sys.argv[1])\n"
+    "ids = sys.argv[2].split(',')\n"
+    "marks = ','.join('?' for _ in ids)\n"
+    "rows = con.execute('SELECT usage FROM llm_calls WHERE review_id IN"
+    " (' + marks + ')', ids).fetchall()\n"
+    "ins = sum(json.loads(u[0]).get('input_tokens') or 0 for u in rows)\n"
+    "outs = sum(json.loads(u[0]).get('output_tokens') or 0 for u in rows)\n"
+    "print(json.dumps([ins, outs]))\n"
+)
+
+
 def spent_for_reviews(server_host: str, container: str,
                       review_ids: list[str]) -> tuple[int, int]:
     """按本批 review_id 精确圈账（Codex 勘正：时间戳口径会把并发用户审查
@@ -209,21 +224,11 @@ def spent_for_reviews(server_host: str, container: str,
     """
     if not review_ids:
         return 0, 0
-    remote_code = (
-        "import sqlite3,json,sys\n"
-        "con = sqlite3.connect('/tmp/agent-t-reviews.db')\n"
-        "ids = sys.argv[1].split(',')\n"
-        "marks = ','.join('?' for _ in ids)\n"
-        "rows = con.execute(f'SELECT usage FROM llm_calls WHERE review_id IN"
-        " ({marks})', ids).fetchall()\n"
-        "ins = sum(json.loads(u[0]).get('input_tokens') or 0 for u in rows)\n"
-        "outs = sum(json.loads(u[0]).get('output_tokens') or 0 for u in rows)\n"
-        "print(json.dumps([ins, outs]))\n"
-    )
     r = subprocess.run(
         ["ssh", server_host,
-         f"docker exec -i {container} python3 - {','.join(review_ids)}"],
-        input=remote_code, capture_output=True, text=True, check=True)
+         f"docker exec -i {container} python3 - /tmp/agent-t-reviews.db"
+         f" {','.join(review_ids)}"],
+        input=SPENT_REMOTE_CODE, capture_output=True, text=True, check=True)
     i, o = json.loads(r.stdout.strip().splitlines()[-1])
     return int(i), int(o)
 
