@@ -14,6 +14,20 @@ import httpx
 from app.services import llm_call_log
 
 
+# 按节点的输出上限（max_tokens，真水龙头——M6.5 收官回测费用闸要求）。
+# 依据=生产账本实测输出分布（2026-10-22：precheck max 1326 / model_review 6150 /
+# objection 4654 / quality 12156）× 约 2~2.5 倍余量；未列节点走 DEFAULT。
+# 超限=生成截断，下游按既有软降级路径处理（LLM 层输出不进规则结论）。
+NODE_MAX_OUTPUT_TOKENS: dict[str, int] = {
+    "precheck": 3000,
+    "model_review": 13000,
+    "quality": 25000,
+    "objection": 10000,
+    "ask": 8000,
+}
+DEFAULT_MAX_OUTPUT_TOKENS = 16000
+
+
 def chat_completion(
     *,
     api_key: str,
@@ -29,6 +43,7 @@ def chat_completion(
 
     fallback_reasoning：部分 GLM 推理模型会把文本短暂放在
     reasoning_content——content 为空时回退读取（智谱专用，行为保持）。
+    输出上限按节点强制（NODE_MAX_OUTPUT_TOKENS，费用闸真水龙头）。
     """
     # 宪法 P0-D1：transport 是全部 LLM 调用的单点，调用账本在此记录
     # （provider/model/latency/outcome/usage 天然可得；node/review_id 由
@@ -62,6 +77,9 @@ def chat_completion(
             {"role": "user", "content": user},
         ],
         "temperature": temperature,
+        # 按节点强制输出上限（费用闸：M6.5 收官回测 P1——出水量必须有阀门）
+        "max_tokens": NODE_MAX_OUTPUT_TOKENS.get(
+            llm_call_log.current_node() or "", DEFAULT_MAX_OUTPUT_TOKENS),
     }
     try:
         with httpx.Client(timeout=timeout) as client:
