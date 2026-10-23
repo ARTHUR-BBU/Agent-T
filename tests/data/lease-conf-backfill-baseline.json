@@ -1,0 +1,2783 @@
+{
+ "replay/lease_replay_01.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "replay/lease_replay_02.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "replay/lease_replay_03.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "replay/lease_replay_04.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "replay/lease_replay_05.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "replay/lease_replay_06.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "replay/lease_replay_07.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "replay/lease_replay_08.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "replay/lease_replay_09.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "replay/lease_replay_10.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "replay/lease_replay_11.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "replay/lease_replay_12.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "replay/lease_replay_13.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "replay/lease_replay_14.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "replay/lease_replay_15.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "replay/lease_replay_synthetic.txt": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/agri-produce-sale-samr-2025.docx": {
+  "category": "procurement",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subject_matter",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "term",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "breach",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "confidentiality",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "ip",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "unfair_terms",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/business-cooperation-nda-guangdong.docx": {
+  "category": "nda",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "confidentiality_scope",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "payment",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "agreement_term",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "confidentiality_duration",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "breach",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "unfair_terms",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "ip",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "termination",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/cement-sale-gf-2008.docx": {
+  "category": "procurement",
+  "items": [
+   {
+    "id": "subject",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subject_matter",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "payment",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "term",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "breach",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "confidentiality",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "ip",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "termination",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "unfair_terms",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "signature",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/construction-work-contract-2017.docx": {
+  "category": "procurement",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subject_matter",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "term",
+    "status": "未找到",
+    "blank_flag": true,
+    "category_na": false
+   },
+   {
+    "id": "breach",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "confidentiality",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "ip",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "unfair_terms",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/data-processing-service-2025.docx": {
+  "category": "procurement",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subject_matter",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "payment",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "term",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "breach",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "confidentiality",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "ip",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "unfair_terms",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/energy-hosting-service-2026.docx": {
+  "category": "procurement",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subject_matter",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "term",
+    "status": "未找到",
+    "blank_flag": true,
+    "category_na": false
+   },
+   {
+    "id": "breach",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "confidentiality",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "ip",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "unfair_terms",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/equipment-lease-construction-2000.docx": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/food-procurement-xinjiang-2025.docx": {
+  "category": "procurement",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subject_matter",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "term",
+    "status": "未找到",
+    "blank_flag": true,
+    "category_na": false
+   },
+   {
+    "id": "breach",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "confidentiality",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "ip",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "unfair_terms",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/gov-procurement-goods-mof-2024.docx": {
+  "category": "procurement",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subject_matter",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "term",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "breach",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "confidentiality",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "ip",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "unfair_terms",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "signature",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/house-lease-gf-2025-2614.docx": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/mandate-contract-samr-2025.docx": {
+  "category": "procurement",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subject_matter",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "term",
+    "status": "未找到",
+    "blank_flag": true,
+    "category_na": false
+   },
+   {
+    "id": "breach",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "confidentiality",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "ip",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "unfair_terms",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/raw-milk-purchase-2016.docx": {
+  "category": "procurement",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subject_matter",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "term",
+    "status": "未找到",
+    "blank_flag": true,
+    "category_na": false
+   },
+   {
+    "id": "breach",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "confidentiality",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "ip",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "termination",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "unfair_terms",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/school-uniform-procurement-guangzhou.docx": {
+  "category": "procurement",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subject_matter",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "term",
+    "status": "未找到",
+    "blank_flag": true,
+    "category_na": false
+   },
+   {
+    "id": "breach",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "confidentiality",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "ip",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "unfair_terms",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "signature",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/shanghai-residential-lease-2014.docx": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/trade-secret-nda-guangdong.docx": {
+  "category": "nda",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "confidentiality_scope",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "payment",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "agreement_term",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "confidentiality_duration",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "breach",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "unfair_terms",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "ip",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "termination",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/work-contract-gf-2000.docx": {
+  "category": "procurement",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subject_matter",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "payment",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "term",
+    "status": "未找到",
+    "blank_flag": true,
+    "category_na": false
+   },
+   {
+    "id": "breach",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "confidentiality",
+    "status": "未找到",
+    "blank_flag": true,
+    "category_na": false
+   },
+   {
+    "id": "ip",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "termination",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "unfair_terms",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "signature",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ },
+ "real/zhejiang-vehicle-lease-2024.docx": {
+  "category": "lease",
+  "items": [
+   {
+    "id": "subject",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lessor_title",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "lease_term",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "delivery_acceptance",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "use_restriction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "rent_payment",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "deposit",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "early_termination",
+    "status": "需关注",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "renovation",
+    "status": "未找到",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "maintenance",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "subletting",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "jurisdiction",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   },
+   {
+    "id": "governing_law",
+    "status": "本类不适用",
+    "blank_flag": false,
+    "category_na": true
+   },
+   {
+    "id": "signature",
+    "status": "通过",
+    "blank_flag": false,
+    "category_na": false
+   }
+  ]
+ }
+}

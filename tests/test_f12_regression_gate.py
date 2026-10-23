@@ -119,10 +119,12 @@ def test_snapshot_source_is_pinned() -> None:
 
 def test_authorized_flips_was_matches_snapshot_and_differs() -> None:
     """白名单每条的 was 必须等于施工前快照状态且 was != now（外审二轮勘正：
-    gov 在快照中已是未找到，无 P2 翻转——把不存在的改账写进白名单=账目错误）。"""
+    gov 在快照中已是未找到，无 P2 翻转——把不存在的改账写进白名单=账目错误）。
+    was=None 是合法形态=新增判定（快照无此项，如租赁保密回填的
+    confidentiality——新增不是改账，但同样必须逐条登记验尸）。"""
     snap = reg._load_snapshot()
     for fname, item_id, was, now in reg.AUTHORIZED_FLIPS:
-        snap_status = snap["contracts"][fname]["status_map"][item_id]
+        snap_status = snap["contracts"][fname]["status_map"].get(item_id)
         assert snap_status == was, f"{fname} {item_id} 快照={snap_status} ≠ 白名单 was={was}"
         assert was != now, f"{fname} {item_id} 白名单 was==now（不是翻转）"
 

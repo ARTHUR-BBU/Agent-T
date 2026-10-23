@@ -59,6 +59,18 @@ AUTHORIZED_FLIPS = frozenset({
     ("energy-hosting-service-2026.docx", "subject_matter", "未找到", "通过"),
     ("raw-milk-purchase-2016.docx", "subject_matter", "未找到", "通过"),
     ("work-contract-gf-2000.docx", "subject_matter", "未找到", "通过"),
+    # 租赁保密四态回填（老钱裁定残-1 + 设计稿 v0.1，PR #140）：租赁 checklist
+    # 新增第 15 项 confidentiality，快照（d575a10）无此项 → was=None 的新增判定
+    # 四条。逐字验尸：house-lease=GF-2025-2614 官方范本第十二条（义务句完整，
+    # 与回放卷 1 同款）；zhejiang-vehicle=甲乙双向「对所知悉的对方信息承担
+    # 保密义务」（实质义务，非洗白）；equipment-lease（GF-2000）与
+    # shanghai-residential（2014）=signal_gate 词族零命中→本类不适用（防封顶
+    # 冤案特化）。既有 14 项零翻转另由 tests/test_lease_confidentiality_backfill
+    # 冻结基线（33 份 436 行）锁定。
+    ("house-lease-gf-2025-2614.docx", "confidentiality", None, "通过"),
+    ("zhejiang-vehicle-lease-2024.docx", "confidentiality", None, "通过"),
+    ("equipment-lease-construction-2000.docx", "confidentiality", None, "本类不适用"),
+    ("shanghai-residential-lease-2014.docx", "confidentiality", None, "本类不适用"),
 })
 
 
