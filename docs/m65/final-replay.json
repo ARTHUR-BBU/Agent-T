@@ -1,0 +1,107 @@
+{
+ "purpose": "M6.5 收官回测（残-2 表格专项闭环 + 残-3 老体例评估，两份结论分开）",
+ "started_at": "2026-10-23 23:22",
+ "freeze_note": "单批锁单一 git 哈希（裁定残-3 执行条件 1）",
+ "roster_source_hashes": {
+  "docs/m65/run1.json": "7266ab04631bc1c7",
+  "docs/m65/run2.json": "354399ac9cf7334a"
+ },
+ "roster": [
+  "agri-produce-sale-samr-2025.docx",
+  "business-cooperation-nda-guangdong.docx",
+  "cement-sale-gf-2008.docx",
+  "construction-work-contract-2017.docx",
+  "data-processing-service-2025.docx",
+  "energy-hosting-service-2026.docx",
+  "equipment-lease-construction-2000.docx",
+  "food-procurement-xinjiang-2025.docx",
+  "gov-procurement-goods-mof-2024.docx",
+  "house-lease-gf-2025-2614.docx",
+  "mandate-contract-samr-2025.docx",
+  "raw-milk-purchase-2016.docx",
+  "school-uniform-procurement-guangzhou.docx",
+  "shanghai-residential-lease-2014.docx",
+  "trade-secret-nda-guangdong.docx",
+  "work-contract-gf-2000.docx",
+  "zhejiang-vehicle-lease-2024.docx"
+ ],
+ "caller_head": "86ff3987e2338a2bf7aa880d52a1259639cce524",
+ "server_revision": "86ff398",
+ "revision_verdict": "一致",
+ "evidence_chain": [
+  {
+   "paper": "food-procurement-xinjiang-2025.docx",
+   "term": "材料名称",
+   "expected_loc": "table",
+   "why": "v2.1 第 6 条金标证物：标的信号仅存在于表格文本",
+   "autopsy_verdict": "表格内实锤",
+   "engine": null,
+   "in_extracted_text": true,
+   "context": "投标有关承诺的范围及内容。⏎附件⏎学校大宗食材原（辅）料技术及质量要求表⏎序号\t材料名称\t技术及质量要求⏎1\t大米（籼米、粳米、糯米等）\t国标一级，质量达到GB/T 1354-2018标准，拥有SC食",
+   "table_position": [
+    1,
+    1,
+    2
+   ]
+  },
+  {
+   "paper": "work-contract-gf-2000.docx",
+   "term": "承揽项目",
+   "expected_loc": "paragraph",
+   "why": "A1 验尸 P06/P13 正文段（不在表格——证据链按段落位置记录）",
+   "autopsy_verdict": "正文实锤（2 处：行 7/16）",
+   "engine": null,
+   "in_extracted_text": true,
+   "context": "点：⏎承揽人：\t签订时间：\t年        月        日⏎第一条   承揽项目、数量、报酬及交付期限⏎项目名称及内容\t计量单位\t数量\t工作量⏎（工时）\t报酬\t报酬\t交付期限⏎项目名称及内容\t",
+   "numbering_basis": "抽取文本非空行号（1 基）",
+   "a1_autopsy_note": "A1 验尸记 P06/P13，编号基准与现行抽取层不同；以原文内容比对为准",
+   "paragraph_hits": [
+    {
+     "line": 7,
+     "text": "第一条   承揽项目、数量、报酬及交付期限"
+    },
+    {
+     "line": 16,
+     "text": "第六条\t定作人（是 / 否）允许承揽项目中的主要工作人员由第三人来完成。可以交由第三人完成的工作是："
+    }
+   ]
+  }
+ ],
+ "cost_memo": {
+  "模型依据": "生产 env DEEPSEEK_MODEL=deepseek-v4-flash（用户确认）；官方注：旧名由 V4.1-Flash-1017 服务、按 Flash 价格计费",
+  "牌价依据": "官方中文页 Flash 列峰值：输入 ¥2/M（缓存未命中）、输出 ¥8/M（空闲半价；api-docs.deepseek.com/zh-cn/quick_start/pricing，2026-10-22 抓取原文）",
+  "最坏情况界": "¥46.2（逐节点公式 worst_case_output_tokens_per_contract()=270k/卷 ×17 卷 ×¥8=¥36.72；输入 4.74M×¥2=¥9.48——20 次为冗余非实际调用数）；非高峰时段跑输出费减半，实际输出远小于阀门时更低",
+  "硬上限人民币": 47.0,
+  "告警线人民币": 23.5,
+  "超限方式": "跑前余额≥硬上限否则拒绝；跑中每 60s 按生产账本累计 usage 实时核算，≥告警线打印、≥硬上限终止子进程；末次结算必做，实际花费超界→记录标记「结论作废待人工复核」",
+  "deepseek_balance_cny": 52.48
+ },
+ "cost_preflight": {
+  "worst_cost_cny": 46.21,
+  "hard_cap_cny": 47.0,
+  "balance_cny": 52.48
+ },
+ "final_settlement": {
+  "input_tokens": 421533,
+  "output_tokens": 597672,
+  "cost_cny": 5.62,
+  "verdict": "在界内"
+ },
+ "run_eval_output": "docs\\m65\\final-replay-run.json",
+ "conclusion_1_table_closure": {
+  "判据": "残-2：food 表格路径命中+work 正文位置命中，证据链齐备",
+  "结果": "靶向双命中——food subject_matter=通过，引句正中表格（「学校大宗食材原（辅）料技术及质量要求表 序号 材料名称…」，表格位置 (1,1,2)）；work subject_matter=通过，引句正中正文（「第一条 承揽项目、数量、报酬及交付期限 项目名称及内容…」，抽取层行 7，与 A1 验尸 P06/P13 内容吻合）。靶向证据链 2/2 实锤（autopsy_verdict 均为实锤、in_extracted_text 均 true）",
+  "裁决第6条金标": "food 标的、work 承揽项目均命中 → 满足闭环条件",
+  "结论": "残-2 表格专项闭环条件达成（正式签认待法务老钱）"
+ },
+ "conclusion_2_legacy_eval": {
+  "判据": "v2.1 第 7 条：体例特异性漏报集中 且 claim_id 率<0.3（只计体例特异，通用词表缺口归 A3 不计）",
+  "结果": "17 卷 claim_id 率 0.08~0.93；唯一低于 0.3 线=cement-sale-gf-2008（0.08）；其余老体例卷 work-gf-2000=0.33、raw-milk-2016=0.50、equipment-lease-2000=0.60",
+  "cement_sale_形态": "纯表格示范文本：10/12 项未找到+证据核验 missing 11/ambiguous 1+claim_id 率 0.08；抽取文本=重复表头+空单元格碎片（「签订地点：计量单位：」×19 连排），条款实体全困在嵌套表格结构里",
+  "漏报对照表_初分类": {
+   "体例特异（表格抽取碎片化致整卷失明）": "cement-sale-gf-2008：subject/subject_matter/payment/term/breach/confidentiality/ip/termination/unfair_terms/signature 十项未找到+governing_law 需关注——同源于抽取层，非词表缺词",
+   "通用词表缺口（归 A3，不计入）": "其余 16 卷的零散未找到项（本轮 run.json 逐卷可查，未见第二卷出现集中漏报形态）"
+  },
+  "结论": "cement-sale-gf-2008 触发裁决第 7 条缓修提示（claim_id 率 0.08<0.3 且漏报集中、同源体例）；两列分记的正式定性待法务老钱裁定——若认体例特异，处理方向=单项体例降级提示（缓修，非施工批）"
+ }
+}
