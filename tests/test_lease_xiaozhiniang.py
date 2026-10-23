@@ -36,7 +36,7 @@ client = TestClient(app)
 D_SEGMENT_ITEMS = ("early_termination", "deposit", "renovation")
 # 老钱裁决一（2026-09-07）：governing_law 租赁品类转 na（纯境内租赁无选法空间）
 TIGHTENED_MISSING = ("lessor_title", "lease_term", "signature")
-NA_ITEMS = ("governing_law",)
+NA_ITEMS = ("governing_law", "confidentiality")
 
 
 # ---------- 内联 fixtures ----------
@@ -404,11 +404,13 @@ def test_lease_scorecard_d_weight_20_and_no_na_segment():
 
 def test_lease_all_items_mapped_to_segments():
     """老钱 L-1：每个 item 必须落到已定义分段（load 时已 fail-fast，这里再钉一层语义）。
-    governing_law 自老钱裁决一（2026-09-07）起为品类内 NA 项，其余仍全段适用。"""
+    governing_law 自老钱裁决一（2026-09-07）起为品类内 NA 项；confidentiality 自
+    保密四态回填（裁定残-1，2026-10-22）起无 signal_gate 命中即 NA，其余仍全段适用。"""
     cfg_items = run_checklist(LEASE_BORING, "lease")["items"]
     valid = {"A", "B", "C", "D", "E", "F", "G"}
-    assert len(cfg_items) == 14
+    assert len(cfg_items) == 15
     for it in cfg_items:
         assert it["segment"] in valid, f"{it['id']} 的 segment {it['segment']!r} 不在七段内"
     na_ids = {it["id"] for it in cfg_items if it["category_na"]}
-    assert na_ids == {"governing_law"}, f"租赁 NA 项应恰好是 governing_law，实际 {na_ids}"
+    assert na_ids == {"governing_law", "confidentiality"}, \
+        f"租赁 NA 项应为 governing_law+confidentiality（无保密栏），实际 {na_ids}"

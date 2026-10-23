@@ -385,6 +385,38 @@ def _validate_matchers(path: Path, cfg: dict[str, Any]) -> None:
             "配置错误（fail-closed）：匹配器/hit_alternatives 三元组结构非法\n" + "\n".join(bad))
 
 
+def _signal_gate_problems(category: str, item_id: str, gate: Any) -> list[str]:
+    """signal_gate 配置校验（租赁保密回填特化二，Codex P1 fail-closed 方向）：
+
+    未配置 signal_gate 的既有 item 保持原行为不变（代码路径天然隔离）；
+    **已配置但词族为空、格式非法或正则无法编译的，load/启动/CI 必报错**——
+    靠信号门防封顶冤案的检查项，配置坏了还静默放行 = 门失效。"""
+    where = f"{category}/{item_id} signal_gate"
+    if not isinstance(gate, dict):
+        return [f"{where} 必须为 patterns/na_note 结构，实际 {type(gate).__name__}"]
+    patterns = gate.get("patterns")
+    if not isinstance(patterns, list) or not patterns:
+        return [f"{where}.patterns 必须为非空词族列表"]
+    out: list[str] = []
+    for k, pat in enumerate(patterns):
+        if not isinstance(pat, str) or not pat:
+            out.append(f"{where}.patterns[{k}] 必须为非空字符串")
+            continue
+        try:
+            re.compile(pat, flags=re.IGNORECASE | re.DOTALL)
+        except re.error as exc:
+            out.append(f"{where}.patterns[{k}] 非法正则 {pat!r}: {exc}")
+    if "na_note" in gate and not isinstance(gate["na_note"], str):
+        out.append(f"{where}.na_note 必须为字符串")
+    return out
+
+
+def _signal_present(text: str, gate: dict[str, Any]) -> bool:
+    """signal_gate 词族任一命中即有信号（词族非空+可编译已由 load 期校验
+    保证，此处不再兜底吞错——坏配置到达运行期即抛，绝不静默判 na）。"""
+    return any(_match(text, pat) for pat in gate.get("patterns") or [])
+
+
 def _validate_segment_mapping(cfg: dict[str, Any], category: str) -> None:
     """配置校验（遗留项⑤ + 老钱 L-1 加严 + 小智娘 P2-2）：声明了 scorecard 块时——
 
@@ -468,6 +500,8 @@ def _validate_category_config(category: str, cfg: dict[str, Any]) -> None:
         if iid in seen_ids:
             problems.append(f"{category}: item id 重复 {iid}")
         seen_ids.add(iid)
+        if "signal_gate" in item:
+            problems.extend(_signal_gate_problems(category, iid, item["signal_gate"]))
         for phase in ("need_attention", "pass"):
             for rule in (item.get("rules") or {}).get(phase) or []:
                 problems.extend(_regex_problems(category, iid, rule))
@@ -560,6 +594,21 @@ def _eval_item(text: str, item: dict[str, Any]) -> dict[str, Any]:
             **base,
             "status": STATUS_NA,
             "note": item.get("na_reason", "本类不适用"),
+            "category_na": True,
+        }
+
+    # signal_gate（租赁保密回填特化二，设计稿 v0.1 §1.2）：item 级信号门——
+    # 词族全文零命中 → 直接判「本类不适用」（防封顶冤案：压根没有保密栏目
+    # 的合同不该被「未找到」扣分）；有命中 → 走正常四态判定。引擎通用支持
+    # （YAML 声明词族，无品类专用分支，将来其他 item 可复用）；未配置
+    # signal_gate 的既有 item 完全不进此路径（原行为不变——fail-closed 方向
+    # 由 load/启动校验保证：已配置但词族坏 = 加载即报错，不静默放行）。
+    gate = item.get("signal_gate")
+    if isinstance(gate, dict) and not _signal_present(text, gate):
+        return {
+            **base,
+            "status": STATUS_NA,
+            "note": str(gate.get("na_note") or "本类不适用"),
             "category_na": True,
         }
 
