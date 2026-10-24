@@ -60,6 +60,24 @@ def test_cross_object_margin_then_deposit_not_matched() -> None:
     assert "没收履约保证金" not in evidence, "命中原文不得来自跨宾语匹配"
 
 
+def test_cross_action_goods_then_deposit_not_matched() -> None:
+    """⑧ 跨动作反例（codex 复核 2026-10-25 二轮）：「没收货物并退还定金」——
+    定金是被退还的对象，不是被没收的对象；gap 内出现第二个动作动词（退还）
+    即重定向宾语读法，不得命中。同 P1 根因的第二形态，黑名单不可穷举，
+    边界=动作与宾语关系。"""
+    it = _unfair("乙方违约的，甲方没收货物并退还定金。")
+    assert it["status"] != "需关注", "没收对象是货物，定金是被退还对象，不得命中"
+    evidence = "".join(it.get("hits") or []) + (it.get("quote") or "")
+    assert "没收货物" not in evidence, "命中原文不得来自跨动作匹配"
+
+
+def test_paid_modifier_still_matches() -> None:
+    """合法修饰回归：「没收乙方已支付的定金」——支付+的=分词修饰，gap 合法，
+    直接宾语仍是定金，必须命中（防 tempered 条件误杀真实罚则）。"""
+    it = _unfair("乙方违约的，甲方有权没收乙方已支付的定金。")
+    assert it["status"] == "需关注", "已支付的定金被没收=真单方罚则，不得误杀"
+
+
 def test_inverted_solo_confiscation_flagged_with_hit() -> None:
     """⑥ 正例判别性锁：单方倒序没收独立成文 → 需关注且 hits 含「定金」。
 
