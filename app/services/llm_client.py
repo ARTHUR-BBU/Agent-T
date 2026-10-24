@@ -24,6 +24,12 @@ NODE_MAX_OUTPUT_TOKENS: dict[str, int] = {
     "quality": 25000,
     "objection": 10000,
     "ask": 8000,
+    # M7 前清登记（B7-0，2026-10-24，docs/spec-b7-0-prework.md）：新节点
+    # 尚无生产数据，取保守值显式登记（纳入防调大锁定）；实跑后按生产账本
+    # 实测×2~2.5 校准（#137 同法）。M7 实跑费用上限单在 B7-1 开工前出
+    # （#138 同款流程）。
+    "revision": 16000,
+    "impact": 8000,
 }
 DEFAULT_MAX_OUTPUT_TOKENS = 16000
 
