@@ -85,7 +85,10 @@
   "input_tokens": 421533,
   "output_tokens": 597672,
   "cost_cny": 5.62,
-  "verdict": "在界内"
+  "cost_basis": "账本峰值保守估算（输入 ¥2/M+输出 ¥8/M；空闲半价口径同批=¥2.81）",
+  "actual_deduction_cny": 2.68,
+  "actual_evidence": "DeepSeek 余额差实测：跑批前预检 ¥52.48 → 跑批后 ¥49.80（API 只读查询，键不入库）；¥2.68≈空闲估算 ¥2.81，差额方向符合缓存命中输入价更低的牌价结构",
+  "verdict": "在界内（峰值保守估算 ¥5.62 < 硬上限 ¥47；实际扣费更低）"
  },
  "run_eval_output": "docs\\m65\\final-replay-run.json",
  "conclusion_1_table_closure": {
@@ -96,12 +99,16 @@
  },
  "conclusion_2_legacy_eval": {
   "判据": "v2.1 第 7 条：体例特异性漏报集中 且 claim_id 率<0.3（只计体例特异，通用词表缺口归 A3 不计）",
-  "结果": "17 卷 claim_id 率 0.08~0.93；唯一低于 0.3 线=cement-sale-gf-2008（0.08）；其余老体例卷 work-gf-2000=0.33、raw-milk-2016=0.50、equipment-lease-2000=0.60",
-  "cement_sale_形态": "纯表格示范文本：10/12 项未找到+证据核验 missing 11/ambiguous 1+claim_id 率 0.08；抽取文本=重复表头+空单元格碎片（「签订地点：计量单位：」×19 连排），条款实体全困在嵌套表格结构里",
-  "漏报对照表_初分类": {
-   "体例特异（表格抽取碎片化致整卷失明）": "cement-sale-gf-2008：subject/subject_matter/payment/term/breach/confidentiality/ip/termination/unfair_terms/signature 十项未找到+governing_law 需关注——同源于抽取层，非词表缺词",
-   "通用词表缺口（归 A3，不计入）": "其余 16 卷的零散未找到项（本轮 run.json 逐卷可查，未见第二卷出现集中漏报形态）"
+  "结果": "17 卷 claim_id 率 0.08~0.93；唯一低于 0.3 线=cement-sale-gf-2008（0.08）",
+  "cement_sale_逐字段验尸（codex 勘正 2026-10-24：空白模板不算漏报）": {
+   "payment": "「3．结算方式：」冒号后空白——原文无内容，非漏报",
+   "breach": "「9．违约责任：」空白——非漏报",
+   "term": "交（提）货时间、数量列全空——非漏报",
+   "subject/subject_matter/signature": "买受人/出卖人/项目名称/签字盖章栏字段名在场、值全空——非漏报",
+   "confidentiality/ip/termination/unfair_terms": "原文零命中（解除/终止/知识产权/专利/著作权/保密/显失公平/免责/无效 全部 0 次）——正确未找到",
+   "反向对照": "唯一有实质内容的注 10（争议解决 boilerplate）被正确判通过（jurisdiction=通过）；注 1《合同法》执行/注 8 担保无对应检查项"
   },
-  "结论": "cement-sale-gf-2008 触发裁决第 7 条缓修提示（claim_id 率 0.08<0.3 且漏报集中、同源体例）；两列分记的正式定性待法务老钱裁定——若认体例特异，处理方向=单项体例降级提示（缓修，非施工批）"
+  "真漏报": "0——10 项未找到全部对应空白模板栏位或原文本就不存在的域（A1 验尸结论一致）",
+  "结论": "撤回「触发缓修提示」：零真漏报，不满足裁决第 7 条前提；降级为**观察记录**——cement-sale 表格体例导致 claim_id 率 0.08（证据锚定在该体例下失效）+抽取文本碎片化（重复表头），该体例形态仅此一卷，留观不立项"
  }
 }
