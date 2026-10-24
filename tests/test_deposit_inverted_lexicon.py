@@ -48,6 +48,18 @@ def test_sentence_boundary_blocks_cross_clause() -> None:
     assert it["status"] != "需关注", "跨句后「没收」宾语非定金，句界阻断不得命中"
 
 
+def test_cross_object_margin_then_deposit_not_matched() -> None:
+    """⑦ 跨宾语反例（codex 复核 2026-10-25 复现）：没收的对象是履约保证金，
+    「并退还定金」的中性退还不得被倒序窗跨过真宾语凑成「没收…定金」。
+
+    判别性：断言不命中之外，还核对命中原文——不得出现「没收履约保证金」
+    类跨宾语证据（只看最终档位不够，证据必须干净）。"""
+    it = _unfair("乙方违约的，甲方有权没收履约保证金并退还定金，定金不计利息。")
+    assert it["status"] != "需关注", "没收对象是保证金，倒序窗不得跨宾语命中定金"
+    evidence = "".join(it.get("hits") or []) + (it.get("quote") or "")
+    assert "没收履约保证金" not in evidence, "命中原文不得来自跨宾语匹配"
+
+
 def test_inverted_solo_confiscation_flagged_with_hit() -> None:
     """⑥ 正例判别性锁：单方倒序没收独立成文 → 需关注且 hits 含「定金」。
 
