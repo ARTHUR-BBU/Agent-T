@@ -10,8 +10,13 @@
 
 ## 二、部件（每件带验收断言）
 
-1. **交互预算闸**：`LLM_REVISION_BUDGET_PER_REVIEW`/`LLM_IMPACT_BUDGET_PER_REVIEW`
-   复用 ReviewBudget+emit_skip（默认 4/3，费用上限单 §二）；拒绝=零网络请求+落账。
+1. **交互预算闸（额度跟审查单走，codex 复核 2026-10-24 划定）**：
+   `LLM_REVISION_BUDGET_PER_REVIEW`/`LLM_IMPACT_BUDGET_PER_REVIEW` 默认 4/3
+   （费用上限单 §二）；计数**按 review_id 持久累计**（存于审查单生命周期，
+   跨请求共用同一张券，每次点击不重领）；拒绝=零网络请求+emit_skip 落账。
+   **验收断言**：①跨请求累计——同一审查单分多次独立点击共消耗 N 次，第
+   默认额度+1 次必拒；②并发点击原子扣减——同审查单并发 N 次至多消耗
+   min(N, 剩余额度)，不超发。
 2. **revision 调用**：单次调用产三版+适用说明；Pydantic Schema 校验；
    **三版或必填字段不完整→整项降级**（不展示残缺方案，降级落账）。
 3. **红线 1 落地**：生成物固定声明（非法律意见）+禁语过滤器（第一道）+
