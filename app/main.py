@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router
+from app.api.routes_revision import router as revision_router
 from app.auth import BasicAuthMiddleware, validate_auth_config
 from app.services.checklist import validate_checklist_configs
 from app.services.config_validate import validate_llm_runtime_config
@@ -100,6 +101,7 @@ class BodySizeLimitMiddleware:
 app = FastAPI(title="合同审查 Agent", version="0.1.0")
 app.add_middleware(BodySizeLimitMiddleware)
 app.include_router(router)
+app.include_router(revision_router)
 
 # 公网部署时配 BASIC_AUTH_USERNAME/PASSWORD 启用整站 Basic Auth（/health 除外）
 app.add_middleware(BasicAuthMiddleware)
