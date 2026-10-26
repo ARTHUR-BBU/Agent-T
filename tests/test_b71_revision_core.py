@@ -297,29 +297,64 @@ def test_missing_note_degrades(env_store):
     _degraded(env_store, bad, "incomplete")
 
 
-# ---------- P1-2：审查单过期删除后，草稿/预算随之清理 ----------
+# ---------- P1-2：三条真实删除路径都带 assoc 清理（禁手动补调） ----------
 
-def test_expired_review_purges_drafts_and_budget(env_store):
+def _expire(store, rid) -> None:
     import time as _time
-    store, rid = env_store
-    revision.generate_revision(store, rid, "unfair_terms", llm_call=_ok_call())
-    assert revision.latest_draft(rid, "unfair_terms") is not None
-    # 人为把审查单改为过期，再走一次 store.get 触发既有过期删除
     con = sqlite3.connect(str(store._path))
     con.execute("UPDATE reviews SET created_at = ? WHERE id = ?",
                 (_time.time() - 10**9, rid))
     con.commit()
     con.close()
-    store.get(rid)  # 过期删除路径
-    assert store.get(rid) is None
-    revision.purge_orphans()
-    assert revision.latest_draft(rid, "unfair_terms") is None, \
-        "草稿（含合同原文）不得脱离审查单保留期限"
+
+
+def _leftover(store, rid) -> tuple[int, int]:
     con = sqlite3.connect(str(store._path))
-    row = con.execute("SELECT COUNT(*) FROM revision_budget WHERE review_id=?",
-                      (rid,)).fetchone()
+    d = con.execute("SELECT COUNT(*) FROM revision_drafts WHERE review_id=?",
+                    (rid,)).fetchone()[0]
+    b = con.execute("SELECT COUNT(*) FROM revision_budget WHERE review_id=?",
+                    (rid,)).fetchone()[0]
     con.close()
-    assert row == (0,), "过期审查单的预算行一并清理"
+    return d, b
+
+
+def test_get_path_purges_assoc(env_store):
+    """get 过期删除路径：删除后直查库——草稿/预算必须已随之清理
+    （禁手动补调清理函数，钩子必须接在真实删除点）。"""
+    store, rid = env_store
+    revision.generate_revision(store, rid, "unfair_terms", llm_call=_ok_call())
+    _expire(store, rid)
+    assert store.get(rid) is None  # 真实 get 路径（内含钩子）
+    assert _leftover(store, rid) == (0, 0), "get 路径删除后草稿/预算仍残留"
+    assert revision.latest_draft(rid, "unfair_terms") is None
+
+
+def test_update_path_purges_assoc(env_store):
+    """update 过期删除路径：同样必须带走关联数据。"""
+    store, rid = env_store
+    revision.generate_revision(store, rid, "unfair_terms", llm_call=_ok_call())
+    _expire(store, rid)
+    assert store.update(rid, foo="bar") is None  # 真实 update 路径（内含钩子）
+    assert _leftover(store, rid) == (0, 0), "update 路径删除后草稿/预算仍残留"
+
+
+def test_create_sweep_path_purges_assoc(env_store):
+    """create 扫除路径（_purge_expired）：新上传触发的批量清扫必须带走
+    已过期审查单的关联数据。"""
+    store, rid = env_store
+    revision.generate_revision(store, rid, "unfair_terms", llm_call=_ok_call())
+    _expire(store, rid)
+    store.create(filename="new.docx", category="procurement")  # 真实 create 扫除
+    assert _leftover(store, rid) == (0, 0), "create 扫除后草稿/预算仍残留"
+
+
+def test_latest_draft_self_checks_expiry(env_store):
+    """读取草稿自核过期（审查单已过期但尚未被任何路径清扫时也不可读）。"""
+    store, rid = env_store
+    revision.generate_revision(store, rid, "unfair_terms", llm_call=_ok_call())
+    _expire(store, rid)  # 不触发任何 store 删除路径
+    assert revision.latest_draft(rid, "unfair_terms") is None, \
+        "过期审查单的草稿在清扫前也不得读取（读取时核验过期）"
 
 
 # ---------- P2-4：业务终态结算 + 证据坐标 ----------

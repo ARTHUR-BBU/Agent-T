@@ -21,11 +21,12 @@ import os
 import re
 import sqlite3
 import tempfile
+import time
 import uuid
 from typing import Any, Callable, Optional
 
 from app.prompts import revision_prompts
-from app.services import llm_ask, llm_call_log, llm_client
+from app.services import llm_ask, llm_call_log, llm_client, store as store_module
 
 logger = logging.getLogger(__name__)
 
@@ -129,11 +130,24 @@ def remaining_budget(review_id: str, kind: str, limit: int) -> int:
     return max(0, limit - used)
 
 
+def _purge_hook(conn: sqlite3.Connection, expired_ids: list[str]) -> None:
+    """store 过期删除钩子（codex P1-2 复批：清理必须接在实际删除路径上）——
+    同连接同事务，审查单删则草稿/预算删，不靠业务侧懒触发。"""
+    marks = ",".join("?" for _ in expired_ids)
+    conn.execute(
+        f"DELETE FROM revision_drafts WHERE review_id IN ({marks})", expired_ids)
+    conn.execute(
+        f"DELETE FROM revision_budget WHERE review_id IN ({marks})", expired_ids)
+
+
+# import 时挂载（store 不反向依赖 revision，无循环导入；
+# main → routes_revision → revision 链保证应用启动即注册）
+store_module.PURGE_HOOKS.append(_purge_hook)
+
+
 def purge_orphans() -> None:
-    """草稿/预算随审查单生命周期走（codex P1-2）：接入既有过期清理路径——
-    reviews 表是生命周期权威（store.get/update 过期删除、create 扫除），
-    本函数清掉 review 已不存在的草稿与预算行，不另造保留策略。
-    懒触发（generate_revision/latest_draft 入口），不引入后台任务。"""
+    """兜底清扫（钩子之外的第二道）：清掉 review 已不存在的草稿与预算行。
+    主清理走 store 钩子（同连接同事务）；本函数只兜历史遗留孤儿。"""
     with _connect() as conn:
         try:
             conn.execute(
@@ -150,14 +164,22 @@ def purge_orphans() -> None:
 
 
 def latest_draft(review_id: str, item_id: str) -> Optional[dict[str, Any]]:
-    purge_orphans()  # 过期审查单的草稿不可再读（随单生命周期）
+    """读最新草稿；自核审查单是否已过期/删除（codex 复批：读取时核验）——
+    JOIN reviews 并要求未过 TTL（TTL=0=永不过期时不加时限）。"""
+    ttl = store_module._TTL_SECONDS
+    cutoff = time.time() - ttl if ttl > 0 else None
+    sql = (
+        "SELECT d.payload, d.status, d.trace_id, d.created_at "
+        "FROM revision_drafts d JOIN reviews r ON r.id = d.review_id "
+        "WHERE d.review_id = ? AND d.item_id = ? "
+    )
+    params: list[Any] = [review_id, item_id]
+    if cutoff is not None:
+        sql += "AND r.created_at >= ? "
+        params.append(cutoff)
+    sql += "ORDER BY d.created_at DESC LIMIT 1"
     with _connect() as conn:
-        row = conn.execute(
-            "SELECT payload, status, trace_id, created_at FROM revision_drafts "
-            "WHERE review_id = ? AND item_id = ? "
-            "ORDER BY created_at DESC LIMIT 1",
-            (review_id, item_id),
-        ).fetchone()
+        row = conn.execute(sql, params).fetchone()
     if row is None:
         return None
     return {
@@ -375,7 +397,7 @@ def _save_draft(review_id: str, item_id: str, trace_id: str,
             "INSERT INTO revision_drafts (id, review_id, item_id, created_at,"
             " trace_id, original_quote, payload, status) VALUES (?,?,?,?,?,?,?,?)",
             (uuid.uuid4().hex[:16], review_id, item_id,
-             __import__("time").time(), trace_id, original_quote,
+             time.time(), trace_id, original_quote,
              json.dumps({"reason": reason, **payload}, ensure_ascii=False),
              status),
         )
