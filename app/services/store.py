@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import tempfile
@@ -18,7 +19,7 @@ import threading
 import time
 import uuid
 from contextlib import closing
-from typing import Any
+from typing import Any, Callable
 
 _DEFAULT_DB = os.path.join(
     tempfile.gettempdir(), "agent-t-reviews.db"
@@ -44,6 +45,14 @@ def _parse_ttl_seconds() -> float:
 
 
 _TTL_SECONDS = _parse_ttl_seconds()
+
+# 过期清理钩子（codex P1-2 复批 2026-10-25）：随审查单删除一并清理的关联
+# 数据（M7 修订草稿/预算）——签名 hook(conn, expired_ids)，**同连接同事务**
+# （对齐 llm_calls 随审查数据同 TTL 同事务清理的宪法 P0-D1 先例）。
+# 注册方（revision 模块）import 时挂载；store 不反向依赖，无循环导入。
+logger = logging.getLogger(__name__)
+
+PURGE_HOOKS: list[Callable[[sqlite3.Connection, list[str]], None]] = []
 
 
 class ReviewStore:
@@ -90,11 +99,28 @@ class ReviewStore:
                     (json.dumps(payload, ensure_ascii=False), rid),
                 )
 
+    def _run_purge_hooks(self, conn: sqlite3.Connection,
+                         expired_ids: list[str]) -> None:
+        """关联数据随审查单同连接同事务清理（codex P1-2 复批：钩子必须接在
+        实际删除路径上，不是等业务侧懒触发）。钩子异常不伤审查单删除本身。"""
+        if not expired_ids:
+            return
+        for hook in PURGE_HOOKS:
+            try:
+                hook(conn, expired_ids)
+            except sqlite3.OperationalError:
+                pass  # 关联表尚未建（从无关联数据）属正常
+            except Exception:  # noqa: BLE001
+                logger.warning("purge hook failed (non-fatal)", exc_info=True)
+
     def _purge_expired(self, conn: sqlite3.Connection) -> None:
         if self._ttl <= 0:
             return
         cutoff = time.time() - self._ttl
+        expired = [r[0] for r in conn.execute(
+            "SELECT id FROM reviews WHERE created_at < ?", (cutoff,)).fetchall()]
         conn.execute("DELETE FROM reviews WHERE created_at < ?", (cutoff,))
+        self._run_purge_hooks(conn, expired)
         # 宪法 P0-D1：账本随审查数据同 TTL 同事务清理（Codex P2：不在另一
         # 连接上跑独立 DELETE——与 reviews 的清理保持原子性）
         try:
@@ -133,6 +159,7 @@ class ReviewStore:
                 # 顺带落盘清理（外部审计批3）：服务长期无新上传时，过期合同
                 # 文本不应一直滞留 SQLite——读到即删
                 conn.execute("DELETE FROM reviews WHERE id = ?", (review_id,))
+                self._run_purge_hooks(conn, [review_id])
                 return None
             return json.loads(row[1])
 
@@ -145,6 +172,7 @@ class ReviewStore:
                 return None
             if self._is_expired(row[0]):
                 conn.execute("DELETE FROM reviews WHERE id = ?", (review_id,))
+                self._run_purge_hooks(conn, [review_id])
                 return None
             data = json.loads(row[1])
             data.update(kwargs)
