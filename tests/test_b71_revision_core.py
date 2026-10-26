@@ -33,9 +33,9 @@ def env_store(tmp_path, monkeypatch):
     monkeypatch.setenv("STORE_DB_PATH", str(tmp_path / "t.db"))
     monkeypatch.delenv("LLM_REVISION_BUDGET_PER_REVIEW", raising=False)
     monkeypatch.delenv("LLM_IMPACT_BUDGET_PER_REVIEW", raising=False)
-    # 默认有 Key（走 llm_call 注入路径）；no-key 用例单独覆写为 None
-    monkeypatch.setattr(revision.llm_ask, "get_api_key",
-                        lambda user_id=None: "test-key")
+    # 默认有 DeepSeek Key（走 llm_call 注入路径）；no-key 用例单独覆写为 None
+    monkeypatch.setattr(revision.llm_ask, "_deepseek_key",
+                        lambda: "test-ds-key")
     store = ReviewStore(db_path=str(tmp_path / "t.db"))
     rid = store.create(filename="c.docx", category="procurement")
     store.update(rid, status="done", items=[
@@ -176,9 +176,9 @@ def test_llm_error_degrades_honestly(env_store):
 
 def test_banned_phrase_degrades(env_store):
     bad = json.dumps({"versions": [
-        {"stance": "稳妥", "text": "建议签署本版本。", "note": ""},
-        {"stance": "平衡", "text": "x", "note": ""},
-        {"stance": "进取", "text": "y", "note": ""}],
+        {"stance": "稳妥", "text": "建议签署本版本。", "note": "n1"},
+        {"stance": "平衡", "text": "x", "note": "n2"},
+        {"stance": "进取", "text": "y", "note": "n3"}],
         "rationale": "x"}, ensure_ascii=False)
     _degraded(env_store, bad, "redline_banned:建议签署")
 
@@ -215,12 +215,193 @@ def test_items_untouched_by_generation(env_store):
 
 def test_llm_key_missing_degrades(env_store, monkeypatch):
     store, rid = env_store
+    # P2-2：只认 DeepSeek 凭据——仅有智谱 Key 时不得发给 DeepSeek 通道
+    monkeypatch.setenv("ZHIPU_API_KEY", "zhipu-only")
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
-    monkeypatch.delenv("ZHIPU_API_KEY", raising=False)
-    monkeypatch.delenv("GLM_API_KEY", raising=False)
-    monkeypatch.delenv("XAI_API_KEY", raising=False)
-    monkeypatch.delenv("GROK_API_KEY", raising=False)
-    with mock.patch.object(revision.llm_ask, "get_api_key", return_value=None):
+    with mock.patch.object(revision.llm_ask, "_deepseek_key", return_value=None):
+        llm = mock.Mock()
         r = revision.generate_revision(store, rid, "unfair_terms",
-                                       llm_call=_ok_call())
+                                       llm_call=llm)
     assert r["status"] == "degraded" and r["reason"] == "no_llm_key"
+    llm.assert_not_called()
+
+
+# ---------- P1-1：不可改写项拒绝（未找到/无原文），不扣额度不调 LLM ----------
+
+def test_not_found_item_not_revisable(env_store):
+    store, rid = env_store
+    llm = mock.Mock()
+    r = revision.generate_revision(store, rid, "term", llm_call=llm)
+    assert r["status"] == "not_supported"
+    assert r["reason"] == "item_not_revisable"
+    llm.assert_not_called()
+    assert revision.remaining_budget(rid, "revision", 4) == 4, "拒绝不得扣额度"
+
+
+def test_empty_quote_item_not_revisable(env_store):
+    store, rid = env_store
+    store.update(rid, items=[
+        {"id": "blank", "name": "空引句项", "status": "需关注",
+         "note": "n", "quote": "", "hits": []}])
+    llm = mock.Mock()
+    r = revision.generate_revision(store, rid, "blank", llm_call=llm)
+    assert r["status"] == "not_supported"
+    llm.assert_not_called()
+
+
+def test_pass_item_not_revisable(env_store):
+    """通过项无可「改」对象——修改建议只服务已检出问题（需关注）。"""
+    store, rid = env_store
+    store.update(rid, items=[
+        {"id": "fine", "name": "没问题", "status": "通过",
+         "note": "n", "quote": "有原文。", "hits": []}])
+    r = revision.generate_revision(store, rid, "fine", llm_call=_ok_call())
+    assert r["status"] == "not_supported"
+
+
+# ---------- P2-1：严格 Schema（版型/类型/非空） ----------
+
+def test_duplicate_stances_degrade(env_store):
+    bad = json.dumps({"versions": [
+        {"stance": "稳妥", "text": "a", "note": "n"},
+        {"stance": "稳妥", "text": "b", "note": "n"},
+        {"stance": "进取", "text": "c", "note": "n"}],
+        "rationale": "x"}, ensure_ascii=False)
+    _degraded(env_store, bad, "incomplete")
+
+
+def test_wrong_stance_names_degrade(env_store):
+    bad = json.dumps({"versions": [
+        {"stance": "保守", "text": "a", "note": "n"},
+        {"stance": "中间", "text": "b", "note": "n"},
+        {"stance": "激进", "text": "c", "note": "n"}],
+        "rationale": "x"}, ensure_ascii=False)
+    _degraded(env_store, bad, "incomplete")
+
+
+def test_numeric_text_degrades(env_store):
+    bad = json.dumps({"versions": [
+        {"stance": "稳妥", "text": 42, "note": "n"},
+        {"stance": "平衡", "text": "b", "note": "n"},
+        {"stance": "进取", "text": "c", "note": "n"}],
+        "rationale": "x"}, ensure_ascii=False)
+    _degraded(env_store, bad, "incomplete")
+
+
+def test_missing_note_degrades(env_store):
+    bad = json.dumps({"versions": [
+        {"stance": "稳妥", "text": "a"},
+        {"stance": "平衡", "text": "b", "note": "n"},
+        {"stance": "进取", "text": "c", "note": "n"}],
+        "rationale": "x"}, ensure_ascii=False)
+    _degraded(env_store, bad, "incomplete")
+
+
+# ---------- P1-2：审查单过期删除后，草稿/预算随之清理 ----------
+
+def test_expired_review_purges_drafts_and_budget(env_store):
+    import time as _time
+    store, rid = env_store
+    revision.generate_revision(store, rid, "unfair_terms", llm_call=_ok_call())
+    assert revision.latest_draft(rid, "unfair_terms") is not None
+    # 人为把审查单改为过期，再走一次 store.get 触发既有过期删除
+    con = sqlite3.connect(str(store._path))
+    con.execute("UPDATE reviews SET created_at = ? WHERE id = ?",
+                (_time.time() - 10**9, rid))
+    con.commit()
+    con.close()
+    store.get(rid)  # 过期删除路径
+    assert store.get(rid) is None
+    revision.purge_orphans()
+    assert revision.latest_draft(rid, "unfair_terms") is None, \
+        "草稿（含合同原文）不得脱离审查单保留期限"
+    con = sqlite3.connect(str(store._path))
+    row = con.execute("SELECT COUNT(*) FROM revision_budget WHERE review_id=?",
+                      (rid,)).fetchone()
+    con.close()
+    assert row == (0,), "过期审查单的预算行一并清理"
+
+
+# ---------- P2-4：业务终态结算 + 证据坐标 ----------
+
+def test_invalid_json_settles_parse_failed(env_store, monkeypatch):
+    """P2-4①：走真 transport（mock httpx），200+坏 JSON → 业务终态必须
+    结算为 parse_failed（不得停留 transport 的临时 success）。"""
+    from app.services import llm_call_log
+    store, rid = env_store
+    resp = mock.Mock()
+    resp.status_code = 200
+    resp.json.return_value = {"choices": [{"message": {"content": "坏 JSON"}}],
+                              "usage": {}}
+    with mock.patch.object(revision.llm_client.httpx, "Client") as fake:
+        fake.return_value.__enter__ = lambda s: s
+        fake.return_value.__exit__ = lambda s, *a: False
+        fake.return_value.post = lambda url, headers=None, json=None, **kw: resp
+        r = revision.generate_revision(store, rid, "unfair_terms")
+    assert r["status"] == "degraded" and r["reason"] == "invalid_json"
+    d = revision.latest_draft(rid, "unfair_terms")
+    rows = llm_call_log.query(trace_id=d["trace_id"], limit=5)
+    assert rows, "调用行必须存在"
+    assert rows[0]["outcome"] == "parse_failed", \
+        "业务解析失败必须结算为 parse_failed（不得停留 success）"
+    assert "revision:invalid_json" in (rows[0].get("error_detail") or "")
+
+
+def test_ok_settles_success_with_receipt(env_store):
+    from app.services import llm_call_log
+    store, rid = env_store
+    resp = mock.Mock()
+    resp.status_code = 200
+    resp.json.return_value = {"choices": [{"message": {"content": _GOOD}}],
+                              "usage": {"prompt_tokens": 10,
+                                        "completion_tokens": 20}}
+    with mock.patch.object(revision.llm_client.httpx, "Client") as fake:
+        fake.return_value.__enter__ = lambda s: s
+        fake.return_value.__exit__ = lambda s, *a: False
+        fake.return_value.post = lambda url, headers=None, json=None, **kw: resp
+        r = revision.generate_revision(store, rid, "unfair_terms")
+    assert r["status"] == "ok"
+    rows = llm_call_log.query(trace_id=r["trace_id"], limit=5)
+    assert rows and rows[0]["outcome"] == "success"
+    assert rows[0].get("raw_output"), "成功结算必须带回执（已结算标记）"
+
+
+def test_evidence_coordinates_preserved(env_store):
+    """P2-4②：同句多次出现时按坐标定位目标——payload 必须带证据坐标。"""
+    store, rid = env_store
+    store.update(rid, items=[
+        {"id": "unfair_terms", "name": "公平性", "status": "需关注",
+         "note": "n", "quote": "乙方违约的定金不予退还。",
+         "hits": ["不予退还"],
+         "evidence_start": 120, "evidence_end": 133,
+         "primary_clause_id": "c7", "clause_ids": ["c7", "c9"]}])
+    r = revision.generate_revision(store, rid, "unfair_terms",
+                                   llm_call=_ok_call())
+    ev = r["draft"]["evidence"]
+    assert ev["evidence_start"] == 120 and ev["evidence_end"] == 133
+    assert ev["primary_clause_id"] == "c7" and ev["clause_ids"] == ["c7", "c9"]
+
+
+# ---------- P2-3：配置门禁（正整数强制） ----------
+
+def test_config_gate_rejects_zero_and_garbage(monkeypatch):
+    from app.services.config_validate import validate_llm_runtime_config
+    monkeypatch.setenv("LLM_REVISION_BUDGET_PER_REVIEW", "0")
+    with pytest.raises(ValueError, match="正整数"):
+        validate_llm_runtime_config()
+    monkeypatch.setenv("LLM_REVISION_BUDGET_PER_REVIEW", "abc")
+    with pytest.raises(ValueError, match="不是合法整数"):
+        validate_llm_runtime_config()
+    monkeypatch.setenv("LLM_REVISION_BUDGET_PER_REVIEW", "4")
+    monkeypatch.setenv("LLM_IMPACT_BUDGET_PER_REVIEW", "-1")
+    with pytest.raises(ValueError, match="正整数"):
+        validate_llm_runtime_config()
+
+
+def test_runtime_consume_rejects_non_positive_limit(env_store):
+    """运行时防御：即使绕过启动门禁，limit<=0 也 fail-closed 不放行。"""
+    store, rid = env_store
+    with pytest.raises(ValueError, match="正整数"):
+        revision.consume_budget(rid, "revision", 0)
+    with pytest.raises(ValueError, match="正整数"):
+        revision.consume_budget(rid, "revision", -2)

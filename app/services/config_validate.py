@@ -28,6 +28,12 @@ _INT_KEYS = (
     "RATE_LIMIT_UPLOAD_PER_MINUTE",
     "RATE_LIMIT_ASK_PER_MINUTE",
 )
+# int 型配置（次数），必须为正整数——0/负数=无限额度是 M7 交互费用闸
+# 明确禁止的形态（B7-0 挂账兑现，codex P2-3：0 不能借启动检查漏成无限调用）
+_POSITIVE_INT_KEYS = (
+    "LLM_REVISION_BUDGET_PER_REVIEW",
+    "LLM_IMPACT_BUDGET_PER_REVIEW",
+)
 
 
 def validate_llm_runtime_config() -> None:
@@ -49,6 +55,15 @@ def validate_llm_runtime_config() -> None:
         try:
             if int(raw) < 0:
                 problems.append(f"{name}={raw!r} 不能为负数")
+        except ValueError:
+            problems.append(f"{name}={raw!r} 不是合法整数")
+    for name in _POSITIVE_INT_KEYS:
+        raw = (os.getenv(name) or "").strip()
+        if not raw:
+            continue
+        try:
+            if int(raw) <= 0:
+                problems.append(f"{name}={raw!r} 必须为正整数（0/负=无限额度，禁止）")
         except ValueError:
             problems.append(f"{name}={raw!r} 不是合法整数")
     if problems:

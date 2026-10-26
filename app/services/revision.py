@@ -43,14 +43,18 @@ def impact_limit_from_env() -> int:
 
 
 def _int_env(name: str, default: int) -> int:
+    """严格解析：非法/<=0 一律 fail-closed 抛错（启动校验已拦一道，
+    运行时再兜一道——绝不静默回退成无限额度，codex P2-3）。"""
     raw = (os.getenv(name) or "").strip()
     if not raw:
         return default
     try:
-        return int(raw)
-    except ValueError:
-        logger.warning("%s=%r 不是整数，回退默认 %s", name, raw, default)
-        return default
+        val = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name}={raw!r} 不是合法整数（fail-closed）") from exc
+    if val <= 0:
+        raise ValueError(f"{name}={val} 必须为正整数（0/负=无限额度，禁止）")
+    return val
 
 
 def _db_path() -> str:
@@ -90,9 +94,10 @@ def _connect() -> sqlite3.Connection:
 def consume_budget(review_id: str, kind: str, limit: int) -> bool:
     """原子扣减一个额度（review_id 维度持久累计，重启/跨请求不重领）。
 
-    True=扣减成功；False=额度已尽（调用方负责 emit_skip 落账+静默降级）。"""
-    if limit <= 0:  # 不限（仅开发语义）
-        return True
+    True=扣减成功；False=额度已尽（调用方负责 emit_skip 落账+静默降级）。
+    limit<=0 直接抛错（无限额度被配置门禁禁止，运行期防御性 fail-closed）。"""
+    if limit <= 0:
+        raise ValueError(f"额度必须为正整数，实际 {limit}（0/负=无限额度，禁止）")
     col = {"revision": "revision_used", "impact": "impact_used"}.get(kind)
     if col is None:
         raise ValueError(f"未知预算类别 {kind!r}")
@@ -110,6 +115,8 @@ def consume_budget(review_id: str, kind: str, limit: int) -> bool:
 
 
 def remaining_budget(review_id: str, kind: str, limit: int) -> int:
+    if limit <= 0:
+        raise ValueError(f"额度必须为正整数，实际 {limit}")
     col = {"revision": "revision_used", "impact": "impact_used"}.get(kind)
     if col is None:
         raise ValueError(f"未知预算类别 {kind!r}")
@@ -119,10 +126,31 @@ def remaining_budget(review_id: str, kind: str, limit: int) -> int:
             (review_id,),
         ).fetchone()
     used = row[0] if row else 0
-    return max(0, limit - used) if limit > 0 else -1
+    return max(0, limit - used)
+
+
+def purge_orphans() -> None:
+    """草稿/预算随审查单生命周期走（codex P1-2）：接入既有过期清理路径——
+    reviews 表是生命周期权威（store.get/update 过期删除、create 扫除），
+    本函数清掉 review 已不存在的草稿与预算行，不另造保留策略。
+    懒触发（generate_revision/latest_draft 入口），不引入后台任务。"""
+    with _connect() as conn:
+        try:
+            conn.execute(
+                "DELETE FROM revision_drafts WHERE review_id NOT IN "
+                "(SELECT id FROM reviews)"
+            )
+            conn.execute(
+                "DELETE FROM revision_budget WHERE review_id NOT IN "
+                "(SELECT id FROM reviews)"
+            )
+        except sqlite3.OperationalError:
+            # reviews 表尚未创建（冷启动无任何审查单）：无孤儿可清
+            logger.debug("purge_orphans skipped: reviews table absent")
 
 
 def latest_draft(review_id: str, item_id: str) -> Optional[dict[str, Any]]:
+    purge_orphans()  # 过期审查单的草稿不可再读（随单生命周期）
     with _connect() as conn:
         row = conn.execute(
             "SELECT payload, status, trace_id, created_at FROM revision_drafts "
@@ -151,7 +179,9 @@ class _Degraded(Exception):
 
 
 def _parse_versions(raw: str) -> dict[str, Any]:
-    """解析并校验三版输出；任一缺失/为空 → _Degraded("incomplete")（整项降级）。"""
+    """严格 Schema（codex P2-1）：稳妥/平衡/进取各一份且互不重复；
+    stance/text/note/rationale 必须为非空字符串（数字被 str() 洗成正文
+    的通道封死——类型不对即降级）；任一不符 → _Degraded("incomplete")。"""
     text = (raw or "").strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text)
@@ -163,20 +193,26 @@ def _parse_versions(raw: str) -> dict[str, Any]:
     if not isinstance(versions, list) or len(versions) != 3:
         raise _Degraded("incomplete")
     cleaned: list[dict[str, str]] = []
+    seen_stances: set[str] = set()
     for v in versions:
-        if (not isinstance(v, dict)
-                or not str(v.get("stance") or "").strip()
-                or not str(v.get("text") or "").strip()):
+        if not isinstance(v, dict):
             raise _Degraded("incomplete")
-        cleaned.append({
-            "stance": str(v["stance"]).strip(),
-            "text": str(v["text"]).strip(),
-            "note": str(v.get("note") or "").strip(),
-        })
-    rationale = str(data.get("rationale") or "").strip()
-    if not rationale:
+        stance, txt, note = v.get("stance"), v.get("text"), v.get("note")
+        # 类型严格：int/float 等非字符串一律拒绝（不 str() 兜底）
+        if (not isinstance(stance, str) or not isinstance(txt, str)
+                or not isinstance(note, str)):
+            raise _Degraded("incomplete")
+        stance, txt, note = stance.strip(), txt.strip(), note.strip()
+        if not stance or not txt or not note or stance in seen_stances:
+            raise _Degraded("incomplete")
+        seen_stances.add(stance)
+        cleaned.append({"stance": stance, "text": txt, "note": note})
+    if seen_stances != {"稳妥", "平衡", "进取"}:
         raise _Degraded("incomplete")
-    return {"versions": cleaned, "rationale": rationale}
+    rationale = data.get("rationale")
+    if not isinstance(rationale, str) or not rationale.strip():
+        raise _Degraded("incomplete")
+    return {"versions": cleaned, "rationale": rationale.strip()}
 
 
 def _banned_hit(text: str) -> Optional[str]:
@@ -201,6 +237,30 @@ def _default_llm_call(api_key: str, system: str, user: str) -> str:
     )
 
 
+def _settle_business(trace_id: str, degraded: Optional[_Degraded],
+                     raw_output: Optional[str]) -> None:
+    """按 trace 反查本节点调用行并做业务终态结算（P2-4①，非致命）。
+
+    ok → success+回执定格；业务降级（invalid_json/incomplete/禁语）→
+    parse_failed+原因；llm_error 时 transport 行已是 provider_error/timeout
+    终态，settle 无匹配自动不动作。不额外记账、不改造存量节点。"""
+    try:
+        rows = llm_call_log.query(trace_id=trace_id, limit=5)
+        if not rows:
+            return
+        call_id = rows[0].get("call_id")
+        if not call_id:
+            return
+        if degraded is None:
+            llm_call_log.settle(call_id, "success", raw_output=raw_output)
+        elif degraded.reason.startswith(("invalid_json", "incomplete", "redline")):
+            llm_call_log.settle(call_id, "parse_failed",
+                                error_detail=f"revision:{degraded.reason}")
+        # llm_error：transport 终态（provider_error/timeout），不可也不应结算
+    except Exception:  # noqa: BLE001
+        logger.warning("revision settle failed (non-fatal)", exc_info=True)
+
+
 def generate_revision(
     store: Any,
     review_id: str,
@@ -213,12 +273,19 @@ def generate_revision(
     review 或 item 不存在 → 返回 {"status": "not_found"}（不扣额度、不调 LLM）。"""
     review = store.get(review_id)
     if review is None:
+        purge_orphans()  # 审查单已被过期删除：关联草稿/预算一并清（codex P1-2）
         return {"status": "not_found", "reason": "review_not_found"}
     item = next((i for i in review.get("items") or [] if i.get("id") == item_id),
                 None)
     if item is None:
         # 红线 2：只对已打标 item 触发——未检出项拒绝，不扣额度、不调 LLM
         return {"status": "not_found", "reason": "item_not_found"}
+    # P1-1（codex 2026-10-25）：可改写校验——「未找到/本类不适用/无原文」
+    # 的项没有可改写对象，拒绝且不扣额度、不请求模型
+    if item.get("status") != "需关注" or not (item.get("quote") or "").strip():
+        return {"status": "not_supported", "reason": "item_not_revisable",
+                "message": "该项无可改写的原文依据（仅「需关注」且有原文引句的项支持生成修改建议）"}
+    purge_orphans()
 
     limit = revision_limit_from_env()
     if not consume_budget(review_id, "revision", limit):
@@ -235,12 +302,15 @@ def generate_revision(
         return {"status": "budget_exceeded",
                 "message": "本合同的修改建议生成次数已达上限"}
 
-    api_key = llm_ask.get_api_key()
+    api_key = llm_ask._deepseek_key()
     trace_id = uuid.uuid4().hex[:16]
     llm_call = llm_call or _default_llm_call
     degraded: Optional[_Degraded] = None
     parsed: Optional[dict[str, Any]] = None
+    raw_output: Optional[str] = None
     if not api_key:
+        # P2-2（codex）：当前批只接 DeepSeek——只取 DeepSeek 凭据，
+        # 缺失本地降级（不得把智谱 Key 发给 DeepSeek 通道）
         degraded = _Degraded("no_llm_key")
     else:
         system = revision_prompts.build_system()
@@ -252,6 +322,7 @@ def generate_revision(
                 trace_id=trace_id,
             ):
                 raw = llm_call(api_key, system, user)
+            raw_output = raw
             parsed = _parse_versions(raw)
             hit = _banned_hit(json.dumps(parsed, ensure_ascii=False))
             if hit:
@@ -262,6 +333,10 @@ def generate_revision(
         except Exception as exc:  # 网络/供应商异常：诚实降级（transport 已落账）
             logger.warning("revision llm error: %s", exc)
             degraded = _Degraded("llm_error")
+        # P2-4①：业务终态结算（复用 B2-3 settle 机制，按 trace 反查本节点
+        # 的调用行——成功→带原始回执定格；业务解析/禁语拒绝→parse_failed；
+        # transport 层失败（provider_error/timeout）settle 自动无匹配不动作）
+        _settle_business(trace_id, degraded, raw_output)
 
     if degraded is not None or parsed is None:
         # 整项降级：不展示残缺方案；降级留痕（drafts 表 status=degraded）
@@ -278,6 +353,13 @@ def generate_revision(
         "rationale": parsed["rationale"],
         "original_quote": item.get("quote") or "",
         "item_note": item.get("note") or "",
+        # P2-4②（codex）：保存可回指原文的证据坐标（同句多次出现时定位目标）
+        "evidence": {
+            "evidence_start": item.get("evidence_start"),
+            "evidence_end": item.get("evidence_end"),
+            "primary_clause_id": item.get("primary_clause_id") or "",
+            "clause_ids": item.get("clause_ids") or [],
+        },
     }
     _save_draft(review_id, item_id, trace_id,
                 payload["original_quote"], payload, "ok", "")
