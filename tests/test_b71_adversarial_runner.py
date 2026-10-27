@@ -247,10 +247,69 @@ def test_two_infra_degradations_stop_and_fail(tmp_path, monkeypatch):
                          tmp_path / "out.json")
     assert rc == 1, "连续两次基础设施失败必须整批 FAIL"
     out = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
-    assert "基础设施失败" in (out["stop_reason"] or "")
+    assert "连续 2 次调用失败" in (out["stop_reason"] or "")
     fails = [r for r in out["results"] if r.get("pass") is False]
     assert len(fails) >= 2, "llm_error 不得算作防线合格"
     assert calls["n"] == 2, "第二次基础设施失败后必须停止后续请求"
+
+
+def test_mixed_failure_classes_share_one_counter(tmp_path, monkeypatch):
+    """两类失败合并同一本连续失败计数册（codex 复批 2026-10-25）：
+    transport 失败 + 基础设施失败背靠背 = 连续 2 次 → 即停；
+    中间夹一次成功则清零，第三次失败不得误报连续两次。"""
+    monkeypatch.chdir(runner.REPO)
+    plan = {"i": 0}
+
+    def mixed_post(url, auth=None, timeout=None):
+        i = plan["i"]
+        plan["i"] += 1
+        if i == 0:   # A1：transport 失败
+            raise httpx.ReadTimeout("simulated timeout")
+        if i == 1:   # A2：基础设施失败 → 连续 2 次，即停
+            return SimpleNamespace(status_code=200, json=lambda: {
+                "status": "degraded", "reason": "llm_error"})
+        return SimpleNamespace(status_code=422,
+                               json=lambda: {"detail": "item_not_revisable"})
+
+    env = _fake_env(monkeypatch, tmp_path, post=mixed_post)
+    rc = runner.run_live(_manifest(), "http://x", env["auth_path"], "host",
+                         tmp_path / "out.json")
+    out = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
+    assert rc == 1
+    assert "连续 2 次调用失败" in (out["stop_reason"] or ""), \
+        "两类失败必须合并计数（混连即停）"
+    assert calls_n(out) == 2, "即停后不得发出第三个请求"
+
+
+def calls_n(out: dict) -> int:
+    """实际发出的 revision 请求数（= live 例 http 有响应的条数）。"""
+    return sum(1 for r in out["results"] if r["kind"] == "live"
+               and (r.get("status") or r.get("error")))
+
+
+def test_success_resets_consecutive_counter(tmp_path, monkeypatch):
+    """失败→成功→失败：成功清零，第三次失败不误报「连续两次」。"""
+    monkeypatch.chdir(runner.REPO)
+    plan = {"i": 0}
+
+    def alternate_post(url, auth=None, timeout=None):
+        i = plan["i"]
+        plan["i"] += 1
+        if i in (0, 2):  # A1、C1 失败（中间隔着 A2/A3 成功与拒绝例）
+            raise httpx.ReadTimeout("simulated timeout")
+        if i == 1:
+            return SimpleNamespace(status_code=200, json=lambda: dict(_OK_BODY))
+        return SimpleNamespace(status_code=422,
+                               json=lambda: {"detail": "item_not_revisable"})
+
+    env = _fake_env(monkeypatch, tmp_path, post=alternate_post)
+    rc = runner.run_live(_manifest(), "http://x", env["auth_path"], "host",
+                         tmp_path / "out.json")
+    out = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
+    # 全部样例跑完（无中途停止）——失败被成功清零，不误触连续两次
+    assert out["stop_reason"] is None, \
+        f"成功清零后不得误报连续失败：{out['stop_reason']}"
+    assert rc == 1, "存在未过例（两次 timeout）本轮仍不通过"
 
 
 # ---------- ③ HTTP 超时：留痕 + 末次结算必执行 ----------

@@ -248,8 +248,7 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
     cumulative: float | None = 0.0  # None=费用未知（查询失败），绝不冒充 0
     cost_unknown = False
     stop_reason: str | None = None
-    transport_failures = 0
-    infra_failures = 0
+    consecutive_failures = 0  # 合并计数册：transport 失败与基建失败同册，成功清零
     record: dict = {"purpose": "B7-1 对抗集付费实跑",
                     "caller_head": caller,
                     "server_revision": rev, "hard_cap_cny": HARD_CAP_CNY,
@@ -323,30 +322,31 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
                             body["status"] in case["allowed_status"]
                             and len(d["versions"]) == 3
                             and d.get("declaration") and not banned)
-                        transport_failures = 0
+                        consecutive_failures = 0  # 成功清零（两类失败同册）
                     else:
                         reason = str(body.get("reason") or "")
                         rec["reason"] = reason
                         if reason in INFRA_DEGRADE_REASONS:
-                            # 基础设施失败≠安全降级≠防线合格（codex P1-复批）
-                            infra_failures += 1
+                            # 基础设施失败≠安全降级≠防线合格（codex P1-复批）；
+                            # 与 transport 失败合并同一本连续失败计数册
+                            consecutive_failures += 1
                             rec["pass"] = False
                             rec["classification"] = "infra_failure"
-                            if infra_failures >= 2:
-                                stop_reason = (f"连续 {infra_failures} 例基础"
-                                               "设施失败（llm_error/no_llm_key）")
+                            if consecutive_failures >= 2:
+                                stop_reason = (f"连续 {consecutive_failures} 次"
+                                               "调用失败（含基础设施失败）")
                         else:
-                            infra_failures = 0
+                            consecutive_failures = 0  # 安全降级也算「流程成功」
                             rec["pass"] = bool(
                                 body.get("status") in case["allowed_status"])
                             rec["classification"] = "safe_degrade"
             except TransportFailure as exc:
-                transport_failures += 1
+                consecutive_failures += 1
                 rec["error"] = str(exc)
                 rec["pass"] = False
-                if transport_failures >= 2:
-                    stop_reason = (f"连续 {transport_failures} 次 transport "
-                                   "失败（费用单停止条件③）")
+                if consecutive_failures >= 2:
+                    stop_reason = (f"连续 {consecutive_failures} 次调用失败"
+                                   "（费用单停止条件③，两类失败合并计数）")
             except LedgerQueryFailure as exc:
                 # 查账失败：费用未知 → 立即停止后续请求，整批不通过（P2-4）
                 rec["error"] = str(exc)
