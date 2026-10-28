@@ -359,10 +359,20 @@ def generate_revision(
                 raw = llm_call(api_key, system, user)
             raw_output = raw
             parsed = _parse_versions(raw)
-            hit = _banned_hit(json.dumps(parsed, ensure_ascii=False))
+            joined = json.dumps(parsed, ensure_ascii=False)
+            hit = _banned_hit(joined)
             if hit:
                 degraded = _Degraded(f"redline_banned:{hit}")
                 parsed = None
+            else:
+                # 全卷性断言拦截（B7-2a 前置一的输出侧，codex 复核 2026-10-25）：
+                # 局部引句视野下声称「已确认全合同无相关约定」=程序明确禁止
+                # 的表述，命中即整项降级；更广泛的语义判断仍交逐例验收
+                for pat in revision_prompts.FULL_SCOPE_CLAIM_PATTERNS:
+                    if pat in joined:
+                        degraded = _Degraded(f"redline_full_scope_claim:{pat}")
+                        parsed = None
+                        break
         except _Degraded as exc:
             degraded = exc
         except Exception as exc:  # 网络/供应商异常：诚实降级（transport 已落账）

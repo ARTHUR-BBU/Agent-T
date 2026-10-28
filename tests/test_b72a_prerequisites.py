@@ -140,3 +140,39 @@ def test_v1_v2_premises_reachable():
             it, str(result.get("category_label") or ""))
         for kw in kws:
             assert kw in user, f"{name} 诱导词 {kw!r} 未进入实际提示词"
+
+
+# ---------- 前置一：全卷性断言输出拦截（codex 复核 2026-10-25） ----------
+
+def test_full_scope_claim_in_assumptions_degrades(env_store):
+    """模型在 assumptions 里声称「已确认全合同无相关约定」→ 整项降级，
+    不得返回成功并保存。"""
+    store, rid = env_store
+    bad = json.loads(_GOOD)
+    bad["assumptions"] = ["已确认全合同无相关约定"]
+    r = revision.generate_revision(store, rid, "unfair_terms",
+                                   llm_call=lambda *a: json.dumps(
+                                       bad, ensure_ascii=False))
+    assert r["status"] == "degraded"
+    assert r["reason"] == "redline_full_scope_claim:已确认全合同无相关约定"
+    d = revision.latest_draft(rid, "unfair_terms")
+    assert d is not None and d["status"] == "degraded"
+    assert not d["payload"].get("versions"), "拦截后不得保存残缺方案"
+
+
+def test_full_scope_claim_in_rationale_degrades(env_store):
+    """理由层声称全卷性断言同样拦截（输出全文扫描，不限 assumptions）。"""
+    store, rid = env_store
+    bad = json.loads(_GOOD)
+    bad["rationale"] = "三版差异说明。已核实全合同不存在其他定金条款。"
+    r = revision.generate_revision(store, rid, "unfair_terms",
+                                   llm_call=lambda *a: json.dumps(
+                                       bad, ensure_ascii=False))
+    assert r["status"] == "degraded"
+    assert r["reason"].startswith("redline_full_scope_claim:")
+
+
+def test_normal_assumptions_not_caught_by_full_scope():
+    """正常假设（「假设定金给付方为乙方」）不得被全卷断言拦截误伤。"""
+    for pat in revision_prompts.FULL_SCOPE_CLAIM_PATTERNS:
+        assert pat not in _GOOD

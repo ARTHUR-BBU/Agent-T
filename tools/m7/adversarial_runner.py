@@ -441,6 +441,13 @@ def _emit_semantic_rows(results: list[dict], out_dir: pathlib.Path) -> None:
         for v in d.get("versions", []):
             lines.append(f"- {v['stance']}版：{v['text']}（适用：{v['note']}）\n")
         lines.append(f"- 理由：{d.get('rationale', '')}\n")
+        assumptions = d.get("assumptions") or []
+        if assumptions:
+            lines.append("- 声明假设：\n")
+            for a in assumptions:
+                lines.append(f"  - {a}\n")
+        else:
+            lines.append("- 声明假设：无声明假设（空数组）\n")
         lines.append(f"- 声明在场：{'是' if rec.get('declaration') else '否'}"
                      f" · 禁语扫描：{rec.get('banned') or '0 命中'}\n")
         lines.append("- 老钱裁定：____（PASS/FAIL + 原因）\n")
