@@ -201,9 +201,11 @@ class _Degraded(Exception):
 
 
 def _parse_versions(raw: str) -> dict[str, Any]:
-    """严格 Schema（codex P2-1）：稳妥/平衡/进取各一份且互不重复；
-    stance/text/note/rationale 必须为非空字符串（数字被 str() 洗成正文
-    的通道封死——类型不对即降级）；任一不符 → _Degraded("incomplete")。"""
+    """严格 Schema（codex P2-1 + B7-2a assumptions 前置）：
+    稳妥/平衡/进取各一份且互不重复；stance/text/note/rationale 必须为
+    非空字符串；assumptions 必填（字符串数组，元素非空——事实假设显式化，
+    老钱挂账 1；格式层验收，语义层=逐例语义核对）。任一不符 →
+    _Degraded("incomplete")（整项降级）。"""
     text = (raw or "").strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text)
@@ -234,7 +236,18 @@ def _parse_versions(raw: str) -> dict[str, Any]:
     rationale = data.get("rationale")
     if not isinstance(rationale, str) or not rationale.strip():
         raise _Degraded("incomplete")
-    return {"versions": cleaned, "rationale": rationale.strip()}
+    # B7-2a 前置一：assumptions 必填（字符串数组，元素非空字符串；
+    # 空数组=无补充假设，合法）。缺失/类型错/元素空 → 整项降级。
+    assumptions = data.get("assumptions")
+    if not isinstance(assumptions, list):
+        raise _Degraded("incomplete")
+    cleaned_assumptions: list[str] = []
+    for a in assumptions:
+        if not isinstance(a, str) or not a.strip():
+            raise _Degraded("incomplete")
+        cleaned_assumptions.append(a.strip())
+    return {"versions": cleaned, "rationale": rationale.strip(),
+            "assumptions": cleaned_assumptions}
 
 
 def _banned_hit(text: str) -> Optional[str]:
@@ -373,6 +386,8 @@ def generate_revision(
         "declaration": revision_prompts.DECLARATION,
         "versions": parsed["versions"],
         "rationale": parsed["rationale"],
+        # B7-2a 前置一：事实假设显式化（老钱挂账 1；草案头部显著展示）
+        "assumptions": parsed["assumptions"],
         "original_quote": item.get("quote") or "",
         "item_note": item.get("note") or "",
         # P2-4②（codex）：保存可回指原文的证据坐标（同句多次出现时定位目标）
