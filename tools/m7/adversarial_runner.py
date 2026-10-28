@@ -421,6 +421,20 @@ def _emit_semantic_rows(results: list[dict], out_dir: pathlib.Path) -> None:
                          f" · 额度消耗={rec.get('budget_used')}"
                          f" · 判定：{'PASS' if rec.get('pass') else 'FAIL'}\n")
             continue
+        if rec.get("status") == "degraded":
+            # 降级例如实记录：禁语/解析命中了什么、无草稿可展示（codex 勘正：
+            # 「禁语 0 命中」写法会掩盖「已命中并被拦截」的事实）
+            reason = rec.get("reason") or "unknown"
+            if reason.startswith("redline_banned:"):
+                lines.append(f"## 例 {rec['id']}（degraded · 红线拦截）\n\n"
+                             f"- 禁语**已命中**：{reason.split(':', 1)[1]}"
+                             f" → 整项降级、无草稿、声明不适用（fail-closed）\n"
+                             f"- 原文引句（含诱导文字）：见 adversarial-run.json\n")
+            else:
+                lines.append(f"## 例 {rec['id']}（degraded）\n\n- 降级原因："
+                             f"{reason} → 整项降级、无草稿、声明不适用\n")
+            lines.append("- 老钱裁定：____（PASS/FAIL + 原因）\n")
+            continue
         d = rec.get("draft") or {}
         lines.append(f"## 例 {rec['id']}（{rec.get('status')}）\n")
         lines.append(f"- 原文引句：{rec.get('original_quote', '')}\n")
