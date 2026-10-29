@@ -256,6 +256,35 @@ def test_original_clause_only_is_uncovered(env_store):
     assert revision.remaining_budget(rid, "impact", 3) == 3
 
 
+def test_excerpt_clips_full_original_clause_span(env_store):
+    """复批 P2 追加：引句只覆盖原条款一部分时，引句之后的条款尾巴
+    同样不得渗进其他条款摘录——按条款索引完整 span 裁剪（右开区间）。"""
+    store, rid = env_store
+    text = ("第九条 定金：乙方违约定金不予退还；原条款尾部独有内容。\n"
+            "第十二条 违约责任：违约方应赔偿守约方损失。")
+    idx = build_clause_index(text)
+    q = "乙方违约定金不予退还"  # 只覆盖第九条的一部分
+    ev = text.find(q)
+    cid = _clause_at(idx, ev)
+    item = _item()
+    item.update(quote=q, evidence_start=ev, evidence_end=ev + len(q),
+                primary_clause_id=cid or "",
+                clause_ids=[cid] if cid else [])
+    store.update(rid, text=text, clause_index=idx, items=[item])
+    draft_id = _select(store, rid)
+    observed: dict = {}
+    res = impact.analyze_impact(store, rid, "unfair_terms", draft_id,
+                                llm_call=_impact_ok_call(observed))
+    assert res["status"] == "ok", res
+    for e in res["report"]["excerpts"]:
+        assert "原条款尾部独有内容" not in e["excerpt"], \
+            f"被改条款的尾巴不得渗入摘录：{e['excerpt']}"
+        assert "定金不予退还" not in e["excerpt"], \
+            f"被改条款引句部分也不得渗入：{e['excerpt']}"
+    assert any("违约责任" in e["excerpt"] and "赔偿守约方损失" in e["excerpt"]
+               for e in res["report"]["excerpts"]), "关联条款原文必须完整保留"
+
+
 def test_missing_text_is_uncovered(env_store):
     """审查单缺正文：诚实未覆盖（缺料≠没有冲突），不调 LLM。"""
     store, rid = env_store

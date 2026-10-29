@@ -282,11 +282,27 @@ def _load_draft_text(draft_id: str, stance: str) -> Optional[str]:
     return None
 
 
+def _clause_span(clause_index: dict[str, Any], cid: str) -> Optional[tuple[int, int]]:
+    """按条款 id 查完整坐标（右开区间 [start, end)，与索引约定一致）。"""
+    for c in clause_index.get("clauses") or []:
+        if str(c.get("id") or "") == cid:
+            s, e = c.get("start"), c.get("end")
+            if isinstance(s, int) and isinstance(e, int) and e >= s:
+                return (s, e)
+    return None
+
+
 def _exclude_ranges_for_item(item: dict[str, Any],
                              clause_index: Optional[dict[str, Any]]
                              ) -> tuple[list[tuple[int, int]], set[str]]:
-    """汇总被改条款的排除依据（codex #154 复批 3）：证据坐标区间+
-    条款索引归属（primary_clause_id + clause_ids + 证据起点定位）。"""
+    """汇总被改条款的排除依据（codex #154 复批 3 + P2 追加）：
+
+    - 证据引句坐标区间（引句可能只覆盖条款的一部分）；
+    - **被排除条款的完整 span**（按条款索引查 start/end）——引句之后的
+      条款尾巴同样不得渗进「其他条款」摘录；
+    - 条款 id 集合（primary_clause_id + clause_ids + 证据起点定位）。
+    条款索引不可用/查不到 span 时保守回退：仅按引句区间裁剪（少裁
+    不误删，命中排除仍由 clause_id 判断兜住）。"""
     ranges: list[tuple[int, int]] = []
     ids: set[str] = set()
     s, e = item.get("evidence_start"), item.get("evidence_end")
@@ -301,6 +317,11 @@ def _exclude_ranges_for_item(item: dict[str, Any],
         cid = evidence_module._clause_at(clause_index, s)
         if cid:
             ids.add(cid)
+    if clause_index:
+        for cid in ids:
+            span = _clause_span(clause_index, cid)
+            if span is not None:
+                ranges.append(span)
     return ranges, ids
 
 
