@@ -91,8 +91,9 @@ def test_impact_fixture_premises():
 # ---------- 阅卷逻辑（假响应打，零网络） ----------
 
 def _patch_chain(monkeypatch, revision_body, select_http, impact_body,
-                 rev_rows=(), imp_rows=(), budget=(1, 1)):
-    """mock HTTP 链与账本/额度查询。"""
+                 rev_rows=(), imp_rows=(), budget=(1, 1),
+                 strict_spent=(0, 0, 0)):
+    """mock HTTP 链与账本/额度/严格圈账查询（零网络零 ssh）。"""
     responses = {
         "revision": _resp(200, revision_body),
         "select": _resp(select_http, {"status": "selected"}),
@@ -112,6 +113,8 @@ def _patch_chain(monkeypatch, revision_body, select_http, impact_body,
                         list(rev_rows if node == "revision" else imp_rows))
     monkeypatch.setattr(runner, "_budget_used",
                         lambda host, rid: budget)
+    monkeypatch.setattr(runner, "_spent_strict",
+                        lambda host, rids: strict_spent)
 
 
 def _resp(code: int, body: dict):
@@ -377,6 +380,89 @@ def test_case_io_bound_matches_premise_scale():
     assert out_t == 16000 + 8000, "I1 最坏=1 次 revision+1 次 impact 输出"
     assert in_ch > 0
     assert runner._worst_cny(in_ch, out_t) < 2.0, "单例最坏必须小于硬上限"
+
+
+# ---------- #156 三轮 P1：例内第二笔付费前查账（I1 控制流） ----------
+
+_I1_MANIFEST = {"purpose": "I1 单例编排测试", "hard_cap_cny": 2.0,
+                "cases": [dict(_CASE_I1, file="i1-impact-linked.txt",
+                               category="procurement")]}
+
+
+def test_i1_unknown_usage_blocks_impact(tmp_path, monkeypatch, capsys):
+    """run_live 编排路径：revision 成功但账本缺用量 → 第二笔 impact 不得
+    发出、后续样本不启动、结果失败且费用未知。"""
+    paths: list[str] = []
+
+    def fake_post(base, auth, url_path, payload, timeout=300):
+        paths.append(url_path)
+        if url_path.endswith("/revision"):
+            return _resp(200, _good_draft())
+        raise AssertionError("查账未知后不得发出 select/impact 请求")
+
+    monkeypatch.setattr(runner, "_post_json", fake_post)
+    monkeypatch.setattr(runner, "_seed_review", lambda *a, **kw: None)
+    monkeypatch.setattr(runner, "server_revision", lambda host: "x")
+    monkeypatch.setattr(runner, "check_revision", lambda c, t: (True, ""))
+    monkeypatch.setattr(runner, "deepseek_balance", lambda key: 99.0)
+    # 第一笔 revision 后查账即发现缺用量（后续任何查账调用同答）
+    monkeypatch.setattr(runner, "_spent_strict",
+                        lambda host, rids: (0, 0, 1))
+    auth = tmp_path / "auth"
+    auth.write_text("user=u\npassword=p\ndeepseek_key=dk\n", encoding="utf-8")
+    rc = runner.run_live(_I1_MANIFEST, "http://x", str(auth), "host",
+                         tmp_path / "out.json",
+                         manifest_name="manifest-b72.json")
+    out = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
+    assert rc == 1
+    sent = [p.rsplit("/", 1)[-1] for p in paths]
+    assert sent == ["revision"], f"只应发出第一笔 revision，实际 {sent}"
+    assert "impact" not in sent and "select" not in sent, "缺用量后不得续发"
+    assert out["cost_known"] is False, "费用未知必须在最终记录保留（不冒充已知）"
+    assert out["stop_reason"], "必须有停止原因"
+    assert "费用未知" in out["stop_reason"]
+    rec = out["results"][0]
+    assert rec["pass"] is False and rec.get("cost_unknown") is True
+
+
+def test_i1_normal_usage_two_calls_pass(tmp_path, monkeypatch):
+    """正常用量时 I1 两步调用链完整走通（对照：查账不误伤）。"""
+    paths: list[str] = []
+    report = {"covered": True, "notice": runner.impact_prompts.RE_REVIEW_NOTICE,
+              "selected_stance": "平衡",
+              "excerpts": [{"index": 0, "keyword": "违约金", "position": 60,
+                            "excerpt": "第十二条 违约责任：…"}],
+              "findings": [{"index": 0, "note": "赔偿口径不一致"}]}
+
+    def fake_post(base, auth, url_path, payload, timeout=300):
+        paths.append(url_path)
+        if url_path.endswith("/revision"):
+            return _resp(200, _good_draft())
+        if url_path.endswith("/select"):
+            return _resp(200, {"status": "selected"})
+        return _resp(200, {"status": "ok", "report": report})
+
+    monkeypatch.setattr(runner, "_post_json", fake_post)
+    monkeypatch.setattr(runner, "_seed_review", lambda *a, **kw: None)
+    monkeypatch.setattr(runner, "server_revision", lambda host: "x")
+    monkeypatch.setattr(runner, "check_revision", lambda c, t: (True, ""))
+    monkeypatch.setattr(runner, "deepseek_balance", lambda key: 99.0)
+    monkeypatch.setattr(runner, "_spent_strict",
+                        lambda host, rids: (100, 200, 0))
+    monkeypatch.setattr(runner, "_revision_ledger_rows",
+                        lambda host, rid, node="revision":
+                        [{"call_id": node}])
+    monkeypatch.setattr(runner, "_budget_used", lambda host, rid: (1, 1))
+    auth = tmp_path / "auth"
+    auth.write_text("user=u\npassword=p\ndeepseek_key=dk\n", encoding="utf-8")
+    rc = runner.run_live(_I1_MANIFEST, "http://x", str(auth), "host",
+                         tmp_path / "out.json",
+                         manifest_name="manifest-b72.json")
+    out = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
+    assert rc == 0, out.get("stop_reason")
+    sent = [p.rsplit("/", 1)[-1] for p in paths]
+    assert sent == ["revision", "select", "impact"], "两步调用链完整"
+    assert out["results"][0]["pass"] is True
 
 
 # ---------- #156 二轮 P1-1：费用未知≠零元（严格圈账） ----------

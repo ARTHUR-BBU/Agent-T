@@ -396,6 +396,19 @@ def _run_impact_case(base: str, auth: tuple[str, str], server_host: str,
         fields["reason"] = reason
         return fields, ("infra" if reason in INFRA_DEGRADE_REASONS
                         else "safe_degrade")
+    # —— 第 1.5 步：第二笔付费前严格查账（codex #156 三轮 P1：整例结束才
+    # 查账的话，revision 成功但缺用量时 impact 仍会先发出）——
+    try:
+        _ins, _outs, unknown = _spent_strict(server_host, [rid])
+    except Exception as exc:  # noqa: BLE001 查账失败同责：费用未知不发下一笔
+        fields["error"] = f"第二笔付费前查账失败：{exc}"
+        fields["cost_unknown"] = True
+        return fields, "cost_unknown"
+    if unknown:
+        fields["error"] = (f"revision 账本缺用量（unknown={unknown}）"
+                           "——费用未知，不发 impact")
+        fields["cost_unknown"] = True
+        return fields, "cost_unknown"
     draft = body["draft"]
     draft_id = body.get("draft_id") or ""
     stance = case.get("select_stance") or "平衡"
@@ -650,6 +663,12 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
                     elif step == "ok":
                         consecutive_failures = 0
                         # pass 已由 _run_impact_case 按 gold 逐项判定
+                    elif step == "cost_unknown":
+                        # 例内第二笔付费前查账发现未知：停止后续请求，
+                        # 最终结算保持未知（codex #156 三轮 P1）
+                        cost_unknown = True
+                        stop_reason = str(rec.get("error") or "费用未知")
+                        rec["pass"] = False
                     else:
                         consecutive_failures = 0
                         rec["pass"] = False
