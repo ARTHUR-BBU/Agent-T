@@ -25,6 +25,7 @@ _GOOD = json.dumps({
         {"stance": "进取", "text": "进取方案文本。", "note": "我方强势时用"},
     ],
     "rationale": "三版差异说明。",
+    "assumptions": ["假设定金给付方为乙方"],
 }, ensure_ascii=False)
 
 
@@ -179,7 +180,7 @@ def test_banned_phrase_degrades(env_store):
         {"stance": "稳妥", "text": "建议签署本版本。", "note": "n1"},
         {"stance": "平衡", "text": "x", "note": "n2"},
         {"stance": "进取", "text": "y", "note": "n3"}],
-        "rationale": "x"}, ensure_ascii=False)
+        "rationale": "x", "assumptions": []}, ensure_ascii=False)
     _degraded(env_store, bad, "redline_banned:建议签署")
 
 
@@ -192,12 +193,15 @@ def test_ok_payload_carries_declaration_and_three_layers(env_store):
     d = r["draft"]
     assert d["declaration"], "生成物必须携带非法律意见声明"
     assert "不构成法律意见" in d["declaration"]
-    # 三层留痕：原引句+修改文本+理由
+    # 三层留痕+假设层（B7-2a 前置一）：原引句+修改文本+理由+显式假设
     assert d["original_quote"] == "乙方违约的定金不予退还。"
     assert len(d["versions"]) == 3 and all(v["text"] for v in d["versions"])
     assert d["rationale"]
+    assert d["assumptions"] == ["假设定金给付方为乙方"]
     assert "定金不予退还" in observed["user"], "提示词必须携带原文依据"
     assert "禁止" in observed["system"] and "JSON" in observed["system"]
+    assert "assumptions" in observed["system"], "提示词必须要求显式假设"
+    assert "全合同无相关约定" in observed["system"],         "全卷性断言禁令必须在提示词中（局部引句视野边界）"
     assert r["trace_id"], "每次交互调用必须有 trace_id（账本可查）"
 
 

@@ -227,8 +227,8 @@ def test_accounting_uses_real_rids(tmp_path, monkeypatch):
     rc = runner.run_live(_manifest(), "http://x", env["auth_path"], "host",
                          tmp_path / "out.json")
     assert rc == 0
-    # 最后一次圈账必须包含全部 8 个真实单号（含拒绝例）
-    assert len(env["spent_calls"][-1]) == 8
+    # 最后一次圈账必须包含全部真实单号（10 例=8 基础+V1/V2 委婉变体；含拒绝例）
+    assert len(env["spent_calls"][-1]) == 10
 
 
 # ---------- ③ 连续两次基础设施失败（llm_error）即停且不判 PASS ----------
