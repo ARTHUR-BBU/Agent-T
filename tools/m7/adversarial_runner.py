@@ -399,12 +399,21 @@ def _post_json(base: str, auth: tuple[str, str], url_path: str,
 
 
 def _run_impact_case(base: str, auth: tuple[str, str], server_host: str,
-                     rid: str, case: dict) -> tuple[dict, str]:
+                     rid: str, case: dict,
+                     expected_ledger: dict[str, set[str]] | None = None
+                     ) -> tuple[dict, str]:
     """impact_live 全链：生成→选定→分析→逐项阅卷。
 
-    返回 (rec 字段, 步骤态)；步骤态 ∈ {"ok","safe_degrade","infra"}——
-    连续失败计数由 run_live 统一结算。transport/5xx 直接抛 TransportFailure。
-    """
+    返回 (rec 字段, 步骤态)；步骤态 ∈ {"ok","safe_degrade","infra",
+    "cost_unknown","fail"}——连续失败计数由 run_live 统一结算。
+    transport/5xx 直接抛 TransportFailure。
+
+    期望账行口径（codex #156 六轮 P1）：impact HTTP 发出**前**即把
+    impact 记入 expected_ledger（父级可见的持久状态——超时/异常路径
+    不丢标记，保守费用未知）；收到响应后按「模型是否真被调用」撤销：
+    uncovered（本地定位未调模型）/budget_exceeded（未调模型）/
+    no_llm_key（未发起调用）撤销，ok/解析失败/llm_error（已调用或
+    已发出无法证实）保留。"""
     fields: dict = {}
 
     # —— 第 1 步：生成三版草案 ——
@@ -474,7 +483,10 @@ def _run_impact_case(base: str, auth: tuple[str, str], server_host: str,
     fields["select_stance"] = stance
 
     # —— 第 3 步：连带影响分析 ——
-    fields["impact_sent"] = True  # 已发起第二笔付费：期望账行含 impact 节点
+    # 发出 impact HTTP 前先记入期望账行（父级可见的持久状态——超时/异常
+    # 路径不丢标记，codex #156 六轮 P1-2）
+    expected_ledger = expected_ledger if expected_ledger is not None else {}
+    expected_ledger.setdefault(rid, set()).add("impact")
     imp = _post_json(base, auth,
                      f"/api/review/{rid}/items/{case['target_item']}"
                      f"/revision/impact", {"draft_id": draft_id}, timeout=300)
@@ -485,6 +497,15 @@ def _run_impact_case(base: str, auth: tuple[str, str], server_host: str,
     except ValueError as exc:
         raise TransportFailure(f"impact 响应非 JSON: {exc}") from exc
     fields["impact_status"] = ibody.get("status")
+    # 模型是否真被调用（期望账行口径，codex #156 六轮 P1-1）：
+    # uncovered=本地定位未调模型；budget_exceeded=未发起调用；no_llm_key=
+    # 未发起调用——三者撤销 impact 期望；ok/解析失败/llm_error=已调用或
+    # 已发出无法证实 → 保留（保守费用未知）
+    if ibody.get("status") == "uncovered" or (
+            ibody.get("status") == "degraded"
+            and str(ibody.get("reason")) == "no_llm_key") \
+            or ibody.get("status") == "budget_exceeded":
+        expected_ledger[rid].discard("impact")
     if ibody.get("status") == "degraded":
         reason = str(ibody.get("reason") or "")
         fields["impact_reason"] = reason
@@ -635,6 +656,10 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
             rec: dict = {"id": cid, "review_id": rid, "kind": kind}
             results.append(rec)
             all_rids.append(rid)
+            # 首笔 revision 即将发起：先记期望（超时/异常路径也保守可见，
+            # codex #156 六轮 P1-2）；本地拒绝例不入清单
+            if kind in ("live", "impact_live"):
+                expected_ledger.setdefault(rid, set()).add("revision")
             try:
                 text = (fixtures_dir / case["file"]).read_text(encoding="utf-8")
                 checklist = run_checklist(text, case["category"])
@@ -682,7 +707,8 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
                 elif kind == "impact_live":
                     fields, step = _run_impact_case(
                         base=base, auth=auth, server_host=server_host,
-                        rid=rid, case=case)
+                        rid=rid, case=case,
+                        expected_ledger=expected_ledger)
                     rec.update(fields)
                     if step == "infra":
                         # 基础设施失败与 transport 同册计数（codex P1-复批）
@@ -791,13 +817,7 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
                 rec["pass"] = False
                 stop_reason = f"样本异常：{str(exc)[:120]}"
             # 逐样本圈账（本批全部真实单号；查询失败=费用未知→停）。
-            # 期望账行按**实际发起的付费节点**记录（codex #156 五轮 P1）
-            if kind == "live":
-                expected_ledger.setdefault(rid, set()).add("revision")
-            elif kind == "impact_live":
-                expected_ledger.setdefault(rid, set()).add("revision")
-                if rec.get("impact_sent"):
-                    expected_ledger[rid].add("impact")
+            # 期望账行=实际发起的付费节点（已在例内/例前按节点登记）
             if not stop_reason:
                 cumulative = _account(server_host, all_rids,
                                       expect_paid=expected_ledger)

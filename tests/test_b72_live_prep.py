@@ -692,3 +692,141 @@ def test_i1_impact_row_missing_stops_batch(tmp_path, monkeypatch):
     assert out["results"][0]["pass"] is False
     sent = {p.rsplit("/", 1)[-1] for p in paths}
     assert sent == {"revision", "select", "impact"}, "I1 三步都已发出"
+
+
+# ---------- #156 六轮 P1：未覆盖不误报未知 + 超时不丢已发标记 ----------
+
+_I2_MANIFEST = {"purpose": "I2 单例编排测试", "hard_cap_cny": 2.0,
+                "cases": [dict(_CASE_I2, file="i2-impact-lonely.txt",
+                               category="procurement")]}
+
+
+def test_run_live_i2_uncovered_passes_batch(tmp_path, monkeypatch):
+    """六轮 P1-1 编排路径：I2 未覆盖（不发模型、无 impact 账行）→
+    题目过、整批过、费用已知、impact 零额度（不误报费用未知）。"""
+    paths: list[str] = []
+    uncovered = {"status": "uncovered",
+                 "report": {"covered": False,
+                            "notice": runner.impact_prompts.RE_REVIEW_NOTICE,
+                            "uncovered_reason": "未在合同全文检索到该条款之外"
+                            "可能与草案联动的其他条款（不代表没有冲突）"}}
+
+    def fake_post(base, auth, url_path, payload, timeout=300):
+        paths.append(url_path)
+        if url_path.endswith("/revision"):
+            return _resp(200, _good_draft())
+        if url_path.endswith("/select"):
+            return _resp(200, {"status": "selected"})
+        return _resp(200, uncovered)
+
+    monkeypatch.setattr(runner, "_post_json", fake_post)
+    monkeypatch.setattr(runner, "_seed_review", lambda *a, **kw: None)
+    monkeypatch.setattr(runner, "server_revision", lambda host: "x")
+    monkeypatch.setattr(runner, "check_revision", lambda c, t: (True, ""))
+    monkeypatch.setattr(runner, "deepseek_balance", lambda key: 99.0)
+    monkeypatch.setattr(runner, "_spent_strict", lambda host, rids: (
+        100, 200, 0, {r: {"revision": [100, 200, 0, 1]} for r in rids}))
+    monkeypatch.setattr(runner, "_node_ledger_status",
+                        lambda host, rid, node: (1, 0))
+    monkeypatch.setattr(runner, "_revision_ledger_rows",
+                        lambda host, rid, node="revision":
+                        [{"call_id": "rev"}] if node == "revision" else [])
+    monkeypatch.setattr(runner, "_budget_used", lambda host, rid: (1, 0))
+    auth = tmp_path / "auth"
+    auth.write_text("user=u\npassword=p\ndeepseek_key=dk\n", encoding="utf-8")
+    rc = runner.run_live(_I2_MANIFEST, "http://x", str(auth), "host",
+                         tmp_path / "out.json",
+                         manifest_name="manifest-b72.json")
+    out = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
+    assert rc == 0, out.get("stop_reason")
+    assert out["cost_known"] is True, "I2 本地未覆盖≠费用未知"
+    rec = out["results"][0]
+    assert rec["pass"] is True and rec["impact_status"] == "uncovered"
+    assert rec["impact_budget_used"] == 0, "未覆盖零 impact 额度"
+
+
+def test_run_live_i1_impact_timeout_missing_row_stops(tmp_path, monkeypatch):
+    """六轮 P1-2 编排路径：impact HTTP 超时（已发出但无响应）+ 账本只有
+    revision 行 → 保守费用未知、停止后续题（V2 不启动）。"""
+    paths: list[str] = []
+
+    def fake_post(base, auth, url_path, payload, timeout=300):
+        paths.append(url_path)
+        if url_path.endswith("/revision"):
+            return _resp(200, _good_draft())
+        if url_path.endswith("/select"):
+            return _resp(200, {"status": "selected"})
+        raise runner.TransportFailure("impact timeout（已发出无响应）")
+
+    monkeypatch.setattr(runner, "_post_json", fake_post)
+    monkeypatch.setattr(runner, "_seed_review", lambda *a, **kw: None)
+    monkeypatch.setattr(runner, "server_revision", lambda host: "x")
+    monkeypatch.setattr(runner, "check_revision", lambda c, t: (True, ""))
+    monkeypatch.setattr(runner, "deepseek_balance", lambda key: 99.0)
+    monkeypatch.setattr(runner, "_spent_strict", lambda host, rids: (
+        100, 200, 0, {r: {"revision": [100, 200, 0, 1]} for r in rids}))
+    monkeypatch.setattr(runner, "_node_ledger_status",
+                        lambda host, rid, node: (1, 0))
+    monkeypatch.setattr(runner, "_revision_ledger_rows",
+                        lambda host, rid, node="revision":
+                        [{"call_id": "rev"}] if node == "revision" else [])
+    monkeypatch.setattr(runner, "_budget_used", lambda host, rid: (1, 0))
+
+    def v2_must_not_run(url, auth=None, timeout=None):
+        raise AssertionError("impact 超时费用未知，不得启动后续题（V2）")
+
+    monkeypatch.setattr(runner.httpx, "post", v2_must_not_run)
+    auth = tmp_path / "auth"
+    auth.write_text("user=u\npassword=p\ndeepseek_key=dk\n", encoding="utf-8")
+    rc = runner.run_live(_TWO_CASE_MANIFEST, "http://x", str(auth), "host",
+                         tmp_path / "out.json",
+                         manifest_name="manifest-b72.json")
+    out = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
+    assert rc == 1
+    assert out["cost_known"] is False, "超时无法证实是否调用模型，保守未知"
+    assert len(out["results"]) == 1, "后续题未启动"
+    assert "费用未知" in (out["stop_reason"] or "")
+
+
+def test_run_live_i1_impact_timeout_full_ledger_continues(tmp_path, monkeypatch):
+    """对照：impact 超时但账本两节点均已记完整用量（可证实已调用且已计费）
+    → 不误判费用未知，继续后续题。"""
+    def fake_post(base, auth, url_path, payload, timeout=300):
+        if url_path.endswith("/revision"):
+            return _resp(200, _good_draft())
+        if url_path.endswith("/select"):
+            return _resp(200, {"status": "selected"})
+        raise runner.TransportFailure("impact timeout（但账本完整）")
+
+    monkeypatch.setattr(runner, "_post_json", fake_post)
+    monkeypatch.setattr(runner, "_seed_review", lambda *a, **kw: None)
+    monkeypatch.setattr(runner, "server_revision", lambda host: "x")
+    monkeypatch.setattr(runner, "check_revision", lambda c, t: (True, ""))
+    monkeypatch.setattr(runner, "deepseek_balance", lambda key: 99.0)
+    monkeypatch.setattr(runner, "_spent_strict", lambda host, rids: (
+        150, 260, 0, {r: {"revision": [100, 200, 0, 1],
+                          "impact": [50, 60, 0, 1]} for r in rids}))
+    monkeypatch.setattr(runner, "_node_ledger_status",
+                        lambda host, rid, node: (1, 0))
+    monkeypatch.setattr(runner, "_revision_ledger_rows",
+                        lambda host, rid, node="revision":
+                        [{"call_id": node}])
+    monkeypatch.setattr(runner, "_budget_used", lambda host, rid: (1, 1))
+    v2_posts: list[str] = []
+
+    def v2_post(url, auth=None, timeout=None):
+        v2_posts.append(url)
+        return mock.Mock(status_code=200, json=lambda: {
+            "status": "degraded", "reason": "invalid_json"})
+    monkeypatch.setattr(runner.httpx, "post", v2_post)
+    auth = tmp_path / "auth"
+    auth.write_text("user=u\npassword=p\ndeepseek_key=dk\n", encoding="utf-8")
+    rc = runner.run_live(_TWO_CASE_MANIFEST, "http://x", str(auth), "host",
+                         tmp_path / "out.json",
+                         manifest_name="manifest-b72.json")
+    out = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
+    assert rc == 1, "I1 transport 失败照实不过 → 整批退出码 1"
+    assert out["cost_known"] is True, "账本完整=费用已知，不保守误停"
+    assert len(v2_posts) == 1, "后续题正常启动（对照）"
+    assert out["results"][0]["pass"] is False, "I1 transport 失败照实不过"
+    assert out["results"][1]["pass"] is True, "V2 正常完成"
