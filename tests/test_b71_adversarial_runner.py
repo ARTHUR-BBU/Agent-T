@@ -141,13 +141,15 @@ def _fake_env(monkeypatch, tmp_path, post=None, spent=(800, 4000)):
     monkeypatch.setattr(runner, "deepseek_balance", lambda key: 99.0)
     spent_calls: list[list[str]] = []
 
-    def fake_spent(host, container, rids):
+    def fake_spent(host, rids):
+        # v4 严格圈账契约：(in_tokens, out_tokens, unknown_rows)
         spent_calls.append(list(rids))
         if spent is None:
             raise RuntimeError("ledger down")
-        return spent
+        ins, outs = spent
+        return ins, outs, 0
 
-    monkeypatch.setattr(runner, "spent_for_reviews", fake_spent)
+    monkeypatch.setattr(runner, "_spent_strict", fake_spent)
     posts: list[str] = []
 
     def default_post(url, auth=None, timeout=None):

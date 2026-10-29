@@ -377,3 +377,90 @@ def test_case_io_bound_matches_premise_scale():
     assert out_t == 16000 + 8000, "I1 最坏=1 次 revision+1 次 impact 输出"
     assert in_ch > 0
     assert runner._worst_cny(in_ch, out_t) < 2.0, "单例最坏必须小于硬上限"
+
+
+# ---------- #156 二轮 P1-1：费用未知≠零元（严格圈账） ----------
+
+def _run_sql_fragment(code: str, db: str, args: tuple):
+    import subprocess
+    r = subprocess.run(["python", "-X", "utf8", "-c", code, db, *args],
+                       capture_output=True, text=True, check=False)
+    assert r.returncode == 0, r.stderr
+    return r.stdout.strip().splitlines()[-1]
+
+
+def test_strict_spent_missing_usage_is_unknown(tmp_path):
+    """codex 复现：usage={} 的真实请求行必须计为「费用未知」而非零元。"""
+    import sqlite3
+    db = str(tmp_path / "led.db")
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE llm_calls (call_id TEXT, node TEXT,"
+                " review_id TEXT, outcome TEXT, error_detail TEXT,"
+                " raw_output TEXT, usage TEXT)")
+    def call(cid, outcome, usage):
+        con.execute("INSERT INTO llm_calls VALUES (?,?,?,?,?,?,?)",
+                    (cid, "revision", "r1", outcome, None, None, usage))
+    call("c1", "success", json.dumps({"input_tokens": 10,
+                                      "output_tokens": 20}))
+    call("c2", "provider_error", "{}")            # 已发请求缺用量
+    call("c3", "timeout", None)                   # 超时无用量
+    call("c4", "budget_exceeded", None)           # skip 行：本就无调用
+    con.commit()
+    con.close()
+    out = _run_sql_fragment(runner.STRICT_SPENT_CODE, db, args=("r1",))
+    ins, outs, unknown = json.loads(out)
+    assert (ins, outs) == (10, 20), "有用量行正常累计"
+    assert unknown == 2, "缺用量的真实请求行必须计为未知（skip 行不计）"
+
+
+def test_account_returns_none_when_usage_missing(monkeypatch):
+    """圈账遇 unknown>0 → 返回 None（调用方停止后续付费请求）。"""
+    monkeypatch.setattr(runner, "_spent_strict",
+                        lambda host, rids: (10, 20, 1))
+    assert runner._account("h", ["r1"]) is None, "费用未知绝不冒充金额"
+
+
+def test_account_zero_rows_is_real_zero(monkeypatch):
+    """无任何真实请求行 → 真·零元（与未知严格区分）。"""
+    monkeypatch.setattr(runner, "_spent_strict",
+                        lambda host, rids: (0, 0, 0))
+    assert runner._account("h", ["r1"]) is not None
+    assert runner._account("h", ["r1"]) == 0.0
+
+
+# ---------- #156 二轮 P1-2：防覆盖检查前移（run_live 级） ----------
+
+def test_run_live_refuses_existing_outputs_before_anything(tmp_path, monkeypatch, capsys):
+    """结果 JSON 或验收表已存在 → 开跑即拒：零凭据、零 HTTP、零种单、
+    零付费（不是等跑完才在写入时拒绝）。"""
+    blocker = tmp_path / "semantic-acceptance-b7-2-filled.md"
+    blocker.write_text("历史记录", encoding="utf-8")
+    def _explode(*a, **kw):
+        raise AssertionError("目标已存在时不得发生任何副作用（HTTP/种单/凭据）")
+    monkeypatch.setattr(runner.httpx, "post", _explode)
+    monkeypatch.setattr(runner, "_seed_review", _explode)
+    monkeypatch.setattr(runner, "_auth", _explode)
+    monkeypatch.setattr(runner, "run_dry",
+                        lambda m, f: (_explode(), 1)[1])  # 连预检都不该到
+    m = _load("manifest-b72.json")
+    rc = runner.run_live(m, "http://x", "auth", "host",
+                         tmp_path / "out.json",
+                         manifest_name="manifest-b72.json")
+    out = capsys.readouterr().out
+    assert rc == 1 and "拒绝开跑" in out
+    assert blocker.read_text(encoding="utf-8") == "历史记录", "旧文件原样保留"
+
+
+def test_run_live_refuses_existing_result_json(tmp_path, monkeypatch, capsys):
+    """--out 的逐例 JSON 已存在 → 同样开跑即拒（flush 会覆盖旧 JSON）。"""
+    result = tmp_path / "out.json"
+    result.write_text('{"old": true}', encoding="utf-8")
+    def _explode(*a, **kw):
+        raise AssertionError("目标已存在时不得发生任何副作用")
+    monkeypatch.setattr(runner.httpx, "post", _explode)
+    monkeypatch.setattr(runner, "run_dry", lambda m, f: 1)
+    m = _load("manifest-b72.json")
+    rc = runner.run_live(m, "http://x", "auth", "host", result,
+                         manifest_name="manifest-b72.json")
+    assert rc == 1 and "拒绝开跑" in capsys.readouterr().out
+    assert json.loads(result.read_text(encoding="utf-8")) == {"old": True}

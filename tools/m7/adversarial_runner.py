@@ -48,8 +48,7 @@ from app.services.impact import (  # noqa: E402
 )
 from app.services.llm_client import NODE_MAX_OUTPUT_TOKENS  # noqa: E402
 from tools.m65.final_replay import (  # noqa: E402
-    check_revision, deepseek_balance, estimate_cost, server_revision,
-    spent_for_reviews)
+    check_revision, deepseek_balance, estimate_cost, server_revision)
 
 HARD_CAP_CNY = 2.0
 POLL_TIMEOUT_S = 600
@@ -106,6 +105,34 @@ BUDGET_USED_CODE = (
     "row = con.execute('SELECT revision_used, impact_used FROM revision_budget"
     " WHERE review_id=?', (sys.argv[2],)).fetchone()\n"
     "print(json.dumps([row[0] if row else 0, row[1] if row else 0]))\n"
+)
+# 严格圈账（codex #156 复批 P1：沿用 m65 的 SPENT_REMOTE_CODE 对 usage 缺失
+# 用 or 0 → 缺用量被当零元继续烧）。区分：真实请求行（success/parse_failed/
+# provider_error/timeout）缺 usage=费用未知；skip 行（budget_exceeded）本来
+# 就无调用不计。
+STRICT_SPENT_CODE = (
+    "import sqlite3, json, sys\n"
+    "con = sqlite3.connect(sys.argv[1])\n"
+    "ids = sys.argv[2].split(',')\n"
+    "marks = ','.join('?' for _ in ids)\n"
+    "rows = con.execute('SELECT outcome, usage FROM llm_calls WHERE review_id"
+    " IN (' + marks + ')', ids).fetchall()\n"
+    "ins = outs = unknown = 0\n"
+    "for outcome, usage in rows:\n"
+    "    if outcome == 'budget_exceeded':\n"
+    "        continue\n"
+    "    try:\n"
+    "        u = json.loads(usage) if usage else None\n"
+    "        it = u.get('input_tokens') if isinstance(u, dict) else None\n"
+    "        ot = u.get('output_tokens') if isinstance(u, dict) else None\n"
+    "    except (ValueError, TypeError):\n"
+    "        it = ot = None\n"
+    "    if it is None or ot is None:\n"
+    "        unknown += 1\n"
+    "    else:\n"
+    "        ins += int(it)\n"
+    "        outs += int(ot)\n"
+    "print(json.dumps([ins, outs, unknown]))\n"
 )
 CLEANUP_CODE = (
     "import sys, json, sqlite3\n"
@@ -468,13 +495,24 @@ def _run_impact_case(base: str, auth: tuple[str, str], server_host: str,
 def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
              out_path: pathlib.Path,
              manifest_name: str = DEFAULT_MANIFEST) -> int:
+    # 开跑前置=目标文件安全检查（codex #156 复批 P1：防覆盖检查必须早于
+    # 凭据/种单/付费——旧实现等付费跑完才在写入时拒绝，且 flush 会直接
+    # 覆盖 --out 旧 JSON）。任一目标已存在：零凭据、零种单、零 HTTP、
+    # 零付费，不触碰旧文件。
+    fixtures_dir = REPO / "fixtures" / "m7"
+    semantic_out = _semantic_filled_path(out_path.parent, manifest_name)
+    for target, what in ((out_path, "实跑结果 JSON"),
+                         (semantic_out, "语义验收预填表")):
+        if target.exists():
+            print(f"FAIL: {what}目标已存在，拒绝开跑（保护旧记录）: {target}"
+                  "——请先移走旧文件留档")
+            return 1
     # 开跑亮卷（codex #156 复批 1：防默认拿错卷重复付费考旧题）
     print(f"[考卷] {manifest_name} · {manifest['purpose'][:50]}"
           f" · 例 {[c['id'] for c in manifest['cases']]}")
     # --live 入口强制先过同一份前提与费用上界预检（不得绕过，codex 复批）：
     # 内部直调 run_dry（真实前提核对），main 与直调两条入口同闸；
     # 闸门先于 _auth/余额/版本——预检不过连凭据都不碰
-    fixtures_dir = REPO / "fixtures" / "m7"
     if run_dry(manifest, fixtures_dir) != 0:
         print("FAIL: --live 前置=前提与费用上界预检必须先过")
         return 1
@@ -714,12 +752,17 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
             if stop_reason:
                 print(f"STOP: {stop_reason}")
     finally:
-        # 末次结算必执行（中断/异常路径同样落账；查询失败=费用未知）
+        # 末次结算必执行（中断/异常路径同样落账；缺 usage/查询失败=费用未知）
         try:
-            spent_in, spent_out = spent_for_reviews(
-                server_host, "agent-t", all_rids or ["__none__"])
-            cumulative = estimate_cost(spent_in, spent_out)
-            cost_unknown = False
+            spent_in, spent_out, unknown = _spent_strict(
+                server_host, all_rids or ["__none__"])
+            if unknown:
+                print(f"[末次结算] {unknown} 行缺用量——费用未知，不冒充 0")
+                cumulative = None
+                cost_unknown = True
+            else:
+                cumulative = estimate_cost(spent_in, spent_out)
+                cost_unknown = False
         except Exception as exc:  # noqa: BLE001
             print(f"[末次结算] 查询失败（费用未知，不冒充 0）：{exc}")
             cumulative = None
@@ -742,21 +785,42 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
     return 0
 
 
+def _spent_strict(server_host: str, rids: list[str]) -> tuple[int, int, int]:
+    """严格圈账（codex #156 复批 P1）：返回 (in_tokens, out_tokens,
+    unknown_rows)。unknown_rows>0 = 已发真实请求但账本缺 usage——费用
+    未知，绝不当作零元（m65 旧片段的 or 0 语义在此废弃）。"""
+    out = _ssh_py(server_host, STRICT_SPENT_CODE, SERVER_DB,
+                  args=(",".join(rids),))
+    ins, outs, unknown = json.loads(out.strip().splitlines()[-1])
+    return int(ins), int(outs), int(unknown)
+
+
 def _account(server_host: str, rids: list[str]) -> float | None:
+    """逐样本圈账：费用未知（缺 usage/查询失败）一律返回 None——调用方
+    立即停止后续付费请求，最终记录保留未知。"""
     try:
-        spent_in, spent_out = spent_for_reviews(server_host, "agent-t", rids)
+        spent_in, spent_out, unknown = _spent_strict(server_host, rids)
+        if unknown:
+            print(f"[圈账] {unknown} 行已发请求但账本缺用量——费用未知，停止")
+            return None
         return estimate_cost(spent_in, spent_out)
     except Exception as exc:  # noqa: BLE001
         print(f"[圈账] 查询失败（费用未知）：{exc}")
         return None
 
 
+def _semantic_filled_path(out_dir: pathlib.Path,
+                          manifest_name: str) -> pathlib.Path:
+    """验收预填目标路径（按批次独立，run_live 前置检查与 emit 共用）。"""
+    batch = "b7-2" if "b72" in manifest_name else "b7-1"
+    return out_dir / f"semantic-acceptance-{batch}-filled.md"
+
+
 def _emit_semantic_rows(results: list[dict], out_dir: pathlib.Path,
                         manifest_name: str = DEFAULT_MANIFEST) -> None:
     # codex #156 复批 3：验收预填按批次独立文件，且**拒绝覆盖既有记录**
-    #（B7-1 历史验收表在仓库中，不得被后续实跑冲掉）
-    batch = "b7-2" if "b72" in manifest_name else "b7-1"
-    out = out_dir / f"semantic-acceptance-{batch}-filled.md"
+    #（run_live 开跑前已前置检查，此处为写入前的最后一道，双保险）
+    out = _semantic_filled_path(out_dir, manifest_name)
     if out.exists():
         raise SystemExit(
             f"拒绝覆盖既有验收记录：{out}（如确需重跑请先移走旧文件留档）")
