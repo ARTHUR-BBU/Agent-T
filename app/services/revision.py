@@ -408,21 +408,26 @@ def generate_revision(
             "clause_ids": item.get("clause_ids") or [],
         },
     }
-    _save_draft(review_id, item_id, trace_id,
-                payload["original_quote"], payload, "ok", "")
-    return {"status": "ok", "draft": payload, "trace_id": trace_id,
+    draft_id = _save_draft(review_id, item_id, trace_id,
+                           payload["original_quote"], payload, "ok", "")
+    # B7-2b spec §3.1 硬要求：ok 响应携带 draft_id（选定/连带影响的回指标识）
+    return {"status": "ok", "draft": payload, "draft_id": draft_id,
+            "trace_id": trace_id,
             "remaining": remaining_budget(review_id, "revision", limit)}
 
 
 def _save_draft(review_id: str, item_id: str, trace_id: str,
                 original_quote: str, payload: dict[str, Any],
-                status: str, reason: str) -> None:
+                status: str, reason: str) -> str:
+    """落库并返回 draft_id（B7-2b spec §3.1：选定/连带影响靠它回指）。"""
+    draft_id = uuid.uuid4().hex[:16]
     with _connect() as conn:
         conn.execute(
             "INSERT INTO revision_drafts (id, review_id, item_id, created_at,"
             " trace_id, original_quote, payload, status) VALUES (?,?,?,?,?,?,?,?)",
-            (uuid.uuid4().hex[:16], review_id, item_id,
+            (draft_id, review_id, item_id,
              time.time(), trace_id, original_quote,
              json.dumps({"reason": reason, **payload}, ensure_ascii=False),
              status),
         )
+    return draft_id
