@@ -115,12 +115,43 @@ STRICT_SPENT_CODE = (
     "con = sqlite3.connect(sys.argv[1])\n"
     "ids = sys.argv[2].split(',')\n"
     "marks = ','.join('?' for _ in ids)\n"
-    "rows = con.execute('SELECT outcome, usage FROM llm_calls WHERE review_id"
-    " IN (' + marks + ')', ids).fetchall()\n"
-    "ins = outs = unknown = 0\n"
+    "rows = con.execute('SELECT review_id, outcome, usage FROM llm_calls"
+    " WHERE review_id IN (' + marks + ')', ids).fetchall()\n"
+    "per = {}\n"
+    "for rid, outcome, usage in rows:\n"
+    "    if rid not in per:\n"
+    "        per[rid] = [0, 0, 0, 0]\n"
+    "    if outcome == 'budget_exceeded':\n"
+    "        continue\n"
+    "    per[rid][3] += 1\n"
+    "    try:\n"
+    "        u = json.loads(usage) if usage else None\n"
+    "        it = u.get('input_tokens') if isinstance(u, dict) else None\n"
+    "        ot = u.get('output_tokens') if isinstance(u, dict) else None\n"
+    "    except (ValueError, TypeError):\n"
+    "        it = ot = None\n"
+    "    if it is None or ot is None:\n"
+    "        per[rid][2] += 1\n"
+    "    else:\n"
+    "        per[rid][0] += int(it)\n"
+    "        per[rid][1] += int(ot)\n"
+    "ins = sum(v[0] for v in per.values())\n"
+    "outs = sum(v[1] for v in per.values())\n"
+    "unknown = sum(v[2] for v in per.values())\n"
+    "print(json.dumps([ins, outs, unknown, per]))\n"
+)
+# 节点级账行核对（codex #156 四轮 P1：账本写入失败=连行都没有，零行≠零元）：
+# 例内查账要求「应发付费的节点真有调用行且用量完整」，缺行=费用未知
+NODE_ROWS_CODE = (
+    "import sqlite3, json, sys\n"
+    "con = sqlite3.connect(sys.argv[1])\n"
+    "rows = con.execute('SELECT outcome, usage FROM llm_calls WHERE"
+    " review_id=? AND node=?', (sys.argv[2], sys.argv[3])).fetchall()\n"
+    "real = unknown = 0\n"
     "for outcome, usage in rows:\n"
     "    if outcome == 'budget_exceeded':\n"
     "        continue\n"
+    "    real += 1\n"
     "    try:\n"
     "        u = json.loads(usage) if usage else None\n"
     "        it = u.get('input_tokens') if isinstance(u, dict) else None\n"
@@ -129,10 +160,7 @@ STRICT_SPENT_CODE = (
     "        it = ot = None\n"
     "    if it is None or ot is None:\n"
     "        unknown += 1\n"
-    "    else:\n"
-    "        ins += int(it)\n"
-    "        outs += int(ot)\n"
-    "print(json.dumps([ins, outs, unknown]))\n"
+    "print(json.dumps([real, unknown]))\n"
 )
 CLEANUP_CODE = (
     "import sys, json, sqlite3\n"
@@ -396,12 +424,18 @@ def _run_impact_case(base: str, auth: tuple[str, str], server_host: str,
         fields["reason"] = reason
         return fields, ("infra" if reason in INFRA_DEGRADE_REASONS
                         else "safe_degrade")
-    # —— 第 1.5 步：第二笔付费前严格查账（codex #156 三轮 P1：整例结束才
-    # 查账的话，revision 成功但缺用量时 impact 仍会先发出）——
+    # —— 第 1.5 步：第二笔付费前严格查账（codex #156 三轮/四轮 P1）——
+    # 要求 revision 节点真有调用行且用量完整：缺行=账本写入失败（费用
+    # 未知），缺用量=费用未知——两者都不发 impact
     try:
-        _ins, _outs, unknown = _spent_strict(server_host, [rid])
+        real_rows, unknown = _node_ledger_status(server_host, rid, "revision")
     except Exception as exc:  # noqa: BLE001 查账失败同责：费用未知不发下一笔
         fields["error"] = f"第二笔付费前查账失败：{exc}"
+        fields["cost_unknown"] = True
+        return fields, "cost_unknown"
+    if real_rows < 1:
+        fields["error"] = ("revision 已请求但账本无调用行（写入失败？）"
+                           "——费用未知，不发 impact")
         fields["cost_unknown"] = True
         return fields, "cost_unknown"
     if unknown:
@@ -548,6 +582,7 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
 
     results: list[dict] = []
     all_rids: list[str] = []       # 圈账按本批全部真实单号（含拒绝例意外调用）
+    paid_rids: list[str] = []      # 预计已发真实付费调用的单号（缺账行=费用未知）
     cumulative: float | None = 0.0  # None=费用未知（查询失败），绝不冒充 0
     cost_unknown = False
     stop_reason: str | None = None
@@ -598,6 +633,10 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
             rec: dict = {"id": cid, "review_id": rid, "kind": kind}
             results.append(rec)
             all_rids.append(rid)
+            # 预计已发真实付费调用的单号（codex #156 四轮 P1：这些单缺账行
+            # =账本写入失败=费用未知；本地拒绝例本就零行，不在此列）
+            if kind in ("live", "impact_live"):
+                paid_rids.append(rid)
             try:
                 text = (fixtures_dir / case["file"]).read_text(encoding="utf-8")
                 checklist = run_checklist(text, case["category"])
@@ -755,7 +794,8 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
                 stop_reason = f"样本异常：{str(exc)[:120]}"
             # 逐样本圈账（本批全部真实单号；查询失败=费用未知→停）
             if not stop_reason:
-                cumulative = _account(server_host, all_rids)
+                cumulative = _account(server_host, all_rids,
+                                      expect_paid=tuple(paid_rids))
                 if cumulative is None:
                     cost_unknown = True
                     stop_reason = "圈账失败，费用未知——停止后续请求"
@@ -771,12 +811,16 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
             if stop_reason:
                 print(f"STOP: {stop_reason}")
     finally:
-        # 末次结算必执行（中断/异常路径同样落账；缺 usage/查询失败=费用未知）
+        # 末次结算必执行（中断/异常路径同样落账；缺 usage/应发账却零行/
+        # 查询失败=费用未知）
         try:
-            spent_in, spent_out, unknown = _spent_strict(
+            spent_in, spent_out, unknown, per = _spent_strict(
                 server_host, all_rids or ["__none__"])
-            if unknown:
-                print(f"[末次结算] {unknown} 行缺用量——费用未知，不冒充 0")
+            missing_rows = [rid for rid in paid_rids
+                            if (per.get(rid) or [0, 0, 0, 0])[3] == 0]
+            if unknown or missing_rows:
+                print(f"[末次结算] 费用未知（缺用量 {unknown} 行；"
+                      f"应发账却零行 {missing_rows}），不冒充 0")
                 cumulative = None
                 cost_unknown = True
             else:
@@ -804,24 +848,43 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
     return 0
 
 
-def _spent_strict(server_host: str, rids: list[str]) -> tuple[int, int, int]:
-    """严格圈账（codex #156 复批 P1）：返回 (in_tokens, out_tokens,
-    unknown_rows)。unknown_rows>0 = 已发真实请求但账本缺 usage——费用
-    未知，绝不当作零元（m65 旧片段的 or 0 语义在此废弃）。"""
+def _spent_strict(server_host: str, rids: list[str]) -> tuple[int, int, int, dict]:
+    """严格圈账（codex #156 复批 P1 + 四轮 P1）：返回 (in_tokens, out_tokens,
+    unknown_rows, per_rid)。unknown_rows>0 = 已发真实请求但账本缺 usage；
+    per_rid[rid]=[ins,outs,unknown,real_rows]，real_rows=0 = 该单预计应有
+    付费账却一行都没有（账本写入失败）——两者都是费用未知，绝不当作
+    零元。skip 行（budget_exceeded）本就无调用不计。"""
     out = _ssh_py(server_host, STRICT_SPENT_CODE, SERVER_DB,
                   args=(",".join(rids),))
-    ins, outs, unknown = json.loads(out.strip().splitlines()[-1])
-    return int(ins), int(outs), int(unknown)
+    ins, outs, unknown, per = json.loads(out.strip().splitlines()[-1])
+    return int(ins), int(outs), int(unknown), {str(k): list(v) for k, v in per.items()}
 
 
-def _account(server_host: str, rids: list[str]) -> float | None:
-    """逐样本圈账：费用未知（缺 usage/查询失败）一律返回 None——调用方
-    立即停止后续付费请求，最终记录保留未知。"""
+def _node_ledger_status(server_host: str, rid: str, node: str) -> tuple[int, int]:
+    """节点级账行核对：返回 (real_rows, unknown_rows)——real_rows=0 =
+    应发付费却无账行（写入失败），unknown_rows>0 = 有行但缺用量。"""
+    out = _ssh_py(server_host, NODE_ROWS_CODE, SERVER_DB,
+                  args=(rid, node))
+    real, unknown = json.loads(out.strip().splitlines()[-1])
+    return int(real), int(unknown)
+
+
+def _account(server_host: str, rids: list[str],
+             expect_paid: tuple[str, ...] = ()) -> float | None:
+    """逐样本圈账：费用未知（缺 usage / 应有账却零行 / 查询失败）一律
+    返回 None——调用方立即停止后续付费请求，最终记录保留未知。
+    expect_paid=预计已发真实付费调用的单号（live/impact_live 例）——
+    这些单缺账行同样费用未知；本地拒绝例本就零行，不受影响。"""
     try:
-        spent_in, spent_out, unknown = _spent_strict(server_host, rids)
+        spent_in, spent_out, unknown, per = _spent_strict(server_host, rids)
         if unknown:
             print(f"[圈账] {unknown} 行已发请求但账本缺用量——费用未知，停止")
             return None
+        for rid in expect_paid:
+            row = per.get(rid) or [0, 0, 0, 0]
+            if row[3] == 0:
+                print(f"[圈账] {rid} 预计已发付费调用但账本无行——费用未知，停止")
+                return None
         return estimate_cost(spent_in, spent_out)
     except Exception as exc:  # noqa: BLE001
         print(f"[圈账] 查询失败（费用未知）：{exc}")

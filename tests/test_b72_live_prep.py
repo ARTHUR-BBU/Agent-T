@@ -115,6 +115,8 @@ def _patch_chain(monkeypatch, revision_body, select_http, impact_body,
                         lambda host, rid: budget)
     monkeypatch.setattr(runner, "_spent_strict",
                         lambda host, rids: strict_spent)
+    monkeypatch.setattr(runner, "_node_ledger_status",
+                        lambda host, rid, node: (1, 0))
 
 
 def _resp(code: int, body: dict):
@@ -407,7 +409,9 @@ def test_i1_unknown_usage_blocks_impact(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(runner, "deepseek_balance", lambda key: 99.0)
     # 第一笔 revision 后查账即发现缺用量（后续任何查账调用同答）
     monkeypatch.setattr(runner, "_spent_strict",
-                        lambda host, rids: (0, 0, 1))
+                        lambda host, rids: (0, 0, 1, {}))
+    monkeypatch.setattr(runner, "_node_ledger_status",
+                        lambda host, rid, node: (0, 0))
     auth = tmp_path / "auth"
     auth.write_text("user=u\npassword=p\ndeepseek_key=dk\n", encoding="utf-8")
     rc = runner.run_live(_I1_MANIFEST, "http://x", str(auth), "host",
@@ -448,7 +452,10 @@ def test_i1_normal_usage_two_calls_pass(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "check_revision", lambda c, t: (True, ""))
     monkeypatch.setattr(runner, "deepseek_balance", lambda key: 99.0)
     monkeypatch.setattr(runner, "_spent_strict",
-                        lambda host, rids: (100, 200, 0))
+                        lambda host, rids: (100, 200, 0,
+                        {r: [100, 200, 0, 1] for r in rids}))
+    monkeypatch.setattr(runner, "_node_ledger_status",
+                        lambda host, rid, node: (1, 0))
     monkeypatch.setattr(runner, "_revision_ledger_rows",
                         lambda host, rid, node="revision":
                         [{"call_id": node}])
@@ -494,22 +501,78 @@ def test_strict_spent_missing_usage_is_unknown(tmp_path):
     con.commit()
     con.close()
     out = _run_sql_fragment(runner.STRICT_SPENT_CODE, db, args=("r1",))
-    ins, outs, unknown = json.loads(out)
+    ins, outs, unknown, per = json.loads(out)
     assert (ins, outs) == (10, 20), "有用量行正常累计"
     assert unknown == 2, "缺用量的真实请求行必须计为未知（skip 行不计）"
+    assert per["r1"][3] == 3, "per-rid 真实行数=3（skip 行不计）"
+
+
+def test_node_rows_fragment(tmp_path):
+    """节点级核对片段：有行+用量全=（1,0）；零行=（0,0）；skip 行不计。"""
+    import sqlite3
+    db = str(tmp_path / "led.db")
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE llm_calls (call_id TEXT, node TEXT,"
+                " review_id TEXT, outcome TEXT, error_detail TEXT,"
+                " raw_output TEXT, usage TEXT)")
+    con.execute("INSERT INTO llm_calls VALUES ('c1','revision','r1',"
+                " 'success',NULL,NULL,?)",
+                (json.dumps({"input_tokens": 5, "output_tokens": 6}),))
+    con.execute("INSERT INTO llm_calls VALUES ('c2','revision','r1',"
+                " 'budget_exceeded',NULL,NULL,NULL)")
+    con.commit()
+    con.close()
+    out = _run_sql_fragment(runner.NODE_ROWS_CODE, db, args=("r1", "revision"))
+    assert json.loads(out) == [1, 0], "真实行 1（skip 不计），用量完整 0 未知"
+    out2 = _run_sql_fragment(runner.NODE_ROWS_CODE, db, args=("ghost", "revision"))
+    assert json.loads(out2) == [0, 0], "零行=（0,0）——调用方须按费用未知处理"
+
+
+def test_i1_zero_ledger_rows_blocks_impact(monkeypatch):
+    """四轮 P1：revision 成功但账本连行都没有（写入失败）→ 不发 select/
+    impact，费用未知（零行≠零元）。"""
+    paths: list[str] = []
+
+    def fake_post(base, auth, url_path, payload, timeout=300):
+        paths.append(url_path.rsplit("/", 1)[-1])
+        if url_path.endswith("/revision"):
+            return _resp(200, _good_draft())
+        raise AssertionError("缺账行后不得发出 select/impact")
+
+    monkeypatch.setattr(runner, "_post_json", fake_post)
+    monkeypatch.setattr(runner, "_node_ledger_status",
+                        lambda host, rid, node: (0, 0))  # 零行
+    fields, step = runner._run_impact_case(
+        base="http://x", auth=("u", "p"), server_host="h", rid="r",
+        case=_CASE_I1)
+    assert step == "cost_unknown"
+    assert paths == ["revision"], "只应发出第一笔，第二笔必须被拦下"
+    assert "费用未知" in str(fields.get("error"))
+
+
+def test_account_expect_paid_zero_rows_is_unknown(monkeypatch):
+    """四轮 P1：预计已发付费的单缺账行 → 费用未知返回 None；
+    本地拒绝例（不在 expect_paid）零行不受影响。"""
+    monkeypatch.setattr(runner, "_spent_strict", lambda host, rids: (
+        0, 0, 0, {"r_paid": [0, 0, 0, 0], "r_refuse": [0, 0, 0, 0]}))
+    assert runner._account("h", ["r_paid", "r_refuse"],
+                           expect_paid=("r_paid",)) is None, \
+        "应发账却零行=费用未知"
+    assert runner._account("h", ["r_refuse"]) == 0.0, \
+        "本地拒绝例本就零行=真零元"
 
 
 def test_account_returns_none_when_usage_missing(monkeypatch):
     """圈账遇 unknown>0 → 返回 None（调用方停止后续付费请求）。"""
     monkeypatch.setattr(runner, "_spent_strict",
-                        lambda host, rids: (10, 20, 1))
+                        lambda host, rids: (10, 20, 1, {}))
     assert runner._account("h", ["r1"]) is None, "费用未知绝不冒充金额"
 
 
 def test_account_zero_rows_is_real_zero(monkeypatch):
     """无任何真实请求行 → 真·零元（与未知严格区分）。"""
     monkeypatch.setattr(runner, "_spent_strict",
-                        lambda host, rids: (0, 0, 0))
+                        lambda host, rids: (0, 0, 0, {}))
     assert runner._account("h", ["r1"]) is not None
     assert runner._account("h", ["r1"]) == 0.0
 

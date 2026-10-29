@@ -142,12 +142,12 @@ def _fake_env(monkeypatch, tmp_path, post=None, spent=(800, 4000)):
     spent_calls: list[list[str]] = []
 
     def fake_spent(host, rids):
-        # v4 严格圈账契约：(in_tokens, out_tokens, unknown_rows)
+        # v4 严格圈账契约：(ins, outs, unknown, per_rid)
         spent_calls.append(list(rids))
         if spent is None:
             raise RuntimeError("ledger down")
         ins, outs = spent
-        return ins, outs, 0
+        return ins, outs, 0, {r: [ins, outs, 0, 1] for r in rids}
 
     monkeypatch.setattr(runner, "_spent_strict", fake_spent)
     posts: list[str] = []
@@ -201,7 +201,8 @@ def test_live_never_bypasses_dry_preflight(tmp_path, monkeypatch):
 def test_unknown_cost_stops_further_requests(tmp_path, monkeypatch):
     monkeypatch.chdir(runner.REPO)
     env = _fake_env(monkeypatch, tmp_path)
-    monkeypatch.setattr(runner, "_account", lambda host, rids: None)  # 圈账失败
+    monkeypatch.setattr(runner, "_account",
+                        lambda host, rids, expect_paid=(): None)  # 圈账失败
     rc = runner.run_live(_manifest(), "http://x", env["auth_path"], "host",
                          tmp_path / "out.json")
     assert rc == 1
