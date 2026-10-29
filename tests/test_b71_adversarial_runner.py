@@ -79,7 +79,9 @@ def test_ledger_and_budget_fragments_use_argv_channel(server_db):
     rows = json.loads(r.stdout.strip().splitlines()[-1])
     assert len(rows) == 1 and rows[0]["call_id"] == "c1"
     r = _run_fragment(runner.BUDGET_USED_CODE, server_db, args=("r1",))
-    assert r.returncode == 0 and r.stdout.strip() == "2"
+    # v4 契约：额度按节点分列返回 [revision_used, impact_used]
+    assert r.returncode == 0
+    assert json.loads(r.stdout.strip().splitlines()[-1]) == [2, 0]
 
 
 def test_ssh_py_routes_args_to_argv(monkeypatch):

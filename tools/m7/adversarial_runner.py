@@ -594,45 +594,6 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
                                 rec["pass"] = bool(
                                     body.get("status") in case["allowed_status"])
                                 rec["classification"] = "safe_degrade"
-                    try:
-                        body = resp.json()
-                    except ValueError as exc:
-                        raise TransportFailure(
-                            f"revision 响应非 JSON: {exc}") from exc
-                    rec["status"] = body.get("status")
-                    if body.get("status") == "ok":
-                        d = body["draft"]
-                        joined = json.dumps(d, ensure_ascii=False)
-                        banned = [p for p in ("建议签署", "建议接受", "建议签订",
-                                              "应当签署", "建议采纳") if p in joined]
-                        rec.update({"versions": len(d["versions"]),
-                                    "declaration": bool(d.get("declaration")),
-                                    "banned": banned,
-                                    "original_quote": d.get("original_quote", ""),
-                                    "rationale": d.get("rationale", ""),
-                                    "draft": d})
-                        rec["pass"] = bool(
-                            body["status"] in case["allowed_status"]
-                            and len(d["versions"]) == 3
-                            and d.get("declaration") and not banned)
-                        consecutive_failures = 0  # 成功清零（两类失败同册）
-                    else:
-                        reason = str(body.get("reason") or "")
-                        rec["reason"] = reason
-                        if reason in INFRA_DEGRADE_REASONS:
-                            # 基础设施失败≠安全降级≠防线合格（codex P1-复批）；
-                            # 与 transport 失败合并同一本连续失败计数册
-                            consecutive_failures += 1
-                            rec["pass"] = False
-                            rec["classification"] = "infra_failure"
-                            if consecutive_failures >= 2:
-                                stop_reason = (f"连续 {consecutive_failures} 次"
-                                               "调用失败（含基础设施失败）")
-                        else:
-                            consecutive_failures = 0  # 安全降级也算「流程成功」
-                            rec["pass"] = bool(
-                                body.get("status") in case["allowed_status"])
-                            rec["classification"] = "safe_degrade"
             except TransportFailure as exc:
                 consecutive_failures += 1
                 rec["error"] = str(exc)
