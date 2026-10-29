@@ -30,6 +30,7 @@ def create_revision(review_id: str, item_id: str) -> dict:
 
 class SelectDraftBody(BaseModel):
     draft_id: str
+    stance: str = ""  # 选定必填（稳妥/平衡/进取）；impact 请求忽略此字段
 
 
 @router.post("/review/{review_id}/items/{item_id}/revision/select")
@@ -37,9 +38,11 @@ def select_revision_draft(review_id: str, item_id: str,
                           body: SelectDraftBody) -> dict:
     """用户选定草案（B7-2b spec §3.1：选定≠生成≠重审三分）。
 
+    选定必须落到具体版别（stance：稳妥/平衡/进取，codex #154 复批 2）。
     404：审查单/item/draft 不存在或归属不符（跨审查单/跨检查项拒绝）；
-    422：草案为降级态（无可选定的分析对象）。"""
-    result = impact.select_draft(store, review_id, item_id, body.draft_id)
+    422：草案为降级态，或版别缺失/不属于该草案（stance_invalid）。"""
+    result = impact.select_draft(store, review_id, item_id, body.draft_id,
+                                 body.stance)
     if result.get("status") == "not_found":
         raise HTTPException(status_code=404, detail=result.get("reason"))
     if result.get("status") == "not_supported":

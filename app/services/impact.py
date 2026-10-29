@@ -27,6 +27,7 @@ from typing import Any, Callable, Optional
 import yaml
 
 from app.prompts import impact_prompts
+from app.services import evidence as evidence_module
 from app.services import llm_ask, llm_call_log, llm_client, store as store_module
 from app.services.revision import (
     _connect,
@@ -61,13 +62,23 @@ def _load_families() -> dict[str, list[str]]:
 _EXCERPT_WINDOW = 40
 
 
-def find_related_clauses(text: str, item_id: str) -> list[dict[str, Any]]:
-    """按词族在合同全文检索引用方摘录（关键词+位置+条款窗原文）。
+def find_related_clauses(
+    text: str,
+    item_id: str,
+    exclude_positions: Optional[list[tuple[int, int]]] = None,
+    clause_index: Optional[dict[str, Any]] = None,
+    exclude_clause_ids: Optional[set[str]] = None,
+) -> list[dict[str, Any]]:
+    """按词族在合同全文检索**其他条款**的摘录（关键词+位置+条款窗原文）。
 
-    检索范围=词族命中处（不做全卷扫描承诺，spec §3.2）；命中即带原文与
-    坐标，供报告「引用原文+所在位置」。"""
+    排除被改条款自身（codex #154 复批 3）：命中点落在被改条款的证据坐标
+    区间内、或按条款索引定位到被改条款的 clause_id，则不计入——否则会把
+    原条款自己当成「其他相关条款」误报已覆盖。检索范围=词族命中处
+    （不做全卷扫描承诺，spec §3.2）；命中即带原文与坐标。"""
     families = _load_families()
     keywords = families.get(item_id) or []
+    ranges = exclude_positions or []
+    exclude_ids = exclude_clause_ids or set()
     excerpts: list[dict[str, Any]] = []
     seen: set[int] = set()
     for kw in keywords:
@@ -77,6 +88,13 @@ def find_related_clauses(text: str, item_id: str) -> list[dict[str, Any]]:
             if pos < 0:
                 break
             start = pos + len(kw)
+            # 排除原条款自身：证据坐标区间命中 or 条款索引归属命中
+            if any(lo <= pos < hi for lo, hi in ranges):
+                continue
+            if exclude_ids and clause_index:
+                cid = evidence_module._clause_at(clause_index, pos)
+                if cid and cid in exclude_ids:
+                    continue
             # 相邻命中去重（同一窗口内多个词命中合并为一条摘录）
             bucket = pos // _EXCERPT_WINDOW
             if bucket in seen:
@@ -84,6 +102,14 @@ def find_related_clauses(text: str, item_id: str) -> list[dict[str, Any]]:
             seen.add(bucket)
             lo = max(0, pos - _EXCERPT_WINDOW)
             hi = min(len(text), pos + len(kw) + _EXCERPT_WINDOW)
+            # 摘录窗在排除区间边界裁剪：不把被改条款原文渗进「其他条款」
+            # 摘录（否则摘录挂着原条款尾巴，定位语义被污染）
+            for rlo, rhi in ranges:
+                if rlo < hi and rhi > lo:  # 窗口与排除区间相交
+                    if pos >= rhi:
+                        lo = max(lo, rhi)
+                    elif pos < rlo:
+                        hi = min(hi, rlo)
             excerpt = text[lo:hi].replace("\n", " ").strip()
             if excerpt:
                 excerpts.append({
@@ -98,16 +124,28 @@ def find_related_clauses(text: str, item_id: str) -> list[dict[str, Any]]:
 _SELECTED_DDL = (
     "CREATE TABLE IF NOT EXISTS selected_drafts ("
     "review_id TEXT NOT NULL, item_id TEXT NOT NULL,"
-    "draft_id TEXT NOT NULL, selected_at REAL NOT NULL,"
+    "draft_id TEXT NOT NULL, stance TEXT NOT NULL,"
+    "selected_at REAL NOT NULL,"
     "PRIMARY KEY (review_id, item_id))")
 
 
-def select_draft(store: Any, review_id: str, item_id: str,
-                 draft_id: str) -> dict[str, Any]:
-    """用户选定草案：校验归属（当前审查单+当前检查项）后落库可追溯。
+def _draft_stances(payload: dict[str, Any]) -> list[str]:
+    """从草案 payload 提取合法版别列表（稳妥/平衡/进取）。"""
+    stances = []
+    for v in payload.get("versions") or []:
+        if isinstance(v, dict) and isinstance(v.get("stance"), str) \
+                and v["stance"].strip():
+            stances.append(v["stance"].strip())
+    return stances
 
-    选定≠生成≠重审（三分，spec §3.1）；跨审查单/跨检查项的 draft_id
-    一律拒绝（not_found）。"""
+
+def select_draft(store: Any, review_id: str, item_id: str,
+                 draft_id: str, stance: str) -> dict[str, Any]:
+    """用户选定草案：校验归属（当前审查单+当前检查项）与**版别**后落库。
+
+    选定≠生成≠重审（三分，spec §3.1）；一个 draft_id 装三版（稳妥/平衡/
+    进取），选定必须落到具体版别（codex #154 复批 2）——否则连带影响
+    无法知道分析的是哪一版。跨审查单/跨检查项/版别不符一律拒绝。"""
     review = store.get(review_id)
     if review is None:
         return {"status": "not_found", "reason": "review_not_found"}
@@ -115,30 +153,36 @@ def select_draft(store: Any, review_id: str, item_id: str,
         return {"status": "not_found", "reason": "item_not_found"}
     with _connect() as conn:
         row = conn.execute(
-            "SELECT review_id, item_id, status FROM revision_drafts"
+            "SELECT review_id, item_id, status, payload FROM revision_drafts"
             " WHERE id = ?", (draft_id,)).fetchone()
     if row is None or row[0] != review_id or row[1] != item_id:
         return {"status": "not_found", "reason": "draft_not_found"}
     if row[2] != "ok":
         # 降级草稿没有可分析对象，不可选定
         return {"status": "not_supported", "reason": "draft_degraded"}
+    if not isinstance(stance, str) or stance.strip() not in \
+            _draft_stances(json.loads(row[3])):
+        return {"status": "not_supported", "reason": "stance_invalid",
+                "valid_stances": _draft_stances(json.loads(row[3]))}
     with _connect() as conn:
         conn.execute(_SELECTED_DDL)
         conn.execute(
             "INSERT OR REPLACE INTO selected_drafts"
-            " (review_id, item_id, draft_id, selected_at) VALUES (?,?,?,?)",
-            (review_id, item_id, draft_id, time.time()))
-    return {"status": "selected", "draft_id": draft_id}
+            " (review_id, item_id, draft_id, stance, selected_at)"
+            " VALUES (?,?,?,?,?)",
+            (review_id, item_id, draft_id, stance.strip(), time.time()))
+    return {"status": "selected", "draft_id": draft_id, "stance": stance.strip()}
 
 
-def get_selected_draft_id(review_id: str, item_id: str) -> Optional[str]:
+def get_selected(review_id: str, item_id: str) -> Optional[tuple[str, str]]:
+    """返回 (draft_id, stance)；未选定为 None。"""
     with _connect() as conn:
         conn.execute(_SELECTED_DDL)
         row = conn.execute(
-            "SELECT draft_id FROM selected_drafts"
+            "SELECT draft_id, stance FROM selected_drafts"
             " WHERE review_id=? AND item_id=?",
             (review_id, item_id)).fetchone()
-    return row[0] if row else None
+    return (row[0], row[1]) if row else None
 
 
 _IMPACT_REPORTS_DDL = (
@@ -177,8 +221,9 @@ store_module.PURGE_HOOKS.append(_purge_hook)
 
 def _parse_findings(raw: str, n_excerpts: int) -> list[dict[str, Any]]:
     """严格 Schema（对齐 revision._parse_versions 纪律）：
-    findings 须为列表，每项 index 在摘录范围内且 note 为非空字符串；
-    任一不符 → _Degraded("incomplete")（业务降级，不展示残缺报告）。"""
+    findings 字段**必须显式在场且为列表**（codex #154 复批 4：缺字段/空对象
+    =模型未完成分析，一律降级，不得把「没给」当「没有」）；每项 index 在
+    摘录范围内且 note 为非空字符串。仅显式 [] = 合法的「无不一致」。"""
     text = (raw or "").strip()
     if text.startswith("```"):
         text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text)
@@ -186,10 +231,11 @@ def _parse_findings(raw: str, n_excerpts: int) -> list[dict[str, Any]]:
         data = json.loads(text)
     except ValueError as exc:
         raise _Degraded("invalid_json") from exc
-    findings = data.get("findings") if isinstance(data, dict) else None
-    if findings is None:
-        findings = []  # 允许显式空结果（无不一致）
+    if not isinstance(data, dict):
+        raise _Degraded("incomplete")
+    findings = data.get("findings")
     if not isinstance(findings, list):
+        # 缺字段/{}/null/非列表 → 模型未按约定完成输出，整项降级（非空结果）
         raise _Degraded("incomplete")
     cleaned: list[dict[str, Any]] = []
     for f in findings:
@@ -220,8 +266,9 @@ def _default_llm_call(api_key: str, system: str, user: str) -> str:
     )
 
 
-def _load_draft_text(draft_id: str) -> Optional[str]:
-    """按 draft_id 取草案首版文本（用于送入 impact 分析的「选中版」）。"""
+def _load_draft_text(draft_id: str, stance: str) -> Optional[str]:
+    """按 draft_id+**选中版别** 取草案文本（codex #154 复批 2：
+    一个 draft_id 装三版，分析对象=选定版别的那一版，绝非固定第一版）。"""
     with _connect() as conn:
         row = conn.execute(
             "SELECT payload, status FROM revision_drafts WHERE id=?",
@@ -229,10 +276,32 @@ def _load_draft_text(draft_id: str) -> Optional[str]:
     if row is None or row[1] != "ok":
         return None
     payload = json.loads(row[0])
-    versions = payload.get("versions") or []
-    if not versions or not isinstance(versions[0], dict):
-        return None
-    return str(versions[0].get("text") or "")
+    for v in payload.get("versions") or []:
+        if isinstance(v, dict) and v.get("stance") == stance:
+            return str(v.get("text") or "")
+    return None
+
+
+def _exclude_ranges_for_item(item: dict[str, Any],
+                             clause_index: Optional[dict[str, Any]]
+                             ) -> tuple[list[tuple[int, int]], set[str]]:
+    """汇总被改条款的排除依据（codex #154 复批 3）：证据坐标区间+
+    条款索引归属（primary_clause_id + clause_ids + 证据起点定位）。"""
+    ranges: list[tuple[int, int]] = []
+    ids: set[str] = set()
+    s, e = item.get("evidence_start"), item.get("evidence_end")
+    if isinstance(s, int) and isinstance(e, int) and e >= s:
+        ranges.append((s, e + 1))
+    if item.get("primary_clause_id"):
+        ids.add(str(item["primary_clause_id"]))
+    for cid in item.get("clause_ids") or []:
+        if cid:
+            ids.add(str(cid))
+    if isinstance(s, int) and clause_index:
+        cid = evidence_module._clause_at(clause_index, s)
+        if cid:
+            ids.add(cid)
+    return ranges, ids
 
 
 def analyze_impact(
@@ -255,28 +324,44 @@ def analyze_impact(
     if item is None:
         return {"status": "not_found", "reason": "item_not_found"}
 
-    selected = get_selected_draft_id(review_id, item_id)
+    # codex #154 复批 2：选定落到具体版别，分析对象=选中的 (draft, stance)
+    selected = get_selected(review_id, item_id)
     if selected is None:
         return {"status": "not_supported", "reason": "draft_not_selected",
-                "message": "请先选定草案，再发起连带影响分析"}
-    if selected != draft_id:
+                "message": "请先选定草案（含版别），再发起连带影响分析"}
+    selected_draft, selected_stance = selected
+    if selected_draft != draft_id:
         # 连带影响始终分析「用户选中的那一版」——传了别版=拒绝（不迁就）
         return {"status": "not_supported", "reason": "draft_mismatch",
                 "message": "连带影响只分析已选定的草案版本"}
 
-    draft_text = _load_draft_text(draft_id)
+    draft_text = _load_draft_text(draft_id, selected_stance)
     if draft_text is None:
         return {"status": "not_found", "reason": "draft_not_found"}
 
     # 条款簇定位（本地检索，零费用）：查不到相关簇 → 如实标「未覆盖」，
-    # 不调 LLM、不装覆盖、不消耗额度（spec §3.2 措辞纪律）
-    parsed_text = str(review.get("parsed_text") or "")
-    excerpts = find_related_clauses(parsed_text, item_id) if parsed_text else []
+    # 不调 LLM、不装覆盖、不消耗额度（spec §3.2 措辞纪律）。
+    # codex #154 复批 1：真实审查单正文存 text 字段（parsed_text 是管道
+    # 入参不是落库字段——按真实形态读，否则永远假「未覆盖」）
+    contract_text = str(review.get("text") or "")
+    clause_index = review.get("clause_index") \
+        if isinstance(review.get("clause_index"), dict) else None
+    if contract_text:
+        excl_ranges, excl_ids = _exclude_ranges_for_item(item, clause_index)
+        excerpts = find_related_clauses(contract_text, item_id,
+                                        exclude_positions=excl_ranges,
+                                        clause_index=clause_index,
+                                        exclude_clause_ids=excl_ids)
+    else:
+        excerpts = []
     if not excerpts:
         report = {
             "covered": False,
-            "uncovered_reason": "未在合同全文检索到可能与该条款联动的其他条款"
-                                "（检索词族未命中，不代表没有冲突）",
+            "uncovered_reason": (
+                "未在合同全文检索到该条款之外可能与草案联动的其他条款"
+                "（不代表没有冲突）"
+                if contract_text else
+                "审查单缺少合同全文，无法定位相关条款簇（不代表没有冲突）"),
             "notice": impact_prompts.RE_REVIEW_NOTICE,
             "findings": [],
         }
@@ -335,6 +420,7 @@ def analyze_impact(
         "excerpts": excerpts,
         "findings": findings,
         "selected_draft_id": draft_id,
+        "selected_stance": selected_stance,
         "declaration": ("以下为一致性定位说明，不构成法律意见；"
                         "逐例语义核对以真实文本为准。"),
         "notice": impact_prompts.RE_REVIEW_NOTICE,
