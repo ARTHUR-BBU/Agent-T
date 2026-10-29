@@ -56,6 +56,12 @@ POLL_TIMEOUT_S = 600
 SEED_PREFIX = "b7adv"
 CONTAINER = "agent-t"
 SERVER_DB = "/tmp/agent-t-reviews.db"
+# 默认考卷=B7-2 新卷（codex #156 复批 1：默认拿错卷=重复付费考旧题）；
+# B7-1 冻结卷须显式 --manifest manifest.json 才能用
+DEFAULT_MANIFEST = "manifest-b72.json"
+# 峰值牌价（¥/百万 tokens，与官方页一致；空闲口径减半另算）
+IN_PRICE_CNY_PER_M = 2.0
+OUT_PRICE_CNY_PER_M = 8.0
 # impact 送审草案文本的长度上界（费用上界计入口径；超界=阅卷不通过，
 # 保证「估算上界」在发出请求前成立）
 DRAFT_TEXT_BOUND_CHARS = 2000
@@ -280,6 +286,55 @@ def run_dry(manifest: dict, fixtures: pathlib.Path) -> int:
 
 # ============ live：种子单 + 真实服务调用 + 严格布尔阅卷 ============
 
+def _case_io_bound(case: dict, text: str, checklist: dict) -> tuple[int, int]:
+    """单例输入/输出上界（字符/tokens）——premise 汇总与逐请求预算边界共用
+    同一份测量（口径一致，codex #156 复批 5：费用边界要可执行）。"""
+    kind = case["kind"]
+    rev_cap = NODE_MAX_OUTPUT_TOKENS.get("revision") or 0
+    impact_cap = NODE_MAX_OUTPUT_TOKENS.get("impact") or 0
+    in_chars = 0
+    out_tokens = 0
+    if kind in ("live", "impact_live"):
+        target = next((i for i in checklist["items"]
+                       if i["id"] == case["target_item"]), None)
+        if target is not None:
+            in_chars += (len(revision_prompts.build_system())
+                         + len(revision_prompts.build_user(
+                             target, str(checklist.get("category_label") or ""))))
+            out_tokens += rev_cap
+        if kind == "impact_live":
+            if target is None:
+                raise KeyError(f"{case['id']}: target 缺失，无法测 impact 上界")
+            clause_index = build_clause_index(text)
+            map_items_to_clauses(checklist["items"], clause_index, text)
+            ranges, ids = _exclude_ranges_for_item(target, clause_index)
+            excerpts = find_related_clauses(
+                text, case["target_item"], exclude_positions=ranges,
+                clause_index=clause_index, exclude_clause_ids=ids)
+            if case["expect"]["covered"]:
+                out_tokens += impact_cap
+            i_user = impact_prompts.build_user(
+                "X" * DRAFT_TEXT_BOUND_CHARS, excerpts)
+            in_chars += len(impact_prompts.build_system()) + len(i_user)
+    return in_chars, out_tokens
+
+
+def _worst_cny(in_chars: int, out_tokens: int) -> float:
+    """单例最坏费用（峰值牌价，保守 1 token/字）。"""
+    return (out_tokens * OUT_PRICE_CNY_PER_M
+            + in_chars * IN_PRICE_CNY_PER_M) / 1e6
+
+
+def _can_afford_next(cumulative: float | None, worst_next_cny: float,
+                     hard_cap: float) -> bool:
+    """发下一请求前的可执行预算边界（codex #156 复批 5）：
+    账本累计 + 下一请求最坏 < 硬上限才放行；累计未知=绝不放行。
+    把「进行中请求」的最坏费用预先计入，硬上限才真正可执行。"""
+    if cumulative is None:
+        return False
+    return (cumulative + worst_next_cny) < hard_cap
+
+
 def _post_json(base: str, auth: tuple[str, str], url_path: str,
                payload: dict, timeout: int = 300) -> httpx.Response:
     try:
@@ -398,8 +453,12 @@ def _run_impact_case(base: str, auth: tuple[str, str], server_host: str,
             and len(rev_rows) == want["revision_llm_calls"])
     else:
         reason_txt = str(report.get("uncovered_reason") or "")
+        # codex #156 复批 2：「确实找过但没找到」≠「无法查找」（受限态）——
+        # I2 金标只认前者；缺索引受限（无法可靠定位）判不通过
         fields["pass"] = bool(
             covered_ok and "不代表没有冲突" in reason_txt
+            and "检索" in reason_txt
+            and "无法可靠定位" not in reason_txt
             and len(imp_rows) == want["impact_llm_calls"]
             and imp_used == want["impact_budget_used"]
             and len(rev_rows) == want["revision_llm_calls"])
@@ -407,7 +466,11 @@ def _run_impact_case(base: str, auth: tuple[str, str], server_host: str,
 
 
 def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
-             out_path: pathlib.Path) -> int:
+             out_path: pathlib.Path,
+             manifest_name: str = DEFAULT_MANIFEST) -> int:
+    # 开跑亮卷（codex #156 复批 1：防默认拿错卷重复付费考旧题）
+    print(f"[考卷] {manifest_name} · {manifest['purpose'][:50]}"
+          f" · 例 {[c['id'] for c in manifest['cases']]}")
     # --live 入口强制先过同一份前提与费用上界预检（不得绕过，codex 复批）：
     # 内部直调 run_dry（真实前提核对），main 与直调两条入口同闸；
     # 闸门先于 _auth/余额/版本——预检不过连凭据都不碰
@@ -438,6 +501,14 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
     cost_unknown = False
     stop_reason: str | None = None
     consecutive_failures = 0  # 合并计数册：transport 失败与基建失败同册，成功清零
+    # 可执行预算边界（codex #156 复批 5）：预计算每例最坏费用，
+    # 发下一请求前校验「累计+下一请求最坏」< 硬上限
+    worsts: dict[str, float] = {}
+    for c in manifest["cases"]:
+        text_c = (fixtures_dir / c["file"]).read_text(encoding="utf-8")
+        cl = run_checklist(text_c, c["category"])
+        in_ch, out_t = _case_io_bound(c, text_c, cl)
+        worsts[c["id"]] = _worst_cny(in_ch, out_t)
     record: dict = {"purpose": manifest["purpose"],
                     "caller_head": caller,
                     "server_revision": rev, "hard_cap_cny": hard_cap,
@@ -458,6 +529,20 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
             if stop_reason:
                 break
             cid, kind = case["id"], case["kind"]
+            # 发请求前的可执行预算边界（codex #156 复批 5）：
+            # 账本累计 + 本例最坏 < 硬上限才发请求
+            if not _can_afford_next(cumulative, worsts[cid], hard_cap):
+                cum_txt = f"¥{cumulative:.2f}" if cumulative is not None else "未知"
+                note = (f"预算边界：累计 {cum_txt} + 本例最坏 "
+                        f"¥{worsts[cid]:.3f} ≥ 硬上限 ¥{hard_cap}——请求前拦截")
+                rid = f"{SEED_PREFIX}{cid.lower()}{uuid.uuid4().hex[:4]}"
+                rec = {"id": cid, "review_id": rid, "kind": kind,
+                       "pass": False, "skipped": True, "error": note}
+                results.append(rec)
+                all_rids.append(rid)
+                stop_reason = note
+                print(f"STOP: {stop_reason}")
+                break
             rid = f"{SEED_PREFIX}{cid.lower()}{uuid.uuid4().hex[:4]}"
             rec: dict = {"id": cid, "review_id": rid, "kind": kind}
             results.append(rec)
@@ -653,7 +738,7 @@ def run_live(manifest: dict, base: str, auth_file: str, server_host: str,
         return 1
     print(f"PASS: {len(results)} 例全过；账本峰值估算 ¥{cumulative:.2f}"
           f"（非现金实付，M6.5 口径）")
-    _emit_semantic_rows(results, out_path.parent)
+    _emit_semantic_rows(results, out_path.parent, manifest_name)
     return 0
 
 
@@ -666,7 +751,15 @@ def _account(server_host: str, rids: list[str]) -> float | None:
         return None
 
 
-def _emit_semantic_rows(results: list[dict], out_dir: pathlib.Path) -> None:
+def _emit_semantic_rows(results: list[dict], out_dir: pathlib.Path,
+                        manifest_name: str = DEFAULT_MANIFEST) -> None:
+    # codex #156 复批 3：验收预填按批次独立文件，且**拒绝覆盖既有记录**
+    #（B7-1 历史验收表在仓库中，不得被后续实跑冲掉）
+    batch = "b7-2" if "b72" in manifest_name else "b7-1"
+    out = out_dir / f"semantic-acceptance-{batch}-filled.md"
+    if out.exists():
+        raise SystemExit(
+            f"拒绝覆盖既有验收记录：{out}（如确需重跑请先移走旧文件留档）")
     lines = ["# M7 对抗集实跑 · 语义验收预填（runner 自动生成）\n"]
     for rec in results:
         if rec["kind"] == "impact_refuse":
@@ -680,10 +773,20 @@ def _emit_semantic_rows(results: list[dict], out_dir: pathlib.Path) -> None:
             continue
         if rec["kind"] == "impact_live":
             rep = rec.get("impact_report") or {}
+            draft = rec.get("draft") or {}
+            stance = rec.get("select_stance")
+            sel_text = next((v.get("text") or "" for v in draft.get(
+                "versions", []) if isinstance(v, dict)
+                and v.get("stance") == stance), "（未取得）")
+            # codex #156 复批 4：预填必须带被改原文+选中草案正文，
+            # 老钱才能逐项对照 findings 是否对得上
             lines.append(
                 f"## 例 {rec['id']}（impact_live · {rec.get('impact_status')}）\n\n"
-                f"- 选定版别：{rec.get('select_stance')} · 声明假设：\n")
-            for a in (rec.get("draft") or {}).get("assumptions") or []:
+                f"- 被改条款原文：{draft.get('original_quote', '（未取得）')}\n"
+                f"- 选定版别：{stance}\n"
+                f"- 选中草案正文：{sel_text}\n"
+                f"- 声明假设：\n")
+            for a in draft.get("assumptions") or []:
                 lines.append(f"  - {a}\n")
             if rep.get("covered"):
                 lines.append(f"- 重审提示在场："
@@ -740,7 +843,6 @@ def _emit_semantic_rows(results: list[dict], out_dir: pathlib.Path) -> None:
         lines.append(f"- 声明在场：{'是' if rec.get('declaration') else '否'}"
                      f" · 禁语扫描：{rec.get('banned') or '0 命中'}\n")
         lines.append("- 老钱裁定：____（PASS/FAIL + 原因）\n")
-    out = out_dir / "semantic-acceptance-b7-1-filled.md"
     out.write_text("".join(lines), encoding="utf-8")
     print(f"语义表预填：{out}")
 
@@ -769,9 +871,10 @@ def subprocess_head() -> str:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--fixtures", default="fixtures/m7")
-    ap.add_argument("--manifest", default="manifest.json",
-                    help="清单文件名（fixtures 目录下）；B7-2 批用"
-                         " manifest-b72.json，B7-1 清单保持冻结")
+    ap.add_argument("--manifest", default=DEFAULT_MANIFEST,
+                    help="清单文件名（fixtures 目录下）；默认 B7-2 新卷"
+                         " manifest-b72.json（防默认拿错卷重复付费，codex"
+                         " #156 复批 1）；B7-1 冻结卷须显式指定")
     ap.add_argument("--base", default="http://59.110.13.13:8080")
     ap.add_argument("--auth-file",
                     default=r"F:\合同审查Agent\.deploy-credentials.txt")
@@ -786,7 +889,7 @@ def main() -> int:
         return run_dry(manifest, REPO / args.fixtures)
     # --live 入口强制先过同一份前提与费用上界预检（不得绕过，codex 复批）
     return run_live(manifest, args.base, args.auth_file, args.server_host,
-                    REPO / args.out)
+                    REPO / args.out, manifest_name=args.manifest)
 
 
 if __name__ == "__main__":

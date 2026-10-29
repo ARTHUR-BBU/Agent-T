@@ -245,3 +245,135 @@ def test_draft_over_bound_fails_cost_guard(monkeypatch):
         case=_CASE_I1)
     assert step == "fail"
     assert "超上界" in str(fields.get("error"))
+
+
+# ---------- #156 复批 1：默认考卷=B7-2 新卷，开跑亮卷 ----------
+
+def test_default_manifest_is_b72():
+    assert runner.DEFAULT_MANIFEST == "manifest-b72.json", \
+        "默认卷必须是 B7-2 新卷（防默认拿错卷重复付费考旧题）"
+    assert (FIXTURES / runner.DEFAULT_MANIFEST).exists()
+
+
+def test_run_live_prints_manifest_identity(tmp_path, monkeypatch, capsys):
+    """--live 开跑先亮卷（卷名+用途+例号），复核人可一眼核对考的是什么。"""
+    monkeypatch.setattr(runner, "run_dry", lambda m, f: 1)  # 预检失败即停
+    m = _load("manifest-b72.json")
+    rc = runner.run_live(m, "http://x", "auth", "host",
+                         tmp_path / "out.json", manifest_name="manifest-b72.json")
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "manifest-b72.json" in out
+    assert "V1" in out and "R4" in out, "例号必须在亮卷行中"
+
+
+# ---------- #156 复批 2：受限态≠未覆盖金标（I2 假绿封堵） ----------
+
+def test_i2_restricted_wording_fails(monkeypatch):
+    """缺索引受限态（无法可靠定位）冒充未覆盖 → 阅卷必须不通过。"""
+    report = {"covered": False,
+              "notice": runner.impact_prompts.RE_REVIEW_NOTICE,
+              "uncovered_reason": "无法可靠定位被修改条款的完整范围（缺条款"
+                                  "索引或无法定位条款边界），为避免把原条款"
+                                  "误当关联条款，本次不进行关联分析（不代表"
+                                  "没有冲突）"}
+    _patch_chain(monkeypatch, _good_draft(), 200,
+                 {"status": "uncovered", "report": report},
+                 rev_rows=[{"call_id": "r1"}], imp_rows=[], budget=(1, 0))
+    fields, _step = runner._run_impact_case(
+        base="http://x", auth=("u", "p"), server_host="h", rid="r",
+        case=_CASE_I2)
+    assert fields["pass"] is False, \
+        "受限态不是「找过但没找到」，不得按未覆盖金标判过"
+
+
+def test_i2_found_nothing_wording_passes(monkeypatch):
+    """真·找过但没找到（检索措辞）→ 按未覆盖金标判过。"""
+    report = {"covered": False,
+              "notice": runner.impact_prompts.RE_REVIEW_NOTICE,
+              "uncovered_reason": "未在合同全文检索到该条款之外可能与草案联动"
+                                  "的其他条款（不代表没有冲突）"}
+    _patch_chain(monkeypatch, _good_draft(), 200,
+                 {"status": "uncovered", "report": report},
+                 rev_rows=[{"call_id": "r1"}], imp_rows=[], budget=(1, 0))
+    fields, _step = runner._run_impact_case(
+        base="http://x", auth=("u", "p"), server_host="h", rid="r",
+        case=_CASE_I2)
+    assert fields["pass"] is True
+
+
+# ---------- #156 复批 3/4：验收表独立文件+不覆盖历史+补关键正文 ----------
+
+def _impact_rec() -> dict:
+    d = _good_draft()["draft"]
+    d["original_quote"] = "乙方违约的定金不予退还。"
+    return {"id": "I1", "kind": "impact_live", "pass": True,
+            "impact_status": "ok", "select_stance": "平衡",
+            "impact_llm_calls": 1, "impact_budget_used": 1,
+            "draft": d,
+            "impact_report": {"covered": True,
+                              "notice": runner.impact_prompts.RE_REVIEW_NOTICE,
+                              "selected_stance": "平衡",
+                              "excerpts": [{"index": 0, "keyword": "违约金",
+                                            "position": 60, "excerpt": "第十"
+                                            "二条 违约责任：…"}],
+                              "findings": [{"index": 0, "note": "赔偿口径不"
+                                            "一致"}]}}
+
+
+def test_semantic_rows_b72_separate_file(tmp_path):
+    """B7-2 批写独立文件，绝不写 B7-1 历史验收表文件名。"""
+    runner._emit_semantic_rows([_impact_rec()], tmp_path,
+                               manifest_name="manifest-b72.json")
+    assert (tmp_path / "semantic-acceptance-b7-2-filled.md").exists()
+    assert not (tmp_path / "semantic-acceptance-b7-1-filled.md").exists()
+
+
+def test_semantic_rows_refuse_overwrite_history(tmp_path):
+    """目标文件已存在=拒绝覆盖（保护历史验收记录，codex #156 复批 3）。"""
+    target = tmp_path / "semantic-acceptance-b7-2-filled.md"
+    target.write_text("历史记录", encoding="utf-8")
+    try:
+        runner._emit_semantic_rows([_impact_rec()], tmp_path,
+                                   manifest_name="manifest-b72.json")
+        raised = False
+    except SystemExit:
+        raised = True
+    assert raised, "已存在的验收记录必须拒绝覆盖"
+    assert target.read_text(encoding="utf-8") == "历史记录", "旧记录原样保留"
+
+
+def test_semantic_rows_impact_prefill_carries_quotes(tmp_path):
+    """预填必须带被改原文+选中草案正文（老钱逐项对照的依据）。"""
+    runner._emit_semantic_rows([_impact_rec()], tmp_path,
+                               manifest_name="manifest-b72.md".replace(".md", ".json"))
+    text = (tmp_path / "semantic-acceptance-b7-2-filled.md").read_text(
+        encoding="utf-8")
+    assert "乙方违约的定金不予退还。" in text, "被改条款原文必须在场"
+    assert "折中方案文本。" in text, "选中版草案正文必须在场"
+    assert "选定版别：平衡" in text
+    assert "赔偿口径不一致" in text, "findings 逐条在场"
+
+
+# ---------- #156 复批 5：可执行预算边界 ----------
+
+def test_can_afford_next_boundary():
+    """发请求前校验：累计+本请求最坏 < 上限；累计未知=绝不放行。"""
+    assert runner._can_afford_next(0.5, 0.13, 2.0) is True
+    assert runner._can_afford_next(1.88, 0.132, 2.0) is False, \
+        "累计+最坏 ≥ 上限必须拦截（不能靠批后对账）"
+    assert runner._can_afford_next(None, 0.13, 2.0) is False, \
+        "费用未知绝不放行下一请求"
+
+
+def test_case_io_bound_matches_premise_scale():
+    """单例上界测量与 premise 汇总同一口径（I1=2 次调用上界）。"""
+    m = _load("manifest-b72.json")
+    case = next(c for c in m["cases"] if c["id"] == "I1")
+    text = (FIXTURES / case["file"]).read_text(encoding="utf-8")
+    from app.services.checklist import run_checklist
+    cl = run_checklist(text, case["category"])
+    in_ch, out_t = runner._case_io_bound(case, text, cl)
+    assert out_t == 16000 + 8000, "I1 最坏=1 次 revision+1 次 impact 输出"
+    assert in_ch > 0
+    assert runner._worst_cny(in_ch, out_t) < 2.0, "单例最坏必须小于硬上限"
