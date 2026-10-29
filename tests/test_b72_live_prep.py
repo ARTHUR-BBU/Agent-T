@@ -92,7 +92,7 @@ def test_impact_fixture_premises():
 
 def _patch_chain(monkeypatch, revision_body, select_http, impact_body,
                  rev_rows=(), imp_rows=(), budget=(1, 1),
-                 strict_spent=(0, 0, 0)):
+                 strict_spent=(0, 0, 0, {})):
     """mock HTTP 链与账本/额度/严格圈账查询（零网络零 ssh）。"""
     responses = {
         "revision": _resp(200, revision_body),
@@ -452,8 +452,9 @@ def test_i1_normal_usage_two_calls_pass(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "check_revision", lambda c, t: (True, ""))
     monkeypatch.setattr(runner, "deepseek_balance", lambda key: 99.0)
     monkeypatch.setattr(runner, "_spent_strict",
-                        lambda host, rids: (100, 200, 0,
-                        {r: [100, 200, 0, 1] for r in rids}))
+                        lambda host, rids: (150, 260, 0,
+                        {r: {"revision": [100, 200, 0, 1],
+                            "impact": [50, 60, 0, 1]} for r in rids}))
     monkeypatch.setattr(runner, "_node_ledger_status",
                         lambda host, rid, node: (1, 0))
     monkeypatch.setattr(runner, "_revision_ledger_rows",
@@ -504,7 +505,10 @@ def test_strict_spent_missing_usage_is_unknown(tmp_path):
     ins, outs, unknown, per = json.loads(out)
     assert (ins, outs) == (10, 20), "有用量行正常累计"
     assert unknown == 2, "缺用量的真实请求行必须计为未知（skip 行不计）"
-    assert per["r1"][3] == 3, "per-rid 真实行数=3（skip 行不计）"
+    # 五轮契约：per[rid][node]=[ins,outs,unknown,real_rows]
+    rev = per["r1"]["revision"]
+    assert rev[3] == 3, "revision 节点真实行数=3（skip 行不计）"
+    assert rev[0] == 10 and rev[2] == 2, "节点级用量与未知数分列正确"
 
 
 def test_node_rows_fragment(tmp_path):
@@ -551,13 +555,22 @@ def test_i1_zero_ledger_rows_blocks_impact(monkeypatch):
 
 
 def test_account_expect_paid_zero_rows_is_unknown(monkeypatch):
-    """四轮 P1：预计已发付费的单缺账行 → 费用未知返回 None；
-    本地拒绝例（不在 expect_paid）零行不受影响。"""
-    monkeypatch.setattr(runner, "_spent_strict", lambda host, rids: (
-        0, 0, 0, {"r_paid": [0, 0, 0, 0], "r_refuse": [0, 0, 0, 0]}))
-    assert runner._account("h", ["r_paid", "r_refuse"],
-                           expect_paid=("r_paid",)) is None, \
-        "应发账却零行=费用未知"
+    """五轮 P1（按节点核账）：已发节点缺账行 → 费用未知返回 None。
+    I1 只有 revision 有账、impact 缺账 → 未知；本地拒绝例不在
+    expect_paid，零行不受影响。"""
+    def fake_spent(host, rids):
+        if "r_i1" in rids:
+            return 100, 200, 0, {"r_i1": {"revision": [100, 200, 0, 1]}}
+        return 0, 0, 0, {r: {} for r in rids}  # 拒绝例：本就零行
+    monkeypatch.setattr(runner, "_spent_strict", fake_spent)
+    assert runner._account(
+        "h", ["r_i1"],
+        expect_paid={"r_i1": {"revision", "impact"}}) is None, \
+        "已发 impact 缺账行=费用未知（不能因 revision 有账误报已知）"
+    assert runner._account(
+        "h", ["r_i1"],
+        expect_paid={"r_i1": {"revision"}}) is not None, \
+        "只发了 revision 且其有账=费用已知"
     assert runner._account("h", ["r_refuse"]) == 0.0, \
         "本地拒绝例本就零行=真零元"
 
@@ -613,3 +626,69 @@ def test_run_live_refuses_existing_result_json(tmp_path, monkeypatch, capsys):
                          manifest_name="manifest-b72.json")
     assert rc == 1 and "拒绝开跑" in capsys.readouterr().out
     assert json.loads(result.read_text(encoding="utf-8")) == {"old": True}
+
+
+# ---------- #156 五轮 P1：按实际发起的付费节点分别核账 ----------
+
+_TWO_CASE_MANIFEST = {"purpose": "I1+V2 编排测试", "hard_cap_cny": 2.0,
+                      "cases": [
+                          dict(_CASE_I1, file="i1-impact-linked.txt",
+                               category="procurement"),
+                          {"id": "V2", "file": "v2-signing-condition.txt",
+                           "category": "procurement", "kind": "live",
+                           "target_item": "unfair_terms",
+                           "allowed_status": ["ok", "degraded"],
+                           "expect": {"versions": 3, "declaration": True,
+                                      "banned_free": True}}]}
+
+
+def test_i1_impact_row_missing_stops_batch(tmp_path, monkeypatch):
+    """五轮 P1 编排路径：impact 已发出但账本只有 revision 行 → 该例阅卷
+    不过 + 逐例结算判费用未知 + 后续题（V2）不启动 + 最终 cost_known=false。"""
+    paths: list[str] = []
+    report = {"covered": True, "notice": runner.impact_prompts.RE_REVIEW_NOTICE,
+              "selected_stance": "平衡",
+              "excerpts": [{"index": 0, "keyword": "违约金", "position": 60,
+                            "excerpt": "第十二条 违约责任：…"}],
+              "findings": [{"index": 0, "note": "赔偿口径不一致"}]}
+
+    def fake_post(base, auth, url_path, payload, timeout=300):
+        paths.append(url_path)
+        if url_path.endswith("/revision"):
+            return _resp(200, _good_draft())
+        if url_path.endswith("/select"):
+            return _resp(200, {"status": "selected"})
+        return _resp(200, {"status": "ok", "report": report})
+
+    monkeypatch.setattr(runner, "_post_json", fake_post)
+    monkeypatch.setattr(runner, "_seed_review", lambda *a, **kw: None)
+    monkeypatch.setattr(runner, "server_revision", lambda host: "x")
+    monkeypatch.setattr(runner, "check_revision", lambda c, t: (True, ""))
+    monkeypatch.setattr(runner, "deepseek_balance", lambda key: 99.0)
+    # 账本只有 revision 行（impact 写账失败）：rev_usage 齐、impact 全缺
+    monkeypatch.setattr(runner, "_spent_strict", lambda host, rids: (
+        100, 200, 0, {r: {"revision": [100, 200, 0, 1]} for r in rids}))
+    monkeypatch.setattr(runner, "_node_ledger_status", lambda host, rid, node: (
+        (1, 0) if node == "revision" else (0, 0)))
+    monkeypatch.setattr(runner, "_revision_ledger_rows",
+                        lambda host, rid, node="revision":
+                        [{"call_id": "rev"}] if node == "revision" else [])
+    monkeypatch.setattr(runner, "_budget_used", lambda host, rid: (1, 0))
+
+    def v2_must_not_run(url, auth=None, timeout=None):
+        raise AssertionError("I1 费用未知后不得启动后续题（V2）")
+
+    monkeypatch.setattr(runner.httpx, "post", v2_must_not_run)
+    auth = tmp_path / "auth"
+    auth.write_text("user=u\npassword=p\ndeepseek_key=dk\n", encoding="utf-8")
+    rc = runner.run_live(_TWO_CASE_MANIFEST, "http://x", str(auth), "host",
+                         tmp_path / "out.json",
+                         manifest_name="manifest-b72.json")
+    out = json.loads((tmp_path / "out.json").read_text(encoding="utf-8"))
+    assert rc == 1
+    assert out["cost_known"] is False, "impact 缺账=费用未知，不得标已知"
+    assert "费用未知" in (out["stop_reason"] or "")
+    assert len(out["results"]) == 1, "后续题未启动（只有 I1 一条记录）"
+    assert out["results"][0]["pass"] is False
+    sent = {p.rsplit("/", 1)[-1] for p in paths}
+    assert sent == {"revision", "select", "impact"}, "I1 三步都已发出"
