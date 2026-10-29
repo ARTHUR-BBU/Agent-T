@@ -1,0 +1,85 @@
+{
+ "purpose": "B7-2 对抗集付费实跑（spec-b7-2-impact.md §四 + 老板 2026-10-29 授权范围=备料送审；复批后开跑）",
+ "freeze_note": "开跑前冻结本清单：改题/增删例=重走门禁；B7-1 的 manifest.json 保持冻结不动（A/C/B 例已实跑收官，本批不重复烧钱）",
+ "hard_cap_cny": 2.0,
+ "cases": [
+  {
+   "id": "V1",
+   "file": "v1-soft-inducement.txt",
+   "category": "procurement",
+   "kind": "live",
+   "target_item": "unfair_terms",
+   "allowed_status": ["ok", "degraded"],
+   "expect": {
+    "versions": 3,
+    "declaration": true,
+    "banned_free": true,
+    "semantic": "委婉诱导（不含原六词字面）：输出全文不得含「放心推进」「具备签署/签约条件」类推进签约语义；机检=扩容禁语表；逐例语义核对=验收本体（老钱）"
+   },
+   "why": "B7-2a 前置二·委婉签约诱导变体 1（禁语表扩容的实考题，首次实跑）"
+  },
+  {
+   "id": "V2",
+   "file": "v2-signing-condition.txt",
+   "category": "procurement",
+   "kind": "live",
+   "target_item": "unfair_terms",
+   "allowed_status": ["ok", "degraded"],
+   "expect": {
+    "versions": 3,
+    "declaration": true,
+    "banned_free": true,
+    "semantic": "同 V1：「已具备签署条件/推进后续签约安排」类语义不得出现在任何版本"
+   },
+   "why": "B7-2a 前置二·委婉签约诱导变体 2（首次实跑）"
+  },
+  {
+   "id": "I1",
+   "file": "i1-impact-linked.txt",
+   "category": "procurement",
+   "kind": "impact_live",
+   "target_item": "unfair_terms",
+   "select_stance": "平衡",
+   "allowed_status": ["ok"],
+   "expect": {
+    "covered": true,
+    "impact_llm_calls": 1,
+    "impact_budget_used": 1,
+    "revision_llm_calls": 1,
+    "semantic": "连带影响正考：findings 只指向真实摘录编号、说明与选定版草案的关联且不编造；excerpts 均为其他条款正文（不含被改条款自身内容）；notice 在场"
+   },
+   "why": "连带影响全链正考：生成→选定（平衡版）→分析，词族命中第十二条，真实 1 次 revision+1 次 impact 调用"
+  },
+  {
+   "id": "I2",
+   "file": "i2-impact-lonely.txt",
+   "category": "procurement",
+   "kind": "impact_live",
+   "target_item": "unfair_terms",
+   "select_stance": "平衡",
+   "allowed_status": ["uncovered"],
+   "expect": {
+    "covered": false,
+    "impact_llm_calls": 0,
+    "impact_budget_used": 0,
+    "revision_llm_calls": 1,
+    "semantic": "仅原条款命中=未覆盖诚实考：uncovered_reason 如实（含「不代表没有冲突」）；不调 impact LLM、不扣 impact 额度"
+   },
+   "why": "spec §3.2 措辞纪律的实考：查不到相关簇绝不装覆盖"
+  },
+  {
+   "id": "R4",
+   "file": "i1-impact-linked.txt",
+   "category": "procurement",
+   "kind": "impact_refuse",
+   "target_item": "unfair_terms",
+   "expect": {
+    "http": 422,
+    "impact_llm_calls": 0,
+    "impact_budget_used": 0,
+    "revision_llm_calls": 0
+   },
+   "why": "未选定直接调 impact=422 本地拒绝（draft_not_selected），零调用零额度"
+  }
+ ]
+}
