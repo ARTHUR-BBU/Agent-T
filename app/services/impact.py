@@ -301,8 +301,9 @@ def _exclude_ranges_for_item(item: dict[str, Any],
     - **被排除条款的完整 span**（按条款索引查 start/end）——引句之后的
       条款尾巴同样不得渗进「其他条款」摘录；
     - 条款 id 集合（primary_clause_id + clause_ids + 证据起点定位）。
-    条款索引不可用/查不到 span 时保守回退：仅按引句区间裁剪（少裁
-    不误删，命中排除仍由 clause_id 判断兜住）。"""
+    注意：索引不可用/查不到 span 时本函数只回引句区间——此时调用方
+    （analyze_impact）必须先过 reliable 可靠性门禁，不达标直接保守
+    受限，不放行正常分析（codex P2 复批）。"""
     ranges: list[tuple[int, int]] = []
     ids: set[str] = set()
     s, e = item.get("evidence_start"), item.get("evidence_end")
@@ -369,6 +370,25 @@ def analyze_impact(
         if isinstance(review.get("clause_index"), dict) else None
     if contract_text:
         excl_ranges, excl_ids = _exclude_ranges_for_item(item, clause_index)
+        # 复批 P2 收紧（codex 2026-10-29）：无法可靠取得被改条款完整范围
+        # （缺条款索引/定位不到条款）时，仅按引句裁剪挡不住尾巴渗漏与
+        # 标题误捕——保守受限：停止正常关联分析，不调 LLM、不扣额度、
+        # 不报覆盖。真实 done 审查单均带条款索引，此路径属异常数据形态。
+        reliable = bool(clause_index) and bool(excl_ids) and any(
+            _clause_span(clause_index, cid) is not None for cid in excl_ids)
+        if not reliable:
+            report = {
+                "covered": False,
+                "uncovered_reason": (
+                    "无法可靠定位被修改条款的完整范围（缺条款索引或无法"
+                    "定位条款边界），为避免把原条款误当关联条款，本次不"
+                    "进行关联分析（不代表没有冲突）"),
+                "notice": impact_prompts.RE_REVIEW_NOTICE,
+                "findings": [],
+            }
+            _save_impact_report(review_id, item_id, draft_id, "", report,
+                                "uncovered")
+            return {"status": "uncovered", "report": report}
         excerpts = find_related_clauses(contract_text, item_id,
                                         exclude_positions=excl_ranges,
                                         clause_index=clause_index,

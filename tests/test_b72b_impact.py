@@ -285,6 +285,44 @@ def test_excerpt_clips_full_original_clause_span(env_store):
                for e in res["report"]["excerpts"]), "关联条款原文必须完整保留"
 
 
+def test_missing_clause_index_is_restricted(env_store):
+    """复批 P2 收紧：缺条款索引时无法可靠定位原条款完整范围——保守受限
+    （不分析、不调 LLM、不扣额度、不报覆盖），绝不带尾巴假覆盖。"""
+    store, rid = env_store
+    text = ("第九条 定金：乙方违约定金不予退还；原条款尾部独有内容。\n"
+            "第十二条 违约责任：违约方应赔偿守约方损失。")
+    store.update(rid, text=text, clause_index=None)
+    draft_id = _select(store, rid)
+    llm = mock.Mock()
+    res = impact.analyze_impact(store, rid, "unfair_terms", draft_id,
+                                llm_call=llm)
+    assert res["status"] == "uncovered", f"缺索引必须保守受限：{res}"
+    llm.assert_not_called(), "受限路径不得调 LLM"
+    rep = res["report"]
+    assert rep["covered"] is False
+    assert "不代表没有冲突" in rep["uncovered_reason"], "措辞纪律"
+    assert "无法可靠定位" in rep["uncovered_reason"], "受限原因须如实说明"
+    assert revision.remaining_budget(rid, "impact", 3) == 3, "受限不扣额度"
+
+
+def test_clause_index_without_locating_item_is_restricted(env_store):
+    """索引在场但证据坐标定位不到条款（item 无坐标且无 clause_ids 归属）：
+    同样无法可靠取完整范围 → 保守受限。"""
+    store, rid = env_store
+    item = _item()
+    for k in ("evidence_start", "evidence_end", "primary_clause_id",
+              "clause_ids"):
+        item.pop(k, None)
+    store.update(rid, items=[item])
+    draft_id = _select(store, rid)
+    llm = mock.Mock()
+    res = impact.analyze_impact(store, rid, "unfair_terms", draft_id,
+                                llm_call=llm)
+    assert res["status"] == "uncovered"
+    llm.assert_not_called()
+    assert "无法可靠定位" in res["report"]["uncovered_reason"]
+
+
 def test_missing_text_is_uncovered(env_store):
     """审查单缺正文：诚实未覆盖（缺料≠没有冲突），不调 LLM。"""
     store, rid = env_store
