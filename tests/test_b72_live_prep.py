@@ -830,3 +830,113 @@ def test_run_live_i1_impact_timeout_full_ledger_continues(tmp_path, monkeypatch)
     assert len(v2_posts) == 1, "后续题正常启动（对照）"
     assert out["results"][0]["pass"] is False, "I1 transport 失败照实不过"
     assert out["results"][1]["pass"] is True, "V2 正常完成"
+
+
+# ---------- #158 三轮 P1：考试工具与生产库路径对齐 ----------
+
+def test_server_db_flows_to_all_fragments(monkeypatch):
+    """--server-db 对齐后，种单/账本/额度/严格圈账/节点核对/清理六个片段
+    必须全部用同一路径（应用和考试工具不得各看各的账本）。"""
+    dbs: list[str] = []
+
+    def fake_ssh(host, code, db, args=(), stdin_text=None):
+        dbs.append(db)
+        if "INSERT OR REPLACE INTO reviews" in code:
+            return "seeded 1\n"
+        if "revision_used" in code:
+            return "[1, 0]\n"
+        if "ins = sum" in code:
+            return "[0, 0, 0, {}]\n"  # 严格圈账 4 元组
+        if "real += 1" in code:
+            return "[1, 0]\n"  # 节点行核对
+        if "call_id" in code:
+            return "[]\n"
+        if "call_id" in code:
+            return "[]\n"
+        return "cleaned 1\n"
+
+    monkeypatch.setattr(runner, "_ssh_py", fake_ssh)
+    monkeypatch.setattr(runner, "SERVER_DB", "/data/agent-t-reviews.db")
+    runner._seed_review("h", "r1", {"filename": "f"})
+    runner._revision_ledger_rows("h", "r1")
+    runner._revision_ledger_rows("h", "r1", node="impact")
+    runner._budget_used("h", "r1")
+    runner._spent_strict("h", ["r1"])
+    runner._node_ledger_status("h", "r1", "revision")
+    runner._cleanup_seeds("h", ["r1"])
+    assert dbs, "至少触达一个片段"
+    assert all(d == "/data/agent-t-reviews.db" for d in dbs), \
+        f"片段用错库路径：{set(dbs)}"
+
+
+def test_server_db_default_is_legacy_tmp():
+    """默认仍指旧 /tmp（兼容），换装后实跑显式传 --server-db。"""
+    assert runner.SERVER_DB == "/tmp/agent-t-reviews.db"
+
+
+# ---------- #158 四轮 P2：同库贯通验证（种单→应用读单→查账→清理） ----------
+
+def test_same_db_end_to_end(tmp_path, monkeypatch):
+    """真 SQLite 全链贯通（零付费零 ssh）：runner 片段与**应用本身**指向
+    同一个库文件——种的单应用读得到、应用的草稿/额度 runner 查得到、
+    清理后两边一起消失。此前测试只证参数传递，本测试证真同库。"""
+    import subprocess
+    import sqlite3
+    from app.services.store import ReviewStore
+    db = str(tmp_path / "same.db")
+    # 应用侧：STORE_DB_PATH 指向同一文件（新容器语义）
+    monkeypatch.setenv("STORE_DB_PATH", db)
+    store = ReviewStore(db_path=db)
+    app_rid = store.create(filename="app.docx", category="procurement")
+
+    def exec_ssh(host, code, db_path, args=(), stdin_text=None):
+        """fake _ssh_py：真执行片段代码，指向同一 db 文件（模拟 docker exec）。"""
+        r = subprocess.run(["python", "-X", "utf8", "-c", code, db_path,
+                            *args], input=stdin_text,
+                           capture_output=True, text=True, check=False)
+        assert r.returncode == 0, f"片段失败: {r.stderr[-300:]}"
+        return r.stdout
+
+    monkeypatch.setattr(runner, "_ssh_py", exec_ssh)
+    monkeypatch.setattr(runner, "SERVER_DB", db)
+
+    # ① runner 种一个 DONE 审查单（考试语料单）
+    runner._seed_review("h", "seeded_rid", {"filename": "exam.txt",
+                                            "category": "procurement",
+                                            "items": []})
+    # ② 应用读单：种的单与自建单都能读到（同库）
+    assert store.get("seeded_rid") is not None, "种的单应用必须读得到"
+    assert store.get(app_rid) is not None
+
+    # ③ 应用产生草稿+额度（真 revision 链，mock LLM 回执）
+    from app.services import revision as _rev
+    monkeypatch.setattr(_rev.llm_ask, "_deepseek_key", lambda: "k")
+    good = json.dumps({"versions": [
+        {"stance": "稳妥", "text": "a", "note": "n"},
+        {"stance": "平衡", "text": "b", "note": "n"},
+        {"stance": "进取", "text": "c", "note": "n"}],
+        "rationale": "r", "assumptions": []}, ensure_ascii=False)
+    r = _rev.generate_revision(store, app_rid, "not_in_review",
+                               llm_call=lambda *a: good)
+    assert r["status"] == "not_found"  # 未检出项拒绝（不产生草稿）
+    store.update(app_rid, items=[
+        {"id": "unfair_terms", "name": "公平性", "status": "需关注",
+         "note": "n", "quote": "定金不予退还。", "hits": ["不予退还"]}])
+    r = _rev.generate_revision(store, app_rid, "unfair_terms",
+                               llm_call=lambda *a: good)
+    assert r["status"] == "ok"
+    # ④ runner 查账：同一库里额度与草稿可见
+    rev_used, imp_used = runner._budget_used("h", app_rid)
+    assert (rev_used, imp_used) == (1, 0), "应用消耗的额度 runner 必须查得到"
+    assert runner._node_ledger_status("h", app_rid, "revision")[0] >= 0
+    runner._spent_strict("h", [app_rid, "seeded_rid"])  # 不炸=同库可查
+    con = sqlite3.connect(db)
+    drafts = con.execute("SELECT COUNT(*) FROM revision_drafts"
+                         " WHERE review_id=?", (app_rid,)).fetchone()[0]
+    con.close()
+    assert drafts == 1, "应用写的草稿在同一库"
+
+    # ⑤ runner 清理：两单一起消失，应用读不到了（同库生效）
+    runner._cleanup_seeds("h", [app_rid, "seeded_rid"])
+    assert store.get(app_rid) is None, "清理后应用必须读不到（同库生效）"
+    assert store.get("seeded_rid") is None

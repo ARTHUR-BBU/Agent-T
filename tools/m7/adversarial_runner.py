@@ -54,6 +54,9 @@ HARD_CAP_CNY = 2.0
 POLL_TIMEOUT_S = 600
 SEED_PREFIX = "b7adv"
 CONTAINER = "agent-t"
+# 生产库路径：#158 部署单 v3 起新容器挂宿主卷、STORE_DB_PATH=/data/...
+# ——实跑必须 --server-db 与应用实际路径一致（codex #158 三轮 P1：
+# 应用和考试工具各看各的账本=查账不准）。默认仍指旧 /tmp 仅为兼容。
 SERVER_DB = "/tmp/agent-t-reviews.db"
 # 默认考卷=B7-2 新卷（codex #156 复批 1：默认拿错卷=重复付费考旧题）；
 # B7-1 冻结卷须显式 --manifest manifest.json 才能用
@@ -1053,8 +1056,12 @@ def subprocess_head() -> str:
 
 
 def main() -> int:
+    global SERVER_DB
     ap = argparse.ArgumentParser()
     ap.add_argument("--fixtures", default="fixtures/m7")
+    ap.add_argument("--server-db", default=SERVER_DB,
+                    help="服务端审查库路径——必须与应用实际 STORE_DB_PATH "
+                         "一致（#158 部署 v3 起生产为 /data/agent-t-reviews.db）")
     ap.add_argument("--manifest", default=DEFAULT_MANIFEST,
                     help="清单文件名（fixtures 目录下）；默认 B7-2 新卷"
                          " manifest-b72.json（防默认拿错卷重复付费，codex"
@@ -1069,6 +1076,8 @@ def main() -> int:
     args = ap.parse_args()
     manifest = json.loads(
         (REPO / args.fixtures / args.manifest).read_text(encoding="utf-8"))
+    # 库路径与应用对齐（codex #158 三轮 P1：各看各的账本=查账不准）
+    SERVER_DB = args.server_db
     if not args.live:
         return run_dry(manifest, REPO / args.fixtures)
     # --live 入口强制先过同一份前提与费用上界预检（不得绕过，codex 复批）
