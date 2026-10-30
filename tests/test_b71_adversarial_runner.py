@@ -79,7 +79,9 @@ def test_ledger_and_budget_fragments_use_argv_channel(server_db):
     rows = json.loads(r.stdout.strip().splitlines()[-1])
     assert len(rows) == 1 and rows[0]["call_id"] == "c1"
     r = _run_fragment(runner.BUDGET_USED_CODE, server_db, args=("r1",))
-    assert r.returncode == 0 and r.stdout.strip() == "2"
+    # v4 契约：额度按节点分列返回 [revision_used, impact_used]
+    assert r.returncode == 0
+    assert json.loads(r.stdout.strip().splitlines()[-1]) == [2, 0]
 
 
 def test_ssh_py_routes_args_to_argv(monkeypatch):
@@ -139,13 +141,16 @@ def _fake_env(monkeypatch, tmp_path, post=None, spent=(800, 4000)):
     monkeypatch.setattr(runner, "deepseek_balance", lambda key: 99.0)
     spent_calls: list[list[str]] = []
 
-    def fake_spent(host, container, rids):
+    def fake_spent(host, rids):
+        # v4 严格圈账契约（五轮按节点分列）：(ins, outs, unknown, per_rid)
         spent_calls.append(list(rids))
         if spent is None:
             raise RuntimeError("ledger down")
-        return spent
+        ins, outs = spent
+        return ins, outs, 0, {r: {"revision": [ins, outs, 0, 1]}
+                              for r in rids}
 
-    monkeypatch.setattr(runner, "spent_for_reviews", fake_spent)
+    monkeypatch.setattr(runner, "_spent_strict", fake_spent)
     posts: list[str] = []
 
     def default_post(url, auth=None, timeout=None):
@@ -197,7 +202,8 @@ def test_live_never_bypasses_dry_preflight(tmp_path, monkeypatch):
 def test_unknown_cost_stops_further_requests(tmp_path, monkeypatch):
     monkeypatch.chdir(runner.REPO)
     env = _fake_env(monkeypatch, tmp_path)
-    monkeypatch.setattr(runner, "_account", lambda host, rids: None)  # 圈账失败
+    monkeypatch.setattr(runner, "_account",
+                        lambda host, rids, expect_paid=(): None)  # 圈账失败
     rc = runner.run_live(_manifest(), "http://x", env["auth_path"], "host",
                          tmp_path / "out.json")
     assert rc == 1
