@@ -71,7 +71,11 @@ llm_calls=14（**切换时须重采**，非长期基线）；生产 env 开关�
    `iptables -I DOCKER-USER -p tcp --dport 8080 -j REJECT`
    （可逆：解除= `-D DOCKER-USER` 同款删规则；旧容器照常运行，伙伴侧
    新上传被拒，在途后台审查自然继续完成）。**记录已加规则**，任何
-   后续中止都必须先解除封锁再收尾
+   后续中止都必须先解除封锁再收尾。**加完必须外部实测命中**
+   （v7 依七轮复核补）：本地 `curl -m 10 http://<IP>:8080/health`
+   必须失败（超时/拒绝）=隔离成立；本机运维 ssh 通道不受影响；
+   解除规则后复测 /health 恢复 200。实测不成立 → 换封锁手段（如
+   安全组）再验证，不带病前进
 5. **在线排空**（此时 exec 可用）：轮询真实结构（每 30s）：
    ```bash
    docker exec agent-t python3 -c "
@@ -104,9 +108,14 @@ llm_calls=14（**切换时须重采**，非长期基线）；生产 env 开关�
    新上传已被封（步骤 4），进程停止即工作完成；此后文件集零写入
 8. **终迁移（全部经 docker cp+临时容器，对已停容器零 exec）**：
    ```bash
-   # ① 按步骤 6 记录拷文件集（记录 EXISTS 则该 cp 必查返回码，失败即
-   #    中止；SHM 按 SQLite 恢复语义拷出留档、恢复不参与）
+   # ① 按步骤 6 记录拷文件集（v7 修正：WAL/SHM 实际拷贝命令——按在线
+   #    记录存在则必须执行且必查返回码，失败即中止；SHM 按 SQLite 恢复
+   #    语义拷出留档、恢复不参与。演练证明：缺 WAL 的主库连表都读不到）
    docker cp agent-t:/tmp/agent-t-reviews.db /opt/agent-t-data/mig.db
+   # 步骤 6 记录 WAL_EXISTS 时，以下两条必跑且 rc 非零即中止（set -e）：
+   docker cp agent-t:/tmp/agent-t-reviews.db-wal /opt/agent-t-data/mig.db-wal
+   # 步骤 6 记录 SHM_EXISTS 时拷出留档（恢复不参与）：
+   docker cp agent-t:/tmp/agent-t-reviews.db-shm /opt/agent-t-data/mig.db-shm
    # ② 权限前移（root cp 落 root 属主，先修才可被 uid1000 读）
    chown -R 1000:1000 /opt/agent-t-data
    # ③ 读探针（appuser 真能读，权限错误不得误判为文件缺失）
@@ -145,16 +154,26 @@ llm_calls=14（**切换时须重采**，非长期基线）；生产 env 开关�
     agent-t-old-<ts>`、清 mig 原件、解除步骤 4 封锁；**失败**：见失败
     分支③
 
-**失败分支（按阶段）**：
+**失败分支（按阶段，v7 按演练证据修正）**：
 - ① 步骤 1-3 失败 → 未隔离，放弃换装（零影响）
 - ② 步骤 4-7 失败（未排空超时/迁移 assert 失败/任何中止）→ **删封锁
   规则恢复原服务**；旧容器完好（停用未删时 `docker start` 复活），
-  原件保留，报备
-- ③ 步骤 9 失败 → `docker rm agent-t`（新容器）→ `docker rename
-  agent-t-old-<ts> agent-t` → `docker start` → 删封锁规则 → 报备
-  （同一卷：部署后新写入保留；旧库原件在旧容器内未动）
+  原件保留，报备——此阶段尚无新写入，直接复活即完整恢复（演练阶段
+  2 证明原件未动）
+- ③ 步骤 9 失败 → **法 B（演练验证保新写入）**：`docker rm agent-t`
+  （新容器）→ **把宿主卷当前库拷回旧容器**：
+  `docker cp /opt/agent-t-data/agent-t-reviews.db agent-t-old-<ts>:/tmp/agent-t-reviews.db`
+  → `docker rename agent-t-old-<ts> agent-t` → `docker start` → 删封锁
+  规则 → 报备。（直接复活旧容器**不拷库**=读旧 inner 库丢部署后新
+  写入——演练法 A 已证伪，仅限步骤 7 前尚无新写入阶段使用）
+  或等价：继续用旧镜像 95555ed+同一 env/卷+STORE_DB_PATH 重启
+  （#148 已支持），同样保住新写入
 **无双写**：旧容器已停（步骤 7 起）且新容器用原名，全程单写者。
 **停机窗口**=步骤 7→9（分钟级，计划内）。
+
+**演练证据**：以上 WAL 迁移/核验/回退三段已于 2026-10-30 在生产服务器
+临时目录演练通过（零付费、未触碰生产容器），逐阶段记录见
+`docs/m7/deploy-rehearsal-b72.md`。
 
 ## 三、程序行为（按真实代码路径，v2 已修正并经复核确认）
 
