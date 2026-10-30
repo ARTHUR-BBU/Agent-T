@@ -47,21 +47,32 @@ llm_calls=14（**切换时须重采**，非长期基线）；生产 env 开关�
 - `docker cp`/`chown` 等宿主机操作**全部经 ssh 在服务器上执行**（文档
   所示命令均在 ssh 会话内跑，非本地）
 
-### 2.3 切换序列 v5（停机隔离排空 + WAL 显式检测 + 权限前移）
+### 2.3 切换序列 v6（隔离入口可逆+在线排空+停机零 exec+旧容器改名保留）
 
-**技术隔离手段**：本序列以 `docker stop` 为新写入的**技术阻断**——
-容器停止即服务不可达，不存在「仅通知不技术上挡新上传」的空窗；排空
-核查在停机后对静止库做（fail-closed）。按序执行，任一步失败走 §四：
+**三个 v5 缺陷的本版解法**：
+- 停机后不能 `docker exec` → WAL/SHM 存在性检测**前移到停机前在线
+  exec**（停机后文件集冻结，按记录拷贝即可）；排空核查也在**在线**
+  阶段完成（停机前确认无 processing，进程停止才等于工作完成）
+- 技术阻断新上传 ≠ 停机 → **服务器防火墙临时封 8080 入站**（iptables
+  DOCKER-USER 链 REJECT，可逆：删规则即恢复；旧容器照常运行，在途
+  后台审查自然完成）
+- 旧容器保留与原名冲突 → 停旧容器后 `docker rename` 为
+  `agent-t-old-<ts>`（文件系统=原件 /tmp 库保留在内），新容器用原名；
+  **核验通过才删旧，失败改回原名复活**
 
-1. **预告**：低峰窗口，伙伴群通知（告知短暂不可用时段）——通知不承担
-   隔离职责，隔离由步骤 2 的停机实现
-2. **预备份**（旧容器在线，backup API 一致性快照 → 宿主卷；此时仅作
-   双保险，非迁移源）+ 宿主卷目录 `mkdir`+`chown 1000:1000` 先行
+按序执行，任一步失败走本节末尾失败分支：
+
+1. **预告**：低峰窗口，伙伴群通知短暂不可用时段
+2. **预备份**（在线 backup API → 宿主卷，双保险非迁移源）+ 宿主卷
+   `mkdir -p /opt/agent-t-data && chown 1000:1000` 先行
 3. **构建镜像**：`git archive <冻结SHA>` → scp → `-f Dockerfile.server`
    → `agent-t:<SHA>`——构建期间旧容器照常服务
-4. **停机排空**：`docker stop -t 60 agent-t`（SIGTERM 给足在途请求收尾；
-   停机=新写入技术阻断）。**排空核查（fail-closed，按真实表结构查
-   JSON）**：
+4. **隔离入口（技术阻断新上传）**：ssh 在服务器执行
+   `iptables -I DOCKER-USER -p tcp --dport 8080 -j REJECT`
+   （可逆：解除= `-D DOCKER-USER` 同款删规则；旧容器照常运行，伙伴侧
+   新上传被拒，在途后台审查自然继续完成）。**记录已加规则**，任何
+   后续中止都必须先解除封锁再收尾
+5. **在线排空**（此时 exec 可用）：轮询真实结构（每 30s）：
    ```bash
    docker exec agent-t python3 -c "
    import sqlite3, json, sys
@@ -71,7 +82,7 @@ llm_calls=14（**切换时须重采**，非长期基线）；生产 env 开关�
        try:
            d = json.loads(data)
        except ValueError:
-           bad.append((rid, 'malformed'))  # 解析不了=无法证实已完成，fail-closed
+           bad.append((rid, 'malformed'))  # 解析不了=无法证实已完成
            continue
        if d.get('status') == 'processing':
            bad.append((rid, 'processing'))
@@ -79,63 +90,71 @@ llm_calls=14（**切换时须重采**，非长期基线）；生产 env 开关�
        print('NOT_DRAINED:', bad); sys.exit(1)
    print('drained')"
    ```
-   非 0 退出 → **中止换装**：`docker start agent-t` 复活原服务，向老板
-   报备，不误报成功。通过才进下一步。
-5. **终迁移（WAL 显式检测+权限前移+原件保留）**：
+   排空（退出 0）才继续；**超 10 分钟未排空 → 解除封锁+报备放弃**
+   （后台任务无法自然结束=不迁移，旧数据保持）
+6. **在线记录文件集**（停机前最后一步 exec，之后文件集冻结）：
    ```bash
-   # ① 容器内显式检测 WAL/SHM 是否存在（ABSENT/EXISTS 二值输出；
-   #    exec 失败 rc≠0 即中止——不得把执行失败当文件不存在）
    docker exec agent-t sh -c \
-     'if [ -f /tmp/agent-t-reviews.db-wal ]; then echo EXISTS; else echo ABSENT; fi'
-   # ② 整体拷出文件集（WAL 存在则必须拷贝成功——cp 失败=中止并保留
-   #    旧容器，禁止 2>/dev/null || true 吞错；SHM 按 SQLite 恢复方案
-   #    属可丢弃索引：拷出留档，恢复时不参与）
+     'if [ -f /tmp/agent-t-reviews.db-wal ]; then echo WAL_EXISTS; else echo WAL_ABSENT; fi;
+      if [ -f /tmp/agent-t-reviews.db-shm ]; then echo SHM_EXISTS; else echo SHM_ABSENT; fi'
+   ```
+   **exec 失败（rc≠0）即中止**——执行故障不得记成「不存在」；结果
+   （EXISTS/ABSENT 两条）记入执行日志
+7. **停机**：`docker stop -t 60 agent-t`——此时在途已排空（步骤 5）、
+   新上传已被封（步骤 4），进程停止即工作完成；此后文件集零写入
+8. **终迁移（全部经 docker cp+临时容器，对已停容器零 exec）**：
+   ```bash
+   # ① 按步骤 6 记录拷文件集（记录 EXISTS 则该 cp 必查返回码，失败即
+   #    中止；SHM 按 SQLite 恢复语义拷出留档、恢复不参与）
    docker cp agent-t:/tmp/agent-t-reviews.db /opt/agent-t-data/mig.db
-   docker cp agent-t:/tmp/agent-t-reviews.db-wal /opt/agent-t-data/mig.db-wal   # EXISTS 时必查 rc
-   docker cp agent-t:/tmp/agent-t-reviews.db-shm /opt/agent-t-data/mig.db-shm 2>/dev/null || echo "shm 无/可丢弃（SQLite 恢复语义）"
-   # ③ 权限前移（v5 修正：先修属主再让 uid1000 容器读，root cp 落 root
-   #    属主，不先修则 backup 必失败）
+   # ② 权限前移（root cp 落 root 属主，先修才可被 uid1000 读）
    chown -R 1000:1000 /opt/agent-t-data
-   # ④ 读探针（appuser 真能读文件集，权限错误不得误判为 WAL 不存在）
+   # ③ 读探针（appuser 真能读，权限错误不得误判为文件缺失）
    docker run --rm -v /opt/agent-t-data:/data agent-t:<SHA> python3 -c "
    import os
-   for f in ('mig.db',) + ((('mig.db-wal',) if os.path.exists('/data/mig.db-wal') else ())):
+   need = ['mig.db']
+   if os.path.exists('/data/mig.db-wal'):
+       need.append('mig.db-wal')
+   for f in need:
        open('/data/'+f, 'rb').read(1)
    print('read ok')"
-   # ⑤ backup API 收敛单文件（appuser 容器执行）+ 完整性断言 + 源/快照
-   #    逐项核对（行数一致才算迁移成立）
+   # ④ backup API 收敛单文件 + 完整性 + **源/快照行数 fail-closed 比较**
    docker run --rm -v /opt/agent-t-data:/data agent-t:<SHA> python3 -c "
-   import sqlite3, json
+   import sqlite3, sys
    src = sqlite3.connect('/data/mig.db')
    dst = sqlite3.connect('/data/agent-t-reviews.db')
    src.backup(dst); dst.close(); src.close()
    ok = sqlite3.connect('/data/agent-t-reviews.db').execute('PRAGMA integrity_check').fetchone()[0]
-   assert ok == 'ok', ok
-   for db in ('/data/mig.db', '/data/agent-t-reviews.db'):
-       c = sqlite3.connect(db)
-       print(db, 'reviews', c.execute('SELECT COUNT(*) FROM reviews').fetchone()[0],
-             'llm_calls', c.execute('SELECT COUNT(*) FROM llm_calls').fetchone()[0])"
+   assert ok == 'ok', 'integrity: '+ok
+   def counts(p):
+       c = sqlite3.connect(p)
+       return (c.execute('SELECT COUNT(*) FROM reviews').fetchone()[0],
+               c.execute('SELECT COUNT(*) FROM llm_calls').fetchone()[0])
+   a, b = counts('/data/mig.db'), counts('/data/agent-t-reviews.db')
+   assert a == b, f'快照与源不一致：{a} != {b}'
+   print('migrated', b)"
    ```
-   快照与源的 reviews/llm_calls 数**不一致即中止**（保留旧容器与全部
-   原件，向老板报备）。
-6. **重采基线**：§2.3.5⑤ 的快照数字记入执行日志（不沿用历史 1/14）
-7. **贯通证据**（零付费）：同库贯通由 `test_same_db_end_to_end`（真
-   SQLite 全链：种单→应用读单→应用写额度→runner 查到→清理后两边
-   消失）在合并前证明；线上由步骤 9 接续核验兜底——两者如实分列，
-   不互充
-8. `docker rm agent-t`（**步骤 9 核验通过前不删**）→ `docker run`
-   新容器（挂卷 + `STORE_DB_PATH=/data/agent-t-reviews.db` + 既有 env，
-   镜像 `agent-t:<SHA>`）
-9. **切换后核验**：应用内 reviews/llm_calls 数与 §2.3.6 一致 → 通过后
-   才清 mig.db* 原件、才允许删旧容器镜像引用；此后数据均落宿主卷
+   assert 失败=退出码 1=**中止**（不靠人工看 print）；基线数字
+   （「migrated ...」）记入执行日志
+9. **新旧交接**：`docker rename agent-t agent-t-old-<ts>`（旧容器停用
+   **未删**，文件系统原件=/tmp 库保留在内）→ `docker run` 新容器用
+   **原名 `agent-t`**（挂卷 + `STORE_DB_PATH=/data/agent-t-reviews.db`
+   + 既有 env，镜像 `agent-t:<SHA>`）
+10. **切换后核验**：安全门六连+版本比对+新路由 404 探针+应用内
+    reviews/llm_calls 数=§2.3 步骤 8 基线 → **通过**：`docker rm
+    agent-t-old-<ts>`、清 mig 原件、解除步骤 4 封锁；**失败**：见失败
+    分支③
 
-**失败分支（按阶段，v5 细化）**：步骤 1-3 失败 → 未停机，放弃换装
-（零影响）；步骤 4 失败（未排空）→ `docker start agent-t` 复活原服务
-（数据未动）；步骤 5-7 失败（迁移/核验不过）→ 旧容器**已停未删**，
-`docker start agent-t` 复活 + 删除 /data 半成品，原 /tmp 库原样保留；
-步骤 8-9 失败 → 旧镜像 95555ed + 同一 env/卷重启（部署后新写入保留）。
-**无双写**：旧容器 rm 后才起新容器。**停机窗口**=步骤 4→8（分钟级，
-计划内）。
+**失败分支（按阶段）**：
+- ① 步骤 1-3 失败 → 未隔离，放弃换装（零影响）
+- ② 步骤 4-7 失败（未排空超时/迁移 assert 失败/任何中止）→ **删封锁
+  规则恢复原服务**；旧容器完好（停用未删时 `docker start` 复活），
+  原件保留，报备
+- ③ 步骤 9 失败 → `docker rm agent-t`（新容器）→ `docker rename
+  agent-t-old-<ts> agent-t` → `docker start` → 删封锁规则 → 报备
+  （同一卷：部署后新写入保留；旧库原件在旧容器内未动）
+**无双写**：旧容器已停（步骤 7 起）且新容器用原名，全程单写者。
+**停机窗口**=步骤 7→9（分钟级，计划内）。
 
 ## 三、程序行为（按真实代码路径，v2 已修正并经复核确认）
 
@@ -155,7 +174,7 @@ llm_calls=14（**切换时须重采**，非长期基线）；生产 env 开关�
 ## 五、部署验收（换装后必跑）
 
 1. **零成本项**：安全门六连；版本比对（镜像标签=冻结 SHA 前缀）；
-   新路由 404 探针；数据接续核验（§2.3.9）
+   新路由 404 探针；数据接续核验（§2.3 步骤 10）
 2. **业务流验收**（可能产生真实模型费用，见 §六）：上传 → 审查结果 →
    导出报告（PK 魔数）→ 追问可用
 
@@ -184,12 +203,20 @@ llm_calls=14（**切换时须重采**，非长期基线）；生产 env 开关�
 - **两案覆盖差异如实记录如上；⚠️ 未经老板明确选择前不执行业务流验收
   （沉默≠审批，不设默认）**
 
-**执行机制（非纸面）**：预留=换装后首笔业务流请求发起前按 §六公式计
-算本例上界，校验「DeepSeek 余额 ≥ 控制值」且累计圈账 < 控制值（同
-runner `_can_afford_next` 语义）；逐节点停止=严格圈账（缺行/缺用量/
-查询失败一律费用未知即停，工具与测试已在备料批落地：
-`STRICT_SPENT_CODE`/`test_same_db_end_to_end` 等零付费证据）；¥2.24+
-为估算，**非严格现金上限**，实付以供应商账单为准。
+**执行机制（v6 如实限定：事后核账，非逐节点熔断）**：现有工具证据
+（`STRICT_SPENT_CODE`+`test_same_db_end_to_end`）证明的是**账本片段与
+同库 mechanics**，不证明「上传→后台多节点→追问」每一节点前受熔断
+控制——主审查链是既有生产代码，本次换装不改动它（插熔断=超范围变更）。
+因此业务流验收的费用控制为：
+
+1. **单样本**：验收只跑一条完整业务流（独立 review_id）
+2. **事后严格核账**：跑完即按该单号严格圈账（缺行/缺用量/查询失败=
+   费用未知）——工具与编排级测试已在备料批落地（零付费证据在案）
+3. **停止规则**：费用未知 / 实算 ≥ 控制值（A=¥3、B=¥2，由老板明确
+   选择）→ **不再跑任何后续验收项**并向老板报备；失败不重试不追跑
+4. ¥2.24+ 为估算，**非严格现金上限**，实付以供应商账单为准
+
+（逐节点熔断如需具备，属主审查链的独立变更，另行立项不在本次部署。）
 
 **历史锚点（勘正，以 docs/m65/final-replay-report-20261024.md 为准）**：
 M6.5 回测 19 项（17 付费审查单+2 靶向证据）**峰值保守估算 ¥5.62、余额差
