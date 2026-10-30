@@ -47,65 +47,95 @@ llm_calls=14（**切换时须重采**，非长期基线）；生产 env 开关�
 - `docker cp`/`chown` 等宿主机操作**全部经 ssh 在服务器上执行**（文档
   所示命令均在 ssh 会话内跑，非本地）
 
-### 2.3 切换序列（P1-2：消除备份→停机写入空窗）
+### 2.3 切换序列 v5（停机隔离排空 + WAL 显式检测 + 权限前移）
 
-按序执行，**任何一步失败走 §四回滚**：
+**技术隔离手段**：本序列以 `docker stop` 为新写入的**技术阻断**——
+容器停止即服务不可达，不存在「仅通知不技术上挡新上传」的空窗；排空
+核查在停机后对静止库做（fail-closed）。按序执行，任一步失败走 §四：
 
-1. **预告停接入**：低峰窗口执行；窗口开始起不再有新上传（伙伴群通知+
-   Basic Auth 不变仅停止主动使用）
-2. **预备份**（旧容器在线时，backup API 一致性快照）→ 宿主卷就位
-   （§2.2 权限先行）
-3. **构建镜像**（`git archive <冻结SHA>` → `-f Dockerfile.server` →
-   `agent-t:<SHA>`）——构建期间旧容器照常服务（不影响备份）
-4. **排空**：先查处理中任务——`docker exec agent-t python3 -c`（读
-   reviews 表 `status='processing'` 行数）：**有 → 等待+每 30s 复查，
-   超 5 分钟未排空 → 中止换装**（`docker start` 复活旧容器，向老板
-   报备，不误报成功）；无 → `docker stop -t 60 agent-t`（SIGTERM 给
-   足收尾时间；`docker ps` 确认已停）
-5. **终迁移（含 WAL 的一致性快照，v4 修正——不停机≠已 checkpoint，
-   不得只拷主文件）**：
+1. **预告**：低峰窗口，伙伴群通知（告知短暂不可用时段）——通知不承担
+   隔离职责，隔离由步骤 2 的停机实现
+2. **预备份**（旧容器在线，backup API 一致性快照 → 宿主卷；此时仅作
+   双保险，非迁移源）+ 宿主卷目录 `mkdir`+`chown 1000:1000` 先行
+3. **构建镜像**：`git archive <冻结SHA>` → scp → `-f Dockerfile.server`
+   → `agent-t:<SHA>`——构建期间旧容器照常服务
+4. **停机排空**：`docker stop -t 60 agent-t`（SIGTERM 给足在途请求收尾；
+   停机=新写入技术阻断）。**排空核查（fail-closed，按真实表结构查
+   JSON）**：
    ```bash
-   # ① 整体拷出文件集（主库+wal+shm，存在哪个拷哪个）
+   docker exec agent-t python3 -c "
+   import sqlite3, json, sys
+   c = sqlite3.connect('/tmp/agent-t-reviews.db')
+   bad = []
+   for rid, created, data in c.execute('SELECT id, created_at, data FROM reviews'):
+       try:
+           d = json.loads(data)
+       except ValueError:
+           bad.append((rid, 'malformed'))  # 解析不了=无法证实已完成，fail-closed
+           continue
+       if d.get('status') == 'processing':
+           bad.append((rid, 'processing'))
+   if bad:
+       print('NOT_DRAINED:', bad); sys.exit(1)
+   print('drained')"
+   ```
+   非 0 退出 → **中止换装**：`docker start agent-t` 复活原服务，向老板
+   报备，不误报成功。通过才进下一步。
+5. **终迁移（WAL 显式检测+权限前移+原件保留）**：
+   ```bash
+   # ① 容器内显式检测 WAL/SHM 是否存在（ABSENT/EXISTS 二值输出；
+   #    exec 失败 rc≠0 即中止——不得把执行失败当文件不存在）
+   docker exec agent-t sh -c \
+     'if [ -f /tmp/agent-t-reviews.db-wal ]; then echo EXISTS; else echo ABSENT; fi'
+   # ② 整体拷出文件集（WAL 存在则必须拷贝成功——cp 失败=中止并保留
+   #    旧容器，禁止 2>/dev/null || true 吞错；SHM 按 SQLite 恢复方案
+   #    属可丢弃索引：拷出留档，恢复时不参与）
    docker cp agent-t:/tmp/agent-t-reviews.db /opt/agent-t-data/mig.db
-   docker cp agent-t:/tmp/agent-t-reviews.db-wal /opt/agent-t-data/mig.db-wal 2>/dev/null || true
-   docker cp agent-t:/tmp/agent-t-reviews.db-shm /opt/agent-t-data/mig.db-shm 2>/dev/null || true
-   # ② 临时容器用 backup API 把文件集收敛成单文件快照（读透 WAL）
+   docker cp agent-t:/tmp/agent-t-reviews.db-wal /opt/agent-t-data/mig.db-wal   # EXISTS 时必查 rc
+   docker cp agent-t:/tmp/agent-t-reviews.db-shm /opt/agent-t-data/mig.db-shm 2>/dev/null || echo "shm 无/可丢弃（SQLite 恢复语义）"
+   # ③ 权限前移（v5 修正：先修属主再让 uid1000 容器读，root cp 落 root
+   #    属主，不先修则 backup 必失败）
+   chown -R 1000:1000 /opt/agent-t-data
+   # ④ 读探针（appuser 真能读文件集，权限错误不得误判为 WAL 不存在）
    docker run --rm -v /opt/agent-t-data:/data agent-t:<SHA> python3 -c "
-   import sqlite3
+   import os
+   for f in ('mig.db',) + ((('mig.db-wal',) if os.path.exists('/data/mig.db-wal') else ())):
+       open('/data/'+f, 'rb').read(1)
+   print('read ok')"
+   # ⑤ backup API 收敛单文件（appuser 容器执行）+ 完整性断言 + 源/快照
+   #    逐项核对（行数一致才算迁移成立）
+   docker run --rm -v /opt/agent-t-data:/data agent-t:<SHA> python3 -c "
+   import sqlite3, json
    src = sqlite3.connect('/data/mig.db')
    dst = sqlite3.connect('/data/agent-t-reviews.db')
    src.backup(dst); dst.close(); src.close()
-   ok = sqlite3.connect('/data/agent-t-reviews.db').execute(
-       'PRAGMA integrity_check').fetchone()[0]
+   ok = sqlite3.connect('/data/agent-t-reviews.db').execute('PRAGMA integrity_check').fetchone()[0]
    assert ok == 'ok', ok
-   print('integrity ok')"
-   # ③ 重采基线并记入执行日志
-   docker run --rm -v /opt/agent-t-data:/data agent-t:<SHA> python3 -c "
-   import sqlite3
-   c = sqlite3.connect('/data/agent-t-reviews.db')
-   print('reviews', c.execute('SELECT COUNT(*) FROM reviews').fetchone()[0],
-         'llm_calls', c.execute('SELECT COUNT(*) FROM llm_calls').fetchone()[0])"
-   # ④ 属主修正
-   chown 1000:1000 /opt/agent-t-data /opt/agent-t-data/*
+   for db in ('/data/mig.db', '/data/agent-t-reviews.db'):
+       c = sqlite3.connect(db)
+       print(db, 'reviews', c.execute('SELECT COUNT(*) FROM reviews').fetchone()[0],
+             'llm_calls', c.execute('SELECT COUNT(*) FROM llm_calls').fetchone()[0])"
    ```
-   **原件（mig.db* 三件）与旧容器保留至 §2.3.9 核验通过**，不提前删
-6. **重采基线**：§2.3.5③ 输出的 reviews/llm_calls 数字记入执行日志
-   （不沿用历史探针 1/14）
-7. **贯通验证**（零付费）：§2.3.5②③ 即读计数+完整性；**同库贯通由
-   `test_same_db_end_to_end` 在合并前证明**（种单→应用读单→应用写
-   额度→runner 查到→清理后两边消失，真 SQLite 全链）——线上则由
-   步骤 9 的接续核验兜底
-8. `docker rm agent-t`（核验通过此时才删）→ `docker run` 新容器
-   （挂卷 + `STORE_DB_PATH=/data/agent-t-reviews.db` + 既有 env，
+   快照与源的 reviews/llm_calls 数**不一致即中止**（保留旧容器与全部
+   原件，向老板报备）。
+6. **重采基线**：§2.3.5⑤ 的快照数字记入执行日志（不沿用历史 1/14）
+7. **贯通证据**（零付费）：同库贯通由 `test_same_db_end_to_end`（真
+   SQLite 全链：种单→应用读单→应用写额度→runner 查到→清理后两边
+   消失）在合并前证明；线上由步骤 9 接续核验兜底——两者如实分列，
+   不互充
+8. `docker rm agent-t`（**步骤 9 核验通过前不删**）→ `docker run`
+   新容器（挂卷 + `STORE_DB_PATH=/data/agent-t-reviews.db` + 既有 env，
    镜像 `agent-t:<SHA>`）
-9. **切换后核验**：应用内 reviews/llm_calls 数与 §2.3.6 一致（接续
-   成功）；通过后才清理 mig.db* 原件；此后新旧数据均落宿主卷
+9. **切换后核验**：应用内 reviews/llm_calls 数与 §2.3.6 一致 → 通过后
+   才清 mig.db* 原件、才允许删旧容器镜像引用；此后数据均落宿主卷
 
-**失败分支**：步骤 1-3 失败 → 未停机，直接放弃本次换装（零影响）；
-步骤 4-7 失败 → 旧容器**已停未删**，`docker start agent-t` 直接复活
-（数据未动）；步骤 8-9 失败 → 旧镜像 95555ed+同一 env/卷重启（部署后
-新写入保留）。**无双写**：旧容器 rm 后才起新容器。**停机窗口**=步骤
-4→8（分钟级，计划内）。
+**失败分支（按阶段，v5 细化）**：步骤 1-3 失败 → 未停机，放弃换装
+（零影响）；步骤 4 失败（未排空）→ `docker start agent-t` 复活原服务
+（数据未动）；步骤 5-7 失败（迁移/核验不过）→ 旧容器**已停未删**，
+`docker start agent-t` 复活 + 删除 /data 半成品，原 /tmp 库原样保留；
+步骤 8-9 失败 → 旧镜像 95555ed + 同一 env/卷重启（部署后新写入保留）。
+**无双写**：旧容器 rm 后才起新容器。**停机窗口**=步骤 4→8（分钟级，
+计划内）。
 
 ## 三、程序行为（按真实代码路径，v2 已修正并经复核确认）
 
@@ -143,14 +173,23 @@ llm_calls=14（**切换时须重采**，非长期基线）；生产 env 开关�
 | precheck | 生产无开关 env（默认关），不计 | — | — |
 | **合计上界** | | **280k → 峰值 ≈ ¥2.24**（输入另计 <¥0.1） | |
 
-**预算两案（上界 ¥2.24+ 已超现控值 ¥2，按例预留语义下须先定案，呈老板
-审批，不静默变更）**：
+**预算两案（上界 ¥2.24+ 已超现控值 ¥2，按例预留语义下须先定案）**：
 
-- **方案 A（开发团队推荐）**：验收预算控制值调至 **¥3/次业务流**（按例
-  预留——上界 ¥2.24+输入余量仍被覆盖；请求前预留不足即拦，费用未知即停）
+- **方案 A（开发团队推荐，codex 亦倾向）**：验收预算控制值调至 **¥3/次
+  业务流**（按例预留——上界 ¥2.24+输入余量仍被覆盖）——质量层真实链路
+  在验收中**被覆盖**
 - **方案 B**：验收上传时显式 `QUALITY_ENABLED=false` 缩范围（上界降至
-  ¥0.80 内，¥2 控值够用）——代价：业务流验收不含质量层真实链路，且改动
-  生产开关本身也是一项变更
+  ¥0.80 内，¥2 控值够用）——代价：业务流验收**不含**质量层真实链路，
+  且改动生产开关本身也是一项变更
+- **两案覆盖差异如实记录如上；⚠️ 未经老板明确选择前不执行业务流验收
+  （沉默≠审批，不设默认）**
+
+**执行机制（非纸面）**：预留=换装后首笔业务流请求发起前按 §六公式计
+算本例上界，校验「DeepSeek 余额 ≥ 控制值」且累计圈账 < 控制值（同
+runner `_can_afford_next` 语义）；逐节点停止=严格圈账（缺行/缺用量/
+查询失败一律费用未知即停，工具与测试已在备料批落地：
+`STRICT_SPENT_CODE`/`test_same_db_end_to_end` 等零付费证据）；¥2.24+
+为估算，**非严格现金上限**，实付以供应商账单为准。
 
 **历史锚点（勘正，以 docs/m65/final-replay-report-20261024.md 为准）**：
 M6.5 回测 19 项（17 付费审查单+2 靶向证据）**峰值保守估算 ¥5.62、余额差
