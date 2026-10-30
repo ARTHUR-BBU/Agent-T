@@ -830,3 +830,45 @@ def test_run_live_i1_impact_timeout_full_ledger_continues(tmp_path, monkeypatch)
     assert len(v2_posts) == 1, "后续题正常启动（对照）"
     assert out["results"][0]["pass"] is False, "I1 transport 失败照实不过"
     assert out["results"][1]["pass"] is True, "V2 正常完成"
+
+
+# ---------- #158 三轮 P1：考试工具与生产库路径对齐 ----------
+
+def test_server_db_flows_to_all_fragments(monkeypatch):
+    """--server-db 对齐后，种单/账本/额度/严格圈账/节点核对/清理六个片段
+    必须全部用同一路径（应用和考试工具不得各看各的账本）。"""
+    dbs: list[str] = []
+
+    def fake_ssh(host, code, db, args=(), stdin_text=None):
+        dbs.append(db)
+        if "INSERT OR REPLACE INTO reviews" in code:
+            return "seeded 1\n"
+        if "revision_used" in code:
+            return "[1, 0]\n"
+        if "ins = sum" in code:
+            return "[0, 0, 0, {}]\n"  # 严格圈账 4 元组
+        if "real += 1" in code:
+            return "[1, 0]\n"  # 节点行核对
+        if "call_id" in code:
+            return "[]\n"
+        if "call_id" in code:
+            return "[]\n"
+        return "cleaned 1\n"
+
+    monkeypatch.setattr(runner, "_ssh_py", fake_ssh)
+    monkeypatch.setattr(runner, "SERVER_DB", "/data/agent-t-reviews.db")
+    runner._seed_review("h", "r1", {"filename": "f"})
+    runner._revision_ledger_rows("h", "r1")
+    runner._revision_ledger_rows("h", "r1", node="impact")
+    runner._budget_used("h", "r1")
+    runner._spent_strict("h", ["r1"])
+    runner._node_ledger_status("h", "r1", "revision")
+    runner._cleanup_seeds("h", ["r1"])
+    assert dbs, "至少触达一个片段"
+    assert all(d == "/data/agent-t-reviews.db" for d in dbs), \
+        f"片段用错库路径：{set(dbs)}"
+
+
+def test_server_db_default_is_legacy_tmp():
+    """默认仍指旧 /tmp（兼容），换装后实跑显式传 --server-db。"""
+    assert runner.SERVER_DB == "/tmp/agent-t-reviews.db"

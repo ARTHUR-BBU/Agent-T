@@ -1,105 +1,126 @@
-# B7-2 部署单 v2（2026-10-30，按 #158 复批修正）
+# B7-2 部署单 v3（2026-10-30，按 #158 三轮复批修正）
 
-> 性质：**部署前备料**（老板指示：先备部署单并核实生产，授权后才换装；
-> 付费开考另行授权——¥0.59 峰值估算 / ¥2 按例预留预算控制值，实际以
-> 供应商账单为准）。v2 修正：版本三方对齐、数据接续方案、惰性建表
-> 表述、验收费用事前列明。
+> 性质：**部署前备料**（换装与付费开考分别待老板授权；¥0.59/¥2 均为
+> 估算口径的预算控制值，非已证明的现金绝对上限，实付以供应商账单为准）。
+> v3 修正：考试工具库路径对齐、切换序列消除写入空窗、宿主卷权限落实、
+> 验收费用给可复算公式。
 
-## 一、版本核实与三方对齐（P1-1）
+## 一、版本核实与三方对齐
 
-**生产核实（2026-10-30 只读探针）**：在跑 `agent-t:95555ed`（B7-1 实跑版，
-含 #148），/health 200。
+**生产实态（2026-10-30 只读探针）**：在跑 `agent-t:95555ed`（含 #148），
+/health 200；**无宿主挂载**（Mounts 空/Binds null）；库
+`/tmp/agent-t-reviews.db`，`journal_mode=wal`；当时数据基线 reviews=1 /
+llm_calls=14（**切换时须重采**，非长期基线）；生产 env 开关清单（只读
+探针，凭据值未读）：CATEGORY_SUGGEST_ENABLED 开、DEEPSEEK_API_KEY 在位、
+无 PRECHECK/QUALITY 显式开关（QUALITY 默认开）。
 
-**版本比对机制（已核代码 `tools/m65/final_replay.py`）**：`server_revision`
-读容器 `.Config.Image` 的标签；`check_revision` 只接受「合法 Git SHA 且为
-调用方全 SHA 前缀」——**`latest` 必挂**。
+**三方对齐**：#158 合并后**冻结 main HEAD 全 SHA**（记入执行日志）；
+镜像 `agent-t:<该SHA>`（弃 latest——`check_revision` 只收 Git SHA 标签，
+已核代码）；考试工具同 SHA checkout 且 `--server-db` 与应用库路径一致
+（见 §二.4）；比对用 runner 同款 `server_revision`+`check_revision`。
 
-**三方对齐方案**（执行时落地，杜绝比对失败）：
+## 二、数据接续方案 v3（三轮复批修正）
 
-| 项 | 规则 |
-|---|---|
-| 源码版本 | #158 合并后**冻结 main HEAD 全 SHA**（记入执行日志；不再是 fb28e93——合并 #158 后 HEAD 已变） |
-| 镜像 | `git archive <全SHA>` 构建，标签 **`agent-t:<该SHA>`**（非 latest）；`docker run` 同标签镜像 |
-| 考试工具 | 同一全 SHA 上运行（`git checkout <全SHA>` 或 HEAD 恰为该 SHA）；比对用 runner 同款 `server_revision`+`check_revision` 函数核验 |
+### 2.1 应用与考试工具同库路径（P1-1）
 
-**换装前置核对**：#158 必须先合并（部署单本身在 #158 里）。
+- runner 新增 `--server-db` 参数（**已合并代码+测试**：
+  `test_server_db_flows_to_all_fragments` 断言种单/账本/额度/严格圈账/
+  节点核对/清理六个片段全部用同一路径）
+- **换装后实跑命令必须带 `--server-db /data/agent-t-reviews.db`**；
+  贯通验证见 §2.3 步骤 7
 
-## 二、数据接续方案（P1-2，探针实证后制定）
+### 2.2 权限落实（P1/P2）
 
-**生产实态（2026-10-30 只读探针）**：
-- 挂载：`Mounts: [] / Binds: null`——**无宿主卷，库在容器内 /tmp**
-- 库：`/tmp/agent-t-reviews.db`，**journal_mode=wal**
-- 数据量：reviews=1、llm_calls=14、revision_drafts=0
-- 结论：`docker rm -f` 会连库销毁；且 WAL 下仅拷主文件不含未检查点事务
+- 镜像以 `appuser`（uid 1000）运行（Dockerfile.server 已核）
+- 宿主卷目录以 **root 建立后必须 `chown 1000:1000 /opt/agent-t-data`**；
+  数据库迁入后同属 1000（`docker cp` 以 root 执行会落 root 属主——
+  cp 后补 chown）
+- **只读/写入双探针**（真容器真用户执行，通过才继续）：
+  ```bash
+  # 读探针：appuser 能读迁移库
+  docker run --rm -v /opt/agent-t-data:/data agent-t:<SHA> \
+    python3 -c "import sqlite3; c=sqlite3.connect('file:/data/agent-t-reviews.db?mode=ro',uri=True); print('rows',c.execute('SELECT COUNT(*) FROM reviews').fetchone()[0])"
+  # 写探针：appuser 能建/写库及 WAL/SHM 配套文件
+  docker run --rm -v /opt/agent-t-data:/data agent-t:<SHA> \
+    python3 -c "import sqlite3; c=sqlite3.connect('/data/.write-probe.db'); c.execute('CREATE TABLE t(x)'); c.execute('INSERT INTO t VALUES (1)'); c.commit(); print('write ok')"
+  ```
+- `docker cp`/`chown` 等宿主机操作**全部经 ssh 在服务器上执行**（文档
+  所示命令均在 ssh 会话内跑，非本地）
 
-**接续方案（借换装之机把持久化隐患一并修掉——B2-3 事故根源）**：
+### 2.3 切换序列（P1-2：消除备份→停机写入空窗）
 
-1. **一致性备份**（不用文件拷贝，用 SQLite backup API，保 WAL 已提交事务）：
-   ```bash
-   ssh root@<IP> 'docker exec agent-t python3 -c "
-   import sqlite3
-   src = sqlite3.connect(\"/tmp/agent-t-reviews.db\")
-   dst = sqlite3.connect(\"/tmp/backup-migrate.db\")
-   src.backup(dst)
-   dst.close()
-   print(\"backup ok\")"'
-   docker cp agent-t:/tmp/backup-migrate.db /opt/agent-t-data/agent-t-reviews.db
-   ```
-   （宿主机先 `mkdir -p /opt/agent-t-data`；备份完成后再动容器）
-2. **新容器挂宿主卷 + 显式库路径**：docker run 增加
-   `-v /opt/agent-t-data:/data -e STORE_DB_PATH=/data/agent-t-reviews.db`
-   ——审查单/账本/草稿/预算全部落到宿主卷（`store` 与 `revision` 均读
-   `STORE_DB_PATH`，#148 版已支持），今后换容器数据天然接续
-3. **换装后核验数据可见**：新容器内 `reviews=1、llm_calls=14` 与换装前
-   一致（数字对上=接续成功）；此后新产生的数据亦在宿主卷
-4. **回滚语义（修正）**：旧镜像 95555ed 同样支持 `STORE_DB_PATH`——回滚
-   = 用旧镜像+**同一 env/同一卷**重启，部署后新写入保留；恢复备份库仅限
-   灾难场景（须向老板报备）
+按序执行，**任何一步失败走 §四回滚**：
 
-## 三、程序行为描述修正（P2，按真实代码路径）
+1. **预告停接入**：低峰窗口执行；窗口开始起不再有新上传（伙伴群通知+
+   Basic Auth 不变仅停止主动使用）
+2. **预备份**（旧容器在线时，backup API 一致性快照）→ 宿主卷就位
+   （§2.2 权限先行）
+3. **构建镜像**（`git archive <冻结SHA>` → `-f Dockerfile.server` →
+   `agent-t:<SHA>`）——构建期间旧容器照常服务（不影响备份）
+4. **排空**：`docker stop agent-t`（SIGTERM 等待退出；`docker ps` 确认
+   已停；`docker logs` 尾部确认无处理中请求）
+5. **终备份**（**从已停容器**，此点之后库内零写入）：
+   `docker cp agent-t:/tmp/agent-t-reviews.db /opt/agent-t-data/agent-t-reviews.db`
+   （容器已停无写者，主文件+WAL 静止，整体拷贝一致）→ `chown 1000:1000`
+   迁入文件
+6. **重采基线**：从迁入库读当前 reviews/llm_calls 具体数字（记入执行
+   日志，不沿用 1/14 旧基线）
+7. **贯通验证**（起临时容器，零付费）：
+   `docker run --rm -v /opt/agent-t-data:/data agent-t:<SHA> python3 -c`
+   读 reviews/llm_calls 数与 §2.3.6 一致 → §2.2 双探针复跑
+8. `docker rm agent-t`（此时才删）→ `docker run` 新容器
+   （挂卷 + `STORE_DB_PATH=/data/agent-t-reviews.db` + 既有 env，
+   镜像 `agent-t:<SHA>`）
+9. **切换后核验**：应用内 reviews/llm_calls 数与 §2.3.6 一致（接续
+   成功）；此后新旧数据均落宿主卷
 
-- `selected_drafts`/`impact_reports`/`revision_drafts`/`revision_budget`
-  均为**对应操作首次触库时惰性 CREATE**（`revision._connect()`），非启动
-  自动建——v1 表述有误，已改
-- `config/impact_keywords.yaml` 由 `_load_families()` 在**首次检索时**
-  lru_cache 加载，结构非法**在调用时**抛错（非启动校验）
-- 零付费证据：`tests/test_b72b_impact.py::test_families_yaml_fail_closed`
-  （调用时 fail-closed）+ 新路由 404 探针（§五.3，不触库不触配置）
+**无双写**：旧容器 rm 之后才起新容器，全程仅一个写者。**停机窗口**=
+步骤 4→8（分钟级，计划内）。
 
-## 四、换装步骤（授权后按序执行）
+## 三、程序行为（按真实代码路径，v2 已修正并经复核确认）
 
-1. §二.1 一致性备份 → 宿主卷就位
-2. `git archive <冻结全SHA>` → scp → 解包
-3. `docker build -f Dockerfile.server -t agent-t:<该SHA> .`（红线：必须
-   `-f Dockerfile.server`）
-4. `docker rm -f agent-t` → `docker run` 新容器（既有 env + 新增
-   `-v /opt/agent-t-data:/data -e STORE_DB_PATH=/data/agent-t-reviews.db`，
-   镜像用 `agent-t:<该SHA>`）
-5. **env 核对**（变量名核对勿回显）：BASIC_AUTH_*、ZHIPU_API_KEY、
-   DEEPSEEK_API_KEY、限频/预算变量不回退、新增 STORE_DB_PATH
+四表均首次触库惰性 CREATE；词族首次检索时 lru_cache 加载（fail-closed
+在调用时）。零付费证据：`test_families_yaml_fail_closed` + 新路由 404
+探针（不触库不触配置）。
+
+## 四、回滚预案（v3 修正）
+
+- **触发**：新容器启动失败/安全门不过/数据接续核验不过
+- **动作**：`docker rm` 新容器 → 用 **95555ed 旧镜像 + 同一 env
+  （含 STORE_DB_PATH）+ 同一宿主卷**重启——#148 版已支持 STORE_DB_PATH
+  （只读核过 store/revision 代码路径），旧代码读同一迁移后库，
+  **部署后新写入保留**
+- 恢复备份库仅限灾难场景（库损坏/污染），执行前向老板报备
 
 ## 五、部署验收（换装后必跑）
 
-1. **安全门六连**（零成本）：/health 200；/、/api/categories、/docs 401；
-   带认证 / 200；变体路径非 200
-2. **版本比对**（零成本）：runner 同款函数核验「镜像标签=冻结 SHA 前缀」
-3. **新路由 404 探针**（零成本）：select/impact 打不存在单 → 404
-4. **数据接续核验**（零成本）：reviews=1、llm_calls=14 与换装前一致
-5. **完整业务流**（**可能产生真实模型费用，与五题考试分开**，见 §六）：
-   上传合同 → 审查结果 → 导出报告（PK 魔数）→ 追问可用
+1. **零成本项**：安全门六连；版本比对（镜像标签=冻结 SHA 前缀）；
+   新路由 404 探针；数据接续核验（§2.3.9）
+2. **业务流验收**（可能产生真实模型费用，见 §六）：上传 → 审查结果 →
+   导出报告（PK 魔数）→ 追问可用
 
-## 六、验收费用事前列明（P2）
+## 六、验收费用（v3：可复算公式+停止机制，标注估算）
 
-| 项 | 说明 |
-|---|---|
-| 触发面 | 业务流验收的上传审查（model_review/quality/objection 等 LLM 节点，生产带 Key 即真实调用）+ 追问（ask 节点，1-2 次） |
-| 费用口径 | 按 #137 阀门常量 + Flash 牌价峰值估算（同 M6.5/费用单口径，估算非实付） |
-| 预算边界 | 单次完整业务流峰值估算 **< ¥1**（审查链全节点开 + 2 次 ask）；超过即异常停止 |
-| 圈账 | 按验收样本 review_id 精确圈账，与五题考试（manifest-b72 的 5 个单号）**分开记账分开汇报** |
-| 停止标准 | 任何节点费用未知/账本缺行缺用量即停；业务流失败不重试不追跑 |
-| 授权 | 部署授权含本业务流验收费用；**五题考试付费另行授权**（两笔独立事项） |
+**复算公式**（阀门=#137 登记常量；牌价=Flash 峰值 输出 ¥8/M，估算非实付）：
+
+| 节点 | 触发条件（生产 env 实探） | 次数×输出阀门 | 上界输出 |
+|---|---|---|---|
+| model_review | DEEPSEEK_API_KEY 在位 | ≤6×13000 | 78k |
+| quality | QUALITY_ENABLED 未显式关（默认开） | ≤6×25000 | 150k |
+| ask | 验收追问 ≤2 次 | 2×8000 | 16k |
+| objection | 如追问链触发（保守计入） | ≤2×10000 | 20k |
+| **合计上界** | | | **264k → 峰值 ≈ ¥2.11**（输入另计 <¥0.1） |
+
+**口径声明**：上界≠预期——M6.5 历史实测约 ¥0.3/卷（回测 19 卷实付
+¥5.62，账本可查），实际通常远低于阀门上界。**验收预算控制值 ¥2（按例
+预留，与考试同口径；非现金硬上限）**；过程中任何异常或费用未知（严格
+圈账：缺行/缺用量）即停。
+
+**独立结算与停止**：验收样本单独 review_id，用 runner 同款严格圈账
+（STRICT_SPENT_CODE+按节点核账）单独结算汇报；失败不重试不追跑。
+**与五题考试分开记账分开授权**。
 
 ## 七、授权边界
 
-- 本单=备料+核实+方案，**未执行任何换装**
-- 换装待老板授权；业务流验收费用含在部署授权内（§六）；五题考试另行授权
+本单=备料+核实+方案。换装待老板授权；业务流验收费用含在部署授权内
+（§六）；五题考试另行授权。
