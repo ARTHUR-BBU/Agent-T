@@ -57,25 +57,55 @@ llm_calls=14（**切换时须重采**，非长期基线）；生产 env 开关�
    （§2.2 权限先行）
 3. **构建镜像**（`git archive <冻结SHA>` → `-f Dockerfile.server` →
    `agent-t:<SHA>`）——构建期间旧容器照常服务（不影响备份）
-4. **排空**：`docker stop agent-t`（SIGTERM 等待退出；`docker ps` 确认
-   已停；`docker logs` 尾部确认无处理中请求）
-5. **终备份**（**从已停容器**，此点之后库内零写入）：
-   `docker cp agent-t:/tmp/agent-t-reviews.db /opt/agent-t-data/agent-t-reviews.db`
-   （容器已停无写者，主文件+WAL 静止，整体拷贝一致）→ `chown 1000:1000`
-   迁入文件
-6. **重采基线**：从迁入库读当前 reviews/llm_calls 具体数字（记入执行
-   日志，不沿用 1/14 旧基线）
-7. **贯通验证**（起临时容器，零付费）：
-   `docker run --rm -v /opt/agent-t-data:/data agent-t:<SHA> python3 -c`
-   读 reviews/llm_calls 数与 §2.3.6 一致 → §2.2 双探针复跑
-8. `docker rm agent-t`（此时才删）→ `docker run` 新容器
+4. **排空**：先查处理中任务——`docker exec agent-t python3 -c`（读
+   reviews 表 `status='processing'` 行数）：**有 → 等待+每 30s 复查，
+   超 5 分钟未排空 → 中止换装**（`docker start` 复活旧容器，向老板
+   报备，不误报成功）；无 → `docker stop -t 60 agent-t`（SIGTERM 给
+   足收尾时间；`docker ps` 确认已停）
+5. **终迁移（含 WAL 的一致性快照，v4 修正——不停机≠已 checkpoint，
+   不得只拷主文件）**：
+   ```bash
+   # ① 整体拷出文件集（主库+wal+shm，存在哪个拷哪个）
+   docker cp agent-t:/tmp/agent-t-reviews.db /opt/agent-t-data/mig.db
+   docker cp agent-t:/tmp/agent-t-reviews.db-wal /opt/agent-t-data/mig.db-wal 2>/dev/null || true
+   docker cp agent-t:/tmp/agent-t-reviews.db-shm /opt/agent-t-data/mig.db-shm 2>/dev/null || true
+   # ② 临时容器用 backup API 把文件集收敛成单文件快照（读透 WAL）
+   docker run --rm -v /opt/agent-t-data:/data agent-t:<SHA> python3 -c "
+   import sqlite3
+   src = sqlite3.connect('/data/mig.db')
+   dst = sqlite3.connect('/data/agent-t-reviews.db')
+   src.backup(dst); dst.close(); src.close()
+   ok = sqlite3.connect('/data/agent-t-reviews.db').execute(
+       'PRAGMA integrity_check').fetchone()[0]
+   assert ok == 'ok', ok
+   print('integrity ok')"
+   # ③ 重采基线并记入执行日志
+   docker run --rm -v /opt/agent-t-data:/data agent-t:<SHA> python3 -c "
+   import sqlite3
+   c = sqlite3.connect('/data/agent-t-reviews.db')
+   print('reviews', c.execute('SELECT COUNT(*) FROM reviews').fetchone()[0],
+         'llm_calls', c.execute('SELECT COUNT(*) FROM llm_calls').fetchone()[0])"
+   # ④ 属主修正
+   chown 1000:1000 /opt/agent-t-data /opt/agent-t-data/*
+   ```
+   **原件（mig.db* 三件）与旧容器保留至 §2.3.9 核验通过**，不提前删
+6. **重采基线**：§2.3.5③ 输出的 reviews/llm_calls 数字记入执行日志
+   （不沿用历史探针 1/14）
+7. **贯通验证**（零付费）：§2.3.5②③ 即读计数+完整性；**同库贯通由
+   `test_same_db_end_to_end` 在合并前证明**（种单→应用读单→应用写
+   额度→runner 查到→清理后两边消失，真 SQLite 全链）——线上则由
+   步骤 9 的接续核验兜底
+8. `docker rm agent-t`（核验通过此时才删）→ `docker run` 新容器
    （挂卷 + `STORE_DB_PATH=/data/agent-t-reviews.db` + 既有 env，
    镜像 `agent-t:<SHA>`）
 9. **切换后核验**：应用内 reviews/llm_calls 数与 §2.3.6 一致（接续
-   成功）；此后新旧数据均落宿主卷
+   成功）；通过后才清理 mig.db* 原件；此后新旧数据均落宿主卷
 
-**无双写**：旧容器 rm 之后才起新容器，全程仅一个写者。**停机窗口**=
-步骤 4→8（分钟级，计划内）。
+**失败分支**：步骤 1-3 失败 → 未停机，直接放弃本次换装（零影响）；
+步骤 4-7 失败 → 旧容器**已停未删**，`docker start agent-t` 直接复活
+（数据未动）；步骤 8-9 失败 → 旧镜像 95555ed+同一 env/卷重启（部署后
+新写入保留）。**无双写**：旧容器 rm 后才起新容器。**停机窗口**=步骤
+4→8（分钟级，计划内）。
 
 ## 三、程序行为（按真实代码路径，v2 已修正并经复核确认）
 
@@ -99,22 +129,32 @@ llm_calls=14（**切换时须重采**，非长期基线）；生产 env 开关�
 2. **业务流验收**（可能产生真实模型费用，见 §六）：上传 → 审查结果 →
    导出报告（PK 魔数）→ 追问可用
 
-## 六、验收费用（v3：可复算公式+停止机制，标注估算）
+## 六、验收费用（v4：可复算公式+预算两案呈批+实付口径勘正）
 
-**复算公式**（阀门=#137 登记常量；牌价=Flash 峰值 输出 ¥8/M，估算非实付）：
+**复算公式**（阀门=代码登记常量；牌价=Flash 峰值 输出 ¥8/M，估算非实付）：
 
 | 节点 | 触发条件（生产 env 实探） | 次数×输出阀门 | 上界输出 |
 |---|---|---|---|
 | model_review | DEEPSEEK_API_KEY 在位 | ≤6×13000 | 78k |
 | quality | QUALITY_ENABLED 未显式关（默认开） | ≤6×25000 | 150k |
+| category_suggest | CATEGORY_SUGGEST_ENABLED=开（实探在） | 1×16000（默认阀门） | 16k |
 | ask | 验收追问 ≤2 次 | 2×8000 | 16k |
 | objection | 如追问链触发（保守计入） | ≤2×10000 | 20k |
-| **合计上界** | | | **264k → 峰值 ≈ ¥2.11**（输入另计 <¥0.1） |
+| precheck | 生产无开关 env（默认关），不计 | — | — |
+| **合计上界** | | **280k → 峰值 ≈ ¥2.24**（输入另计 <¥0.1） | |
 
-**口径声明**：上界≠预期——M6.5 历史实测约 ¥0.3/卷（回测 19 卷实付
-¥5.62，账本可查），实际通常远低于阀门上界。**验收预算控制值 ¥2（按例
-预留，与考试同口径；非现金硬上限）**；过程中任何异常或费用未知（严格
-圈账：缺行/缺用量）即停。
+**预算两案（上界 ¥2.24+ 已超现控值 ¥2，按例预留语义下须先定案，呈老板
+审批，不静默变更）**：
+
+- **方案 A（开发团队推荐）**：验收预算控制值调至 **¥3/次业务流**（按例
+  预留——上界 ¥2.24+输入余量仍被覆盖；请求前预留不足即拦，费用未知即停）
+- **方案 B**：验收上传时显式 `QUALITY_ENABLED=false` 缩范围（上界降至
+  ¥0.80 内，¥2 控值够用）——代价：业务流验收不含质量层真实链路，且改动
+  生产开关本身也是一项变更
+
+**历史锚点（勘正，以 docs/m65/final-replay-report-20261024.md 为准）**：
+M6.5 回测 19 项（17 付费审查单+2 靶向证据）**峰值保守估算 ¥5.62、余额差
+实扣 ¥2.68**——v3 误把 ¥5.62 写成实付，已改。实际通常远低于阀门上界。
 
 **独立结算与停止**：验收样本单独 review_id，用 runner 同款严格圈账
 （STRICT_SPENT_CODE+按节点核账）单独结算汇报；失败不重试不追跑。
