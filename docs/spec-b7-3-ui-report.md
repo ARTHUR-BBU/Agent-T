@@ -42,7 +42,7 @@
 - 报告层回写判定层（红线：建议永不改判定）
 - 五题考试未覆盖的话术变体防护（挂账）
 
-## 四、依赖与接口（全部已上线，零后端新调用面）
+## 四、依赖与接口（触发类接口全部已上线；本批新增只读状态接口，见 §四A）
 
 - `POST /api/review/{rid}/items/{iid}/revision` → 三版草案（含 draft_id、
   assumptions、declaration）
@@ -67,23 +67,33 @@
 {
   "drafts": [  // 按时间倒序——用户能看清「最新生成的是哪份」
     {"draft_id": "...", "stances": ["稳妥","平衡","进取"],
-     "created_at": ..., "status": "ok",
-     "is_selected": false, "selected_stance": null}
+     "created_at": ..., "status": "ok"|"degraded",
+     "is_selected": false, "selected_stance": null,
+     // 页面恢复所需全文（无需再调任何接口）：
+     "versions": [{"stance": "...", "text": "...", "note": "..."}],
+     "rationale": "...", "assumptions": ["..."],
+     "declaration": "..."}
   ],
   "selected": {"draft_id": "...", "stance": "平衡"} | null,
-  "impact": {  // 绑定 (draft_id, stance) 的最新检查结果
+  "impact": {  // 绑定 (draft_id, stance) 的**最新一次**检查结果
     "bound": {"draft_id": "...", "stance": "平衡"},
     "state": "ok"|"uncovered"|"degraded"|"not_initiated",
-    "findings": [...], "notice": "...", 
-    "legacy": false  // 历史记录（无版别）标记
+    "findings": [...], "notice": "...",
+    "legacy": false,  // 历史记录（无版别）标记
+    "hidden_findings": 0  // 因输出检查未通过而隐藏的条数
   },
   "remaining": {"revision": 3, "impact": 3}
 }
 ```
 
-- 前端刷新时**只调这一个 GET**；触发新调用必须用户显式点按
+- 前端刷新时**只调这一个 GET**；触发新调用必须用户显式点按；
+  **本接口纯读库：刷新绝不调用 AI、绝不扣额度**
 - **刷新后必须能看清「最新生成的是哪份 vs 当前选定的是哪份」**
   （drafts 倒序+is_selected 标注），**绝不自动替用户换版**
+- 牵连结果取**当前绑定 (draft_id, stance) 的最新一次状态**：先前
+  成功、后来重新检查失败 → 如实显示失败（**不得捞旧的成功结果充数**）；
+  无可靠版别的历史记录 → 标「历史记录（版别未登记），建议重新检查」，
+  不猜归属
 - 报告导出（B7-3b）同样走该 state 组装——**报告层不自行调 AI**
 
 **牵连记录版别绑定与历史标记（v3 新增）**：
@@ -119,7 +129,7 @@
 | 原文对照 | item.quote（规则层既有，未经模型） | 不过滤（规则层产物） | 无 quote 的项不进草案章节 |
 | 草案文本 | 选定版 versions[stance].text | **禁语表复用**（引用前过表，命中=该版整体不入报告，如实标「未入选」） | 未选定=章节显示「未选定修改建议」 |
 | 理由/假设 | 草案 payload rationale/assumptions | 同上（随所属版整体处置） | assumptions 空=标「无补充假设」 |
-| 牵连 findings | impact_reports（当前选定版最新 ok） | **纳入输出检查**（v3 修正：格式合格≠内容安全——findings 说明文本同样过禁语表同构检查，命中=该条如实标「该条说明未通过安全检查，已隐藏」；合同原文作为证据**保持原样不过滤**）+ 章节头声明「AI 一致性定位，不构成法律意见」 | 未检查=「尚未发起」；uncovered=如实「未覆盖（不代表没有冲突）」；degraded=「分析失败已留痕」；历史无版别=「历史记录，建议重新检查」 |
+| 牵连 findings | impact_reports（当前选定版最新 ok） | **纳入输出检查**（v3 修正：格式合格≠内容安全——findings 说明文本同样过禁语表同构检查，命中=该条如实标「该条说明未通过安全检查，已隐藏」，**且报告在章节头明示「牵连分析结果不完整（N 条说明未通过安全检查）」，不得让读者误以为看到完整分析**；合同原文作为证据**保持原样不过滤**）+ 章节头声明「AI 一致性定位，不构成法律意见」 | 未检查=「尚未发起」；uncovered=如实「未覆盖（不代表没有冲突）」；degraded=「分析失败已留痕」；历史无版别=「历史记录，建议重新检查」 |
 | 重审提示 | 固定常量 | — | 任何形态都必带 |
 
 - **报告数据一致性**：章节内容与选定版绑定（draft_id+stance）；换选后
