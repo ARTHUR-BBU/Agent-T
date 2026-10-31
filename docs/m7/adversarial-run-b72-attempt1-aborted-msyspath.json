@@ -1,0 +1,23 @@
+{
+ "purpose": "B7-2 对抗集付费实跑（spec-b7-2-impact.md §四 + 老板 2026-10-29 授权范围=备料送审；复批后开跑）",
+ "caller_head": "571d179d7776b2fef08cab37ccf98c8b8195a5a2",
+ "server_revision": "571d179",
+ "hard_cap_cny": 2.0,
+ "cost_basis": "账本峰值估算（非现金实付，M6.5 口径）",
+ "results": [
+  {
+   "id": "V1",
+   "review_id": "b7advv131ff",
+   "kind": "live",
+   "error": "远端查询失败 rc=2: bash: -c: line 8: syntax error near unexpected token `('\nbash: -c: line 8: `' D:/Program Files (x86)/Git/data/agent-t-reviews.db'\n",
+   "pass": false
+  }
+ ],
+ "final_cost_cny": null,
+ "cost_known": false,
+ "stop_reason": "圈账失败，费用未知——停止后续请求",
+ "all_rids": [
+  "b7advv131ff"
+ ],
+ "finished_at": "2026-10-30 15:40"
+}
