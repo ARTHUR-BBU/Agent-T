@@ -26,7 +26,7 @@ from typing import Any, Callable, Optional
 
 import yaml
 
-from app.prompts import impact_prompts
+from app.prompts import impact_prompts, revision_prompts
 from app.services import evidence as evidence_module
 from app.services import llm_ask, llm_call_log, llm_client, store as store_module
 from app.services.revision import (
@@ -35,6 +35,7 @@ from app.services.revision import (
     consume_budget,
     impact_limit_from_env,
     remaining_budget,
+    revision_limit_from_env,
 )
 
 logger = logging.getLogger(__name__)
@@ -189,20 +190,34 @@ _IMPACT_REPORTS_DDL = (
     "CREATE TABLE IF NOT EXISTS impact_reports ("
     "id TEXT PRIMARY KEY, review_id TEXT NOT NULL, item_id TEXT NOT NULL,"
     "draft_id TEXT NOT NULL, created_at REAL NOT NULL, trace_id TEXT,"
-    "payload TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '')")
+    "payload TEXT NOT NULL, status TEXT NOT NULL, reason TEXT NOT NULL DEFAULT '',"
+    "stance TEXT NOT NULL DEFAULT '')")
+
+
+def _migrate_impact_reports(conn: sqlite3.Connection) -> None:
+    """幂等迁移（B7-3a）：老表补 stance 列（绑定版别）。沿用账本「只增
+    不删、检缺列再 ALTER」纪律；历史行 stance 为空 → 前端按「历史记录
+    （版别未登记）」渲染，不硬配当前选择。生产现 0 行，迁移零包袱。"""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(impact_reports)")}
+    if "stance" not in cols:
+        conn.execute(
+            "ALTER TABLE impact_reports ADD COLUMN stance TEXT NOT NULL DEFAULT ''")
 
 
 def _save_impact_report(review_id: str, item_id: str, draft_id: str,
                         trace_id: str, payload: dict[str, Any],
-                        status: str, reason: str = "") -> None:
+                        status: str, reason: str = "",
+                        stance: str = "") -> None:
     with _connect() as conn:
         conn.execute(_IMPACT_REPORTS_DDL)
+        _migrate_impact_reports(conn)
         conn.execute(
             "INSERT INTO impact_reports (id, review_id, item_id, draft_id,"
-            " created_at, trace_id, payload, status, reason)"
-            " VALUES (?,?,?,?,?,?,?,?,?)",
+            " created_at, trace_id, payload, status, reason, stance)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?)",
             (uuid.uuid4().hex[:16], review_id, item_id, draft_id, time.time(),
-             trace_id, json.dumps(payload, ensure_ascii=False), status, reason))
+             trace_id, json.dumps(payload, ensure_ascii=False), status, reason,
+             stance))
 
 
 def _purge_hook(conn: sqlite3.Connection, expired_ids: list[str]) -> None:
@@ -383,11 +398,12 @@ def analyze_impact(
                     "无法可靠定位被修改条款的完整范围（缺条款索引或无法"
                     "定位条款边界），为避免把原条款误当关联条款，本次不"
                     "进行关联分析（不代表没有冲突）"),
+                "uncovered_code": "missing_source",
                 "notice": impact_prompts.RE_REVIEW_NOTICE,
                 "findings": [],
             }
             _save_impact_report(review_id, item_id, draft_id, "", report,
-                                "uncovered")
+                                "uncovered", stance=selected_stance)
             return {"status": "uncovered", "report": report}
         excerpts = find_related_clauses(contract_text, item_id,
                                         exclude_positions=excl_ranges,
@@ -398,6 +414,8 @@ def analyze_impact(
     if not excerpts:
         report = {
             "covered": False,
+            "uncovered_code": ("missing_source" if not contract_text
+                               else "no_match"),
             "uncovered_reason": (
                 "未在合同全文检索到该条款之外可能与草案联动的其他条款"
                 "（不代表没有冲突）"
@@ -407,7 +425,7 @@ def analyze_impact(
             "findings": [],
         }
         _save_impact_report(review_id, item_id, draft_id, "", report,
-                            "uncovered")
+                            "uncovered", stance=selected_stance)
         return {"status": "uncovered", "report": report}
 
     limit = impact_limit_from_env()
@@ -452,7 +470,7 @@ def analyze_impact(
     if degraded is not None or findings is None:
         reason = degraded.reason if degraded else "unknown"
         _save_impact_report(review_id, item_id, draft_id, trace_id, {},
-                            "degraded", reason)
+                            "degraded", reason, stance=selected_stance)
         return {"status": "degraded", "reason": reason,
                 "message": "连带影响分析失败，请稍后重试（已留痕，不影响审查结论）"}
 
@@ -466,6 +484,136 @@ def analyze_impact(
                         "逐例语义核对以真实文本为准。"),
         "notice": impact_prompts.RE_REVIEW_NOTICE,
     }
-    _save_impact_report(review_id, item_id, draft_id, trace_id, report, "ok")
+    _save_impact_report(review_id, item_id, draft_id, trace_id, report, "ok",
+                        stance=selected_stance)
     return {"status": "ok", "report": report, "trace_id": trace_id,
             "remaining": remaining_budget(review_id, "impact", limit)}
+
+
+# ---- B7-3a：聚合状态接口（页面刷新只读恢复；纯读库，零 AI、零扣额） ----
+
+def _uncovered_code(payload: dict[str, Any]) -> str:
+    """uncovered 机器可读细分（线框 §3 态F1/F2）：no_match=检索过词族
+    未命中；missing_source=缺全文/无法定位（含保守受限）。"""
+    code = payload.get("uncovered_code")
+    if code in ("no_match", "missing_source"):
+        return str(code)
+    text = str(payload.get("uncovered_reason") or "")
+    if "缺少" in text or "无法定位" in text:
+        return "missing_source"
+    return "no_match"
+
+
+def _findings_output_check(findings: list) -> tuple[list, int]:
+    """findings 说明文本输出检查（施工卡 §五A：格式合格≠内容安全）。
+    禁语表同构检查——签约诱导类措辞若渗入说明，该条隐藏+计数，报告
+    明示「结果不完整」。合同原文摘录（excerpts）是证据，原样不过滤。"""
+    visible: list[dict[str, Any]] = []
+    hidden = 0
+    for f in findings or []:
+        note = str(f.get("note") or "")
+        if any(pat in note for pat in revision_prompts.BANNED_PATTERNS):
+            hidden += 1
+            continue
+        visible.append(f)
+    return visible, hidden
+
+
+def revision_state(store: Any, review_id: str, item_id: str) -> dict[str, Any]:
+    """聚合状态接口（GET .../revision/state 的服务函数，B7-3a §四A）。
+
+    一次返回页面刷新恢复所需全部态：drafts 倒序（含选定标注）、当前
+    选定 (draft_id, stance)、牵连最新一次状态（绑定版别+legacy 标记+
+    findings 输出检查）、剩余额度。**纯读库：零 AI 调用、零扣额。**"""
+    review = store.get(review_id)
+    if review is None:
+        return {"status": "not_found", "reason": "review_not_found"}
+    item = next((i for i in review.get("items") or []
+                 if i.get("id") == item_id), None)
+    if item is None:
+        return {"status": "not_found", "reason": "item_not_found"}
+
+    sel = get_selected(review_id, item_id)
+    sel_draft, sel_stance = (sel if sel else (None, None))
+
+    with _connect() as conn:
+        conn.execute(_SELECTED_DDL)
+        conn.execute(_IMPACT_REPORTS_DDL)
+        _migrate_impact_reports(conn)
+        drows = conn.execute(
+            "SELECT id, created_at, status, payload FROM revision_drafts"
+            " WHERE review_id=? AND item_id=?"
+            " ORDER BY created_at DESC, id DESC",
+            (review_id, item_id)).fetchall()
+        irow = conn.execute(
+            "SELECT draft_id, stance, status, payload, reason, created_at"
+            " FROM impact_reports WHERE review_id=? AND item_id=?"
+            " ORDER BY created_at DESC, id DESC LIMIT 1",
+            (review_id, item_id)).fetchone()
+
+    drafts: list[dict[str, Any]] = []
+    for did, created, status, payload in drows:
+        entry: dict[str, Any] = {
+            "draft_id": did, "created_at": created, "status": status,
+            "is_selected": bool(sel_draft == did),
+            "selected_stance": sel_stance if sel_draft == did else None,
+        }
+        if status == "ok":
+            try:
+                pl = json.loads(payload)
+            except ValueError:
+                entry["status"] = "degraded"
+            else:
+                entry.update({
+                    "versions": pl.get("versions") or [],
+                    "rationale": pl.get("rationale") or "",
+                    "assumptions": pl.get("assumptions") or [],
+                    "declaration": pl.get("declaration") or "",
+                })
+        drafts.append(entry)
+
+    selected = ({"draft_id": sel_draft, "stance": sel_stance}
+                if sel_draft else None)
+
+    impact: Optional[dict[str, Any]] = None
+    if irow is not None:
+        i_draft, i_stance, i_status, i_payload, i_reason, i_created = irow
+        i_stance = i_stance or ""
+        try:
+            pl = json.loads(i_payload) if i_payload else {}
+        except ValueError:
+            pl = {}
+        entry = {
+            "bound": {"draft_id": i_draft, "stance": i_stance or None},
+            "state": i_status,
+            "legacy": not bool(i_stance),
+            "created_at": i_created,
+        }
+        if i_status == "uncovered":
+            entry["uncovered_reason"] = str(
+                pl.get("uncovered_reason") or i_reason or "")
+            entry["uncovered_code"] = _uncovered_code(pl)
+        elif i_status == "ok":
+            findings, hidden = _findings_output_check(pl.get("findings") or [])
+            entry.update({
+                "findings": findings,
+                "hidden_findings": hidden,
+                "notice": pl.get("notice") or "",
+                "excerpts": pl.get("excerpts") or [],
+                "covered": bool(pl.get("covered", True)),
+                # 绑定与当前选定不一致 → 前端按「已过期」渲染（线框态H），
+                # 不顶替当前选定版的检查结果
+                "stale": not (i_draft == sel_draft and i_stance == sel_stance),
+            })
+        elif i_status == "degraded":
+            entry["reason"] = i_reason or str(pl.get("reason") or "")
+        impact = entry
+
+    remaining = {
+        "revision": remaining_budget(review_id, "revision",
+                                     revision_limit_from_env()),
+        "impact": remaining_budget(review_id, "impact",
+                                   impact_limit_from_env()),
+    }
+    return {"status": "ok", "item_id": item_id, "drafts": drafts,
+            "selected": selected, "impact": impact, "remaining": remaining}

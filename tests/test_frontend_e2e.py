@@ -814,6 +814,17 @@ def _stub_ask_flow(page, answer_payload, raw_text=None):
             }, ensure_ascii=False),
         ),
     )
+    # B7-3a 三卡：点开需关注条目即拉 GET state——stub 环境里审查记录是
+    # 假 id，必须一并拦截（空态即可，本组用例只测追问渲染不测三卡）
+    page.route(
+        "**/api/review/e2eq00001/items/*/revision/state",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({"status": "ok", "item_id": "sublet",
+                              "drafts": [], "selected": None, "impact": None,
+                              "remaining": {"revision": 4, "impact": 3}}),
+        ),
+    )
     page.set_input_files("#file", str(FIXTURE))
     page.click("#btn-upload")
     page.wait_for_selector("#results-body", state="visible", timeout=15000)
