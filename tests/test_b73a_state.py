@@ -226,20 +226,62 @@ def test_state_impact_ok_bound_and_not_stale(env_store):
     assert "excerpts" in imp
 
 
-def test_state_impact_stale_after_reselect(env_store):
-    """选定换版后，旧分析绑定不变 → stale=True（前端按「已过期」渲染）。"""
+def _select_and_insert(env_store, *, stance="平衡", status="uncovered",
+                       payload="{}", reason="", created=None):
+    """造一条「真实选定 + 绑定该选定的 impact 行」（复批 2 新语义：
+    行必须绑定当前选定才会被返回）。"""
+    store, rid = env_store
+    r = _gen_ok(store, rid)
+    impact.select_draft(store, rid, "unfair_terms", r["draft_id"], stance)
+    _insert_impact_row(store, rid, draft_id=r["draft_id"], stance=stance,
+                       status=status, payload=payload, reason=reason,
+                       created=created if created is not None else time.time())
+    return r["draft_id"], stance
+
+
+def test_state_impact_per_binding_a_b_a(env_store):
+    """复批 2 核心场景：A 查过→切 B→切回 A，返回 A 自己的结果，
+    不把 B 的记录标过期充数；切到未查过的 B 时如实「未检查」。"""
     store, rid = env_store
     r1 = _gen_ok(store, rid)
+    r2 = _gen_ok(store, rid)
+    # A/平衡：查过
     impact.select_draft(store, rid, "unfair_terms", r1["draft_id"], "平衡")
     impact.analyze_impact(store, rid, "unfair_terms", r1["draft_id"],
                           llm_call=lambda *a: _FINDINGS_OK)
-    r2 = _gen_ok(store, rid)
+    # 切到 B/进取（没查过）：impact=None，不捞 A 的结果充数
     impact.select_draft(store, rid, "unfair_terms", r2["draft_id"], "进取")
     s = impact.revision_state(store, rid, "unfair_terms")
-    imp = s["impact"]
-    assert imp["bound"]["draft_id"] == r1["draft_id"]
-    assert imp["stale"] is True
+    assert s["impact"] is None
     assert s["selected"]["draft_id"] == r2["draft_id"]
+    # B 也查了
+    impact.analyze_impact(store, rid, "unfair_terms", r2["draft_id"],
+                          llm_call=lambda *a: _FINDINGS_OK)
+    # 切回 A：A 自己的结果原样恢复
+    impact.select_draft(store, rid, "unfair_terms", r1["draft_id"], "平衡")
+    s = impact.revision_state(store, rid, "unfair_terms")
+    imp = s["impact"]
+    assert imp["bound"] == {"draft_id": r1["draft_id"], "stance": "平衡"}
+    assert imp["legacy"] is False
+    assert imp["stale"] is False
+
+
+def test_state_same_draft_stance_switch(env_store):
+    """同一草案内换版别（codex 复批 5 附带核对）：平衡查过→进取未查→
+    如实未检查→切回平衡→结果恢复。"""
+    store, rid = env_store
+    r = _gen_ok(store, rid)
+    impact.select_draft(store, rid, "unfair_terms", r["draft_id"], "平衡")
+    impact.analyze_impact(store, rid, "unfair_terms", r["draft_id"],
+                          llm_call=lambda *a: _FINDINGS_OK)
+    # 同一 draft 换版别：进取版没有自己的结果
+    impact.select_draft(store, rid, "unfair_terms", r["draft_id"], "进取")
+    s = impact.revision_state(store, rid, "unfair_terms")
+    assert s["impact"] is None
+    # 切回平衡：结果还在
+    impact.select_draft(store, rid, "unfair_terms", r["draft_id"], "平衡")
+    s = impact.revision_state(store, rid, "unfair_terms")
+    assert s["impact"]["bound"]["stance"] == "平衡"
 
 
 def test_state_impact_legacy_missing_stance(env_store):
@@ -254,27 +296,32 @@ def test_state_impact_legacy_missing_stance(env_store):
     assert imp["stale"] is True
 
 
-def test_state_impact_latest_one_only(env_store):
-    """两条记录只回最新一条；先成功后失败→如实显示失败，不捞旧成功充数。"""
+def test_state_impact_latest_one_per_binding(env_store):
+    """绑定版别内取最新一条：先成功后失败→如实显示失败；绑定其他
+    版别的记录不掺进来（那是别人版本的账）。"""
     store, rid = env_store
-    draft_id = _select(store, rid)
+    draft_id = _select(store, rid)  # 平衡
     impact.analyze_impact(store, rid, "unfair_terms", draft_id,
                           llm_call=lambda *a: _FINDINGS_OK)
+    # 同绑定（A/平衡）较新的失败 → 如实显示失败
     _insert_impact_row(store, rid, draft_id=draft_id, stance="平衡",
                        status="degraded", reason="llm_timeout",
                        payload="{}", created=time.time() + 10)
+    # 另一版别（进取）的更老成功记录 → 不参与
+    _insert_impact_row(store, rid, draft_id=draft_id, stance="进取",
+                       status="ok", payload=_FINDINGS_OK,
+                       created=time.time() - 10)
     s = impact.revision_state(store, rid, "unfair_terms")
     assert s["impact"]["state"] == "degraded"
     assert s["impact"]["reason"] == "llm_timeout"
 
 
 def test_state_uncovered_code_no_match(env_store):
-    store, rid = env_store
-    _insert_impact_row(store, rid, draft_id="d0", stance="平衡",
-                       status="uncovered",
+    _select_and_insert(env_store, status="uncovered",
                        payload=json.dumps({"uncovered_code": "no_match",
                                            "uncovered_reason": "未命中相关条款簇"},
                                           ensure_ascii=False))
+    store, rid = env_store
     s = impact.revision_state(store, rid, "unfair_terms")
     imp = s["impact"]
     assert imp["state"] == "uncovered"
@@ -282,12 +329,11 @@ def test_state_uncovered_code_no_match(env_store):
 
 
 def test_state_uncovered_code_missing_source(env_store):
-    store, rid = env_store
-    _insert_impact_row(store, rid, draft_id="d0", stance="平衡",
-                       status="uncovered",
+    _select_and_insert(env_store, status="uncovered",
                        payload=json.dumps({"uncovered_reason": "合同缺少全文，"
                                            "无法定位可对照内容"},
                                           ensure_ascii=False))
+    store, rid = env_store
     s = impact.revision_state(store, rid, "unfair_terms")
     assert s["impact"]["uncovered_code"] == "missing_source"
 
@@ -325,9 +371,8 @@ def test_state_impact_reports_hidden_findings_count(env_store):
         {"index": 0, "note": "口径不一致"},
         {"index": 1, "note": "该条款建议接受，不必再改"},
     ]}, ensure_ascii=False)
+    _select_and_insert(env_store, status="ok", payload=payload)
     store, rid = env_store
-    _insert_impact_row(store, rid, draft_id="d0", stance="平衡",
-                       status="ok", payload=payload)
     s = impact.revision_state(store, rid, "unfair_terms")
     imp = s["impact"]
     assert imp["hidden_findings"] == 1
@@ -336,11 +381,50 @@ def test_state_impact_reports_hidden_findings_count(env_store):
 
 # ---------- 幂等迁移 ----------
 
-def test_migration_adds_stance_column_to_legacy_table(env_store):
-    """老表（无 stance 列）自动补列：不报错、老行读为 legacy。"""
+def test_state_get_readonly_on_legacy_table_schema_unchanged(env_store):
+    """GET 纯读（复批 4）：老表缺 stance 列时只读退化——整行按 legacy
+    读，不 ALTER 不迁移，schema 前后逐列逐表一致。"""
     store, rid = env_store
     con = sqlite3.connect(str(store._path))
-    # 直建老形态表（无 stance 列）；revision_state 的 IF NOT EXISTS 不会覆盖它
+    con.execute(
+        "CREATE TABLE impact_reports ("
+        "id TEXT PRIMARY KEY, review_id TEXT NOT NULL, item_id TEXT NOT NULL,"
+        "draft_id TEXT NOT NULL, created_at REAL NOT NULL, trace_id TEXT,"
+        "payload TEXT NOT NULL, status TEXT NOT NULL,"
+        "reason TEXT NOT NULL DEFAULT '')")
+    con.execute(
+        "INSERT INTO impact_reports (id, review_id, item_id, draft_id,"
+        " created_at, trace_id, payload, status, reason)"
+        " VALUES ('ir-legacy', ?, 'unfair_terms', 'd0', ?, 't', ?, 'ok', '')",
+        (rid, time.time(), _FINDINGS_OK))
+    con.commit()
+
+    def schema_snapshot():
+        cols = [r[1] for r in
+                con.execute("PRAGMA table_info(impact_reports)")]
+        master = con.execute(
+            "SELECT name, sql FROM sqlite_master"
+            " WHERE type='table' ORDER BY name").fetchall()
+        return cols, master
+
+    before = schema_snapshot()
+    s = impact.revision_state(store, rid, "unfair_terms")
+    assert s["status"] == "ok"
+    assert s["impact"]["legacy"] is True
+    assert s["impact"]["bound"]["stance"] is None
+    assert s["impact"]["stale"] is True
+    assert schema_snapshot() == before, "GET 不得变更 schema（复批 4）"
+    # 再读不炸（幂等读）
+    s2 = impact.revision_state(store, rid, "unfair_terms")
+    assert s2["impact"]["legacy"] is True
+    con.close()
+
+
+def test_migration_on_write_path_and_idempotent(env_store):
+    """迁移在写入路径（复批 4）：老表经一次写入补列；重复迁移幂等
+    （并发 duplicate-column 兜底不炸）。"""
+    store, rid = env_store
+    con = sqlite3.connect(str(store._path))
     con.execute(
         "CREATE TABLE impact_reports ("
         "id TEXT PRIMARY KEY, review_id TEXT NOT NULL, item_id TEXT NOT NULL,"
@@ -354,12 +438,38 @@ def test_migration_adds_stance_column_to_legacy_table(env_store):
         (rid, time.time(), _FINDINGS_OK))
     con.commit()
     con.close()
+    # 写入路径触发迁移
+    impact._save_impact_report(rid, "unfair_terms", "d0", "t", {}, "ok",
+                               stance="平衡")
+    con = sqlite3.connect(str(store._path))
+    cols = {r[1] for r in con.execute("PRAGMA table_info(impact_reports)")}
+    assert "stance" in cols
+    con.close()
+    # 幂等：重复迁移不炸（模拟并发已补列场景）
+    with impact._connect() as conn:
+        impact._migrate_impact_reports(conn)
+        impact._migrate_impact_reports(conn)
+    # 老行仍在，读为 legacy
     s = impact.revision_state(store, rid, "unfair_terms")
-    assert s["status"] == "ok"
     assert s["impact"]["legacy"] is True
-    # 迁移幂等：再读不炸
-    s2 = impact.revision_state(store, rid, "unfair_terms")
-    assert s2["impact"]["legacy"] is True
+
+
+def test_state_bound_row_wins_over_legacy(env_store):
+    """当前选定有绑定结果时绑定行优先；无版别老记录不顶替（各归各账）。"""
+    store, rid = env_store
+    r = _gen_ok(store, rid)
+    impact.select_draft(store, rid, "unfair_terms", r["draft_id"], "平衡")
+    # 更老的无版别记录 + 当前后绑定结果
+    _insert_impact_row(store, rid, draft_id="legacy-0", stance="",
+                       status="ok", payload=_FINDINGS_OK,
+                       created=time.time() - 100)
+    impact.analyze_impact(store, rid, "unfair_terms", r["draft_id"],
+                          llm_call=lambda *a: _FINDINGS_OK)
+    s = impact.revision_state(store, rid, "unfair_terms")
+    imp = s["impact"]
+    assert imp["bound"] == {"draft_id": r["draft_id"], "stance": "平衡"}
+    assert imp["legacy"] is False
+    assert imp["stale"] is False
 
 
 # ---------- 404 与路由层 ----------

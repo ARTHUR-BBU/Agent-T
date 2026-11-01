@@ -2032,7 +2032,8 @@
     if (remR === 0 && drafts.length) {
       parts.push('<p class="rev-caption">本合同的生成次数已用完。</p>');
     }
-    parts.push('<p class="rev-caption">导出报告将包含您选定的方案</p>');
+    // 注：线框 §7「导出报告将包含您选定的方案」承诺由 B7-3b（docx 草案
+    // 章节）交付后再上——能力未上线前不写这句（codex #163 复批 3）
     parts.push("</div>");
 
     // 卡二：选定卡
@@ -2044,7 +2045,6 @@
       parts.push('<p class="rev-line">已选定：' + escapeHtml(sel.stance || "") + "版" +
         (selBatch ? "（" + revFmtTime(selBatch.created_at) + " 生成的那批）" : "") + "</p>");
       parts.push('<p class="rev-caption">选定只代表您的选择，不会自动修改合同，也不代表重新审查通过。</p>');
-      parts.push('<p class="rev-caption">导出报告将包含您选定的方案</p>');
     }
     parts.push("</div>");
 
@@ -2117,13 +2117,21 @@
     box.innerHTML = parts.join("");
   }
 
+  /** 迟到响应判废：seq 变了或上下文（审查单+检查项）对不上 = 请求已
+   * 过期，丢弃不渲染（codex #163 复批 5——成功失败一律先验上下文）。 */
+  function revStaleResp(seq, reviewId, itemId) {
+    return seq !== REV_STATE.seq || !REV_STATE.ctx ||
+      REV_STATE.ctx.reviewId !== reviewId ||
+      REV_STATE.ctx.itemId !== itemId;
+  }
+
   /** 触发类 POST（用户显式点按）。返回后一律 GET state 重渲染真实态
-   * （业务结果不在本地猜测——严格圈账口径在后端）。过期响应丢弃：
-   * (检查项 id + 批次) 上下文对不上就只复位 busy，不覆盖当前显示。 */
+   * （业务结果不在本地猜测——严格圈账口径在后端）。busy 在 POST 返回
+   * 时一律复位（codex #163 复批 1：成功路径不复位会永远「正在生成」）；
+   * 过期响应丢弃：上下文对不上不覆盖当前显示。 */
   async function revTrigger(action, reviewId, item, body) {
     if (REV_STATE.busy) return;
     const seq = REV_STATE.seq;
-    const ctx = { reviewId: reviewId, itemId: item.id };
     const suffixByAction = {
       generate: "/revision",
       select: "/revision/select",
@@ -2141,18 +2149,19 @@
         body: JSON.stringify(body || {}),
       });
     } catch (e) {
+      REV_STATE.busy = false;
+      if (revStaleResp(seq, reviewId, item.id)) return;
       renderRevReadFail("network");
       return;
     }
-    if (res.status === 401) { renderRevReadFail("login"); return; }
-    if (res.status === 404) { renderRevReadFail("gone"); return; }
-    // 业务结果（ok/degraded/uncovered/budget_exceeded/422）交 GET state
-    // 重渲染真实态；状态读取与展示不扣额度。
-    if (ctx.reviewId !== state.reviewId || ctx.itemId !== REV_STATE.ctx.itemId ||
-        seq !== REV_STATE.seq) {
-      REV_STATE.busy = false;
-      return; // 用户已切换条目/页面：丢弃本次结果，不覆盖当前显示
+    // POST 已返回：忙碌态一律复位，后续渲染全走 GET 真实态
+    REV_STATE.busy = false;
+    if (res.status === 401 || res.status === 404) {
+      if (revStaleResp(seq, reviewId, item.id)) return;
+      renderRevReadFail(res.status === 401 ? "login" : "gone");
+      return;
     }
+    if (revStaleResp(seq, reviewId, item.id)) return; // 已切项：丢弃不刷新
     await loadRevCards(reviewId, item);
   }
 
@@ -2209,11 +2218,13 @@
     box.innerHTML = '<p class="rev-line">正在读取…</p>';
     fetch("/api/review/" + reviewId + "/items/" + item.id + "/revision/state")
       .then(async (res) => {
+        // 过期判定前置（codex #163 复批 5）：切项后旧请求的成功/失败
+        // 分支一律丢弃，绝不覆盖新条目
+        if (seq !== REV_STATE.seq) return;
         if (res.status === 401) { renderRevReadFail("login"); return; }
         if (res.status === 404) { renderRevReadFail("gone"); return; }
         if (!res.ok) { renderRevReadFail("network"); return; }
         const data = await res.json();
-        if (seq !== REV_STATE.seq) return; // 用户已切项：过期响应丢弃
         if (data.selected) REV_STATE.ctx.selected = data.selected;
         REV_STATE.lastData = data;
         renderRevCards(item, data);

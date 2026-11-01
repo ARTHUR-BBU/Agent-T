@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import os
+import json
 import socket
 import subprocess
 import sys
@@ -1176,3 +1177,263 @@ def test_objections_panel_hidden_without_key(home):
     """旧记录兼容：review 载荷无 objections 键 → 面板静默隐藏。"""
     _stub_objections_flow(home, None)
     assert not home.is_visible("#objections-panel")
+
+
+# ---------- B7-3a 三卡（route stub：POST 三端点 + 动态 state；复批 1-5） ----------
+
+def _rev_batch(is_selected=False):
+    return {"draft_id": "d1", "created_at": 1730000000, "status": "ok",
+            "is_selected": is_selected,
+            "selected_stance": "平衡" if is_selected else None,
+            "versions": [
+                {"stance": "稳妥", "text": "改为对等罚则。", "note": "最容易谈成"},
+                {"stance": "平衡", "text": "折中方案文本。", "note": "各让一步"},
+                {"stance": "进取", "text": "删除没收约定。", "note": "强势时用"},
+            ],
+            "rationale": "三版差异说明。", "assumptions": [],
+            "declaration": "起草辅助参考，不构成法律意见。"}
+
+
+def _rev_state_payload(phase):
+    if phase == "drafted":
+        return {"status": "ok", "item_id": "sublet",
+                "drafts": [_rev_batch()], "selected": None, "impact": None,
+                "remaining": {"revision": 4, "impact": 3}}
+    if phase == "selected":
+        return {"status": "ok", "item_id": "sublet",
+                "drafts": [_rev_batch(is_selected=True)],
+                "selected": {"draft_id": "d1", "stance": "平衡"},
+                "impact": None, "remaining": {"revision": 4, "impact": 3}}
+    if phase == "impact":
+        return {"status": "ok", "item_id": "sublet",
+                "drafts": [_rev_batch(is_selected=True)],
+                "selected": {"draft_id": "d1", "stance": "平衡"},
+                "impact": {"bound": {"draft_id": "d1", "stance": "平衡"},
+                           "state": "ok", "legacy": False, "stale": False,
+                           "findings": [{"index": 0, "note": "口径不一致"}],
+                           "hidden_findings": 0, "notice": "仅供关注",
+                           "excerpts": [{"excerpt": "第十二条 违约责任"}],
+                           "covered": True},
+                "remaining": {"revision": 4, "impact": 2}}
+    if phase == "degraded":
+        return {"status": "ok", "item_id": "sublet",
+                "drafts": [{"draft_id": "d1", "created_at": 1730000000,
+                            "status": "degraded", "is_selected": False,
+                            "selected_stance": None}],
+                "selected": None, "impact": None,
+                "remaining": {"revision": 4, "impact": 3}}
+    return {"status": "ok", "item_id": "sublet", "drafts": [],
+            "selected": None, "impact": None,
+            "remaining": {"revision": 4, "impact": 3}}
+
+
+def _stub_rev_flow(page, *, second_attention=False):
+    """三卡 stub 流：假 done 记录（sublet 需关注+quote）+ revision 四端点
+    拦截。phase 字典驱动 state 返回内容；counts 记 POST 次数（双击防重）。
+    走到结果页后返回 (phase, counts)。"""
+    import json as _json
+
+    phase = {"state": "empty", "generate_result": "ok", "generate_status": 200}
+    counts = {"generate": 0, "select": 0, "impact": 0}
+    stub = _quality_review_stub(None)
+    stub["id"] = "e2er00001"
+    if second_attention:
+        stub["items"].insert(1, {
+            "id": "deposit", "name": "押金退还", "status": "需关注",
+            "note": "退还条件不明", "quote": "押金2000元", "hits": ["押金"],
+            "clause_ids": [], "primary_clause_id": None,
+        })
+    page.route(
+        "**/api/upload",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({"review_id": "e2er00001", "message": "uploaded",
+                              "status": "uploaded"}),
+        ),
+    )
+    page.route(
+        "**/api/review/e2er00001",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps(stub, ensure_ascii=False),
+        ),
+    )
+    page.route(
+        "**/api/review/e2er00001/items/sublet/revision/state",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps(_rev_state_payload(phase["state"]),
+                             ensure_ascii=False),
+        ),
+    )
+    page.route(
+        "**/api/review/e2er00001/items/sublet/revision/select",
+        lambda route: (counts.__setitem__(
+            "select", counts["select"] + 1),
+            phase.__setitem__("state", "selected"),
+            route.fulfill(
+                status=200, content_type="application/json",
+                body=_json.dumps({"status": "selected", "draft_id": "d1",
+                                  "stance": "平衡"}))),
+    )
+    page.route(
+        "**/api/review/e2er00001/items/sublet/revision/impact",
+        lambda route: (counts.__setitem__(
+            "impact", counts["impact"] + 1),
+            phase.__setitem__("state", "impact"),
+            route.fulfill(
+                status=200, content_type="application/json",
+                body=_json.dumps({"status": "ok", "report": {}}))),
+    )
+
+    def _generate(route):
+        counts["generate"] += 1
+        if phase["generate_status"] != 200:
+            route.fulfill(status=phase["generate_status"], body="err")
+            return
+        if phase["generate_result"] == "degraded":
+            phase["state"] = "degraded"
+            route.fulfill(
+                status=200, content_type="application/json",
+                body=_json.dumps({"status": "degraded",
+                                  "message": "生成失败"}),
+            )
+        else:
+            phase["state"] = "drafted"
+            route.fulfill(
+                status=200, content_type="application/json",
+                body=_json.dumps({"status": "ok", "draft_id": "d1"}),
+            )
+
+    page.route("**/api/review/e2er00001/items/sublet/revision", _generate)
+    if second_attention:
+        page.route(
+            "**/api/review/e2er00001/items/deposit/revision/state",
+            lambda route: route.fulfill(
+                status=200, content_type="application/json",
+                body=_json.dumps(_rev_state_payload("empty"),
+                                 ensure_ascii=False),
+            ),
+        )
+    page.set_input_files("#file", str(FIXTURE))
+    page.click("#btn-upload")
+    page.wait_for_selector("#results-body", state="visible", timeout=15000)
+    page.wait_for_selector(".item.attention", state="visible", timeout=5000)
+    return phase, counts
+
+
+def test_rev_cards_full_chain_busy_resets_and_single_post(home):
+    """复批 1：生成→选定→检查全链，busy 每步复位（不卡「正在生成」）；
+    busy 守卫双击只发一次 POST；复批 3：导出承诺不上。"""
+    _, counts = _stub_rev_flow(home)
+    home.locator("#item-list .item.attention").first.click()
+    home.wait_for_selector("#rev-cards [data-action=generate]", state="visible")
+    # 双击（同步两次 click）：busy 守卫下只发一次 POST
+    home.evaluate(
+        "() => { const b = document.querySelector("
+        "\"#rev-cards [data-action=generate]\"); b.click(); b.click(); }"
+    )
+    home.wait_for_selector("#rev-cards .rev-version", state="visible")
+    assert "正在生成" not in home.inner_text("#rev-cards"), "成功后 busy 必须复位"
+    assert counts["generate"] == 1, "双击必须只发一次生成 POST"
+    # 选定 → 卡二出现已选定、版本高亮
+    home.click("#rev-cards [data-action=select]")
+    home.wait_for_selector("#rev-cards .rev-version.selected", state="visible")
+    assert "已选定" in home.inner_text("#rev-cards")
+    assert "正在" not in home.inner_text("#rev-cards")
+    # 牵连检查 → findings 渲染
+    home.click("#rev-cards [data-action=impact]")
+    home.wait_for_selector("#rev-cards .rev-finding", state="visible")
+    body = home.inner_text("#rev-cards")
+    assert "导出报告将包含您选定的方案" not in body, "B7-3b 未上线不得承诺导出（复批 3）"
+    assert counts["select"] == 1 and counts["impact"] == 1
+
+
+def test_rev_cards_degraded_shows_retry_then_success(home):
+    """业务失败链：degraded 如实显示 + 重试带消耗提示；重试成功恢复。"""
+    phase, counts = _stub_rev_flow(home)
+    phase["generate_result"] = "degraded"
+    home.locator("#item-list .item.attention").first.click()
+    home.wait_for_selector("#rev-cards [data-action=generate]", state="visible")
+    home.click("#rev-cards [data-action=generate]")
+    home.wait_for_function(
+        "document.querySelector('#rev-cards') && "
+        "document.querySelector('#rev-cards').innerText.includes("
+        "'这次没有生成成功')"
+    )
+    body = home.inner_text("#rev-cards")
+    assert "消耗一次可用次数" in body, "重试按钮必须带消耗提示"
+    assert "正在生成" not in body, "失败返回后 busy 同样必须复位（复批 1）"
+    # 重试成功
+    phase["generate_result"] = "ok"
+    home.click("#rev-cards [data-action=generate]")
+    home.wait_for_selector("#rev-cards .rev-version", state="visible")
+    assert counts["generate"] == 2
+
+
+def test_rev_cards_late_failure_does_not_overwrite(home):
+    """复批 5：可控延迟复现迟到响应——A 条目 state 挂起，切到 B 渲染后
+    再放行 A 的迟到载荷（带独有标记），B 的卡片不得被覆盖。
+    用 200+标记载荷而非 500：非 2xx 会打浏览器 console error 触发
+    js_errors 门禁；seq 守卫在所有分支之前，200/5xx 走同一条丢弃路径。"""
+    held = []
+
+    def _hold(route):
+        held.append(route)  # 暂不 fulfill：请求挂起
+
+    phase, _ = _stub_rev_flow(home, second_attention=True)
+    late_marker = "A条目迟到载荷-不应出现"
+    home.route(
+        "**/api/review/e2er00001/items/sublet/revision/state",
+        lambda route: held.append(route),  # 暂不 fulfill：请求挂起
+    )
+    home.locator("#item-list .item.attention").first.click()  # = sublet
+    home.wait_for_timeout(300)  # sublet state 挂起中
+    assert "正在读取" in home.inner_text("#rev-cards")
+    # 切到第二条（deposit）：立即渲染空态
+    home.locator("#item-list .item.attention").nth(1).click()
+    home.wait_for_selector("#rev-cards [data-action=generate]", state="visible")
+    # A 的迟到响应到达（若守卫失效会渲染出带标记的草案卡）
+    held[0].fulfill(
+        status=200, content_type="application/json",
+        body=json.dumps({"status": "ok", "item_id": "sublet",
+                         "drafts": [{"draft_id": "d-late",
+                                     "created_at": 1730000000,
+                                     "status": "ok", "is_selected": False,
+                                     "selected_stance": None,
+                                     "versions": [{"stance": "稳妥",
+                                                   "text": late_marker,
+                                                   "note": ""}],
+                                     "rationale": "", "assumptions": [],
+                                     "declaration": ""}],
+                         "selected": None, "impact": None,
+                         "remaining": {"revision": 4, "impact": 3}},
+                        ensure_ascii=False),
+    )
+    home.wait_for_timeout(400)
+    assert home.is_visible("#rev-cards [data-action=generate]"), (
+        "迟到响应不得覆盖当前条目卡片")
+    assert late_marker not in home.inner_text("#rev-cards")
+    assert "正在读取" not in home.inner_text("#rev-cards")
+    assert phase["state"] == "empty"  # B 的空态原样
+
+
+def test_rev_cards_post_not_found_shows_read_fail_layer(pw_browser, base_url):
+    """POST 404（记录已失效）→ 读取失败层三分的 gone 态。
+    用不受 js_errors 守卫的裸 page：故意打 404 必产生 console error，
+    守卫会把「故意模拟失败」误判为前端错误。"""
+    page, ctx, _ = _new_page(pw_browser)
+    page._e2e_base = base_url  # type: ignore[attr-defined]
+    try:
+        _goto_home(page)
+        phase, _ = _stub_rev_flow(page)
+        phase["generate_status"] = 404
+        page.locator("#item-list .item.attention").first.click()
+        page.wait_for_selector("#rev-cards [data-action=generate]",
+                               state="visible")
+        page.click("#rev-cards [data-action=generate]")
+        page.wait_for_selector("#rev-cards [data-action=back]",
+                               state="visible")
+        assert "已过期或不存在" in page.inner_text("#rev-cards")
+    finally:
+        ctx.close()

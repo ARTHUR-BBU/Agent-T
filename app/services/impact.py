@@ -31,6 +31,7 @@ from app.services import evidence as evidence_module
 from app.services import llm_ask, llm_call_log, llm_client, store as store_module
 from app.services.revision import (
     _connect,
+    _db_path,
     _Degraded,
     consume_budget,
     impact_limit_from_env,
@@ -197,11 +198,19 @@ _IMPACT_REPORTS_DDL = (
 def _migrate_impact_reports(conn: sqlite3.Connection) -> None:
     """幂等迁移（B7-3a）：老表补 stance 列（绑定版别）。沿用账本「只增
     不删、检缺列再 ALTER」纪律；历史行 stance 为空 → 前端按「历史记录
-    （版别未登记）」渲染，不硬配当前选择。生产现 0 行，迁移零包袱。"""
+    （版别未登记）」渲染，不硬配当前选择。生产现 0 行，迁移零包袱。
+    **只在写入路径调用**（_save_impact_report）；GET 读侧不改 schema
+    （codex #163 复批 4）。并发竞态（两连接同时过 PRAGMA 检查）由
+    duplicate-column 吞掉兜底。"""
     cols = {r[1] for r in conn.execute("PRAGMA table_info(impact_reports)")}
     if "stance" not in cols:
-        conn.execute(
-            "ALTER TABLE impact_reports ADD COLUMN stance TEXT NOT NULL DEFAULT ''")
+        try:
+            conn.execute(
+                "ALTER TABLE impact_reports ADD COLUMN stance"
+                " TEXT NOT NULL DEFAULT ''")
+        except sqlite3.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
 
 
 def _save_impact_report(review_id: str, item_id: str, draft_id: str,
@@ -524,7 +533,14 @@ def revision_state(store: Any, review_id: str, item_id: str) -> dict[str, Any]:
 
     一次返回页面刷新恢复所需全部态：drafts 倒序（含选定标注）、当前
     选定 (draft_id, stance)、牵连最新一次状态（绑定版别+legacy 标记+
-    findings 输出检查）、剩余额度。**纯读库：零 AI 调用、零扣额。**"""
+    findings 输出检查）、剩余额度。**纯读库：零 AI 调用、零扣额、
+    不建表不迁移不改 schema**（codex #163 复批 4——建表/迁移只在写入
+    路径；表未建/老表缺列时只读退化，捕获 OperationalError 给空态）。
+
+    牵连记录取「**当前选定版别**的最新一次」（codex #163 复批 2）：
+    A 查过、切 B 查过、再切回 A → 返回 A 自己的结果，不把 B 标过期充数。
+    当前选定无绑定结果时，退到最近一条无版别老记录（legacy 另标不猜）；
+    绑定其他版别的记录不返回（那是别人版本的账，不是本版的）。"""
     review = store.get(review_id)
     if review is None:
         return {"status": "not_found", "reason": "review_not_found"}
@@ -533,23 +549,86 @@ def revision_state(store: Any, review_id: str, item_id: str) -> dict[str, Any]:
     if item is None:
         return {"status": "not_found", "reason": "item_not_found"}
 
-    sel = get_selected(review_id, item_id)
-    sel_draft, sel_stance = (sel if sel else (None, None))
-
-    with _connect() as conn:
-        conn.execute(_SELECTED_DDL)
-        conn.execute(_IMPACT_REPORTS_DDL)
-        _migrate_impact_reports(conn)
-        drows = conn.execute(
-            "SELECT id, created_at, status, payload FROM revision_drafts"
-            " WHERE review_id=? AND item_id=?"
-            " ORDER BY created_at DESC, id DESC",
-            (review_id, item_id)).fetchall()
-        irow = conn.execute(
-            "SELECT draft_id, stance, status, payload, reason, created_at"
-            " FROM impact_reports WHERE review_id=? AND item_id=?"
-            " ORDER BY created_at DESC, id DESC LIMIT 1",
-            (review_id, item_id)).fetchone()
+    sel_draft = sel_stance = None
+    drows: list = []
+    irow = None
+    # 裸连接（复批 4）：revision._connect 自带建表 DDL，GET 侧绝不能走它——
+    # 这里 sqlite3 直连同库，只 SELECT/PRAGMA，零 schema 变更零业务写入
+    conn = sqlite3.connect(_db_path())
+    try:
+        # 纯读三连：缺表/缺列一律 OperationalError → 只读退化，不动 schema
+        try:
+            srow = conn.execute(
+                "SELECT draft_id, stance FROM selected_drafts"
+                " WHERE review_id=? AND item_id=?",
+                (review_id, item_id)).fetchone()
+            if srow:
+                sel_draft, sel_stance = srow[0], srow[1]
+        except sqlite3.OperationalError:
+            pass  # selected_drafts 未建（从未选过）→ 未选定
+        try:
+            drows = conn.execute(
+                "SELECT id, created_at, status, payload FROM revision_drafts"
+                " WHERE review_id=? AND item_id=?"
+                " ORDER BY created_at DESC, id DESC",
+                (review_id, item_id)).fetchall()
+        except sqlite3.OperationalError:
+            drows = []  # revision_drafts 未建（从未生成）→ 空
+        try:
+            cols = {r[1] for r in
+                    conn.execute("PRAGMA table_info(impact_reports)")}
+        except sqlite3.OperationalError:
+            cols = set()
+        if cols and "stance" in cols:
+            try:
+                if sel_draft:
+                    # 当前选定版别自己的最新一次（复批 2 核心语义）
+                    irow = conn.execute(
+                        "SELECT draft_id, stance, status, payload, reason,"
+                        " created_at FROM impact_reports"
+                        " WHERE review_id=? AND item_id=?"
+                        " AND draft_id=? AND stance=?"
+                        " ORDER BY created_at DESC, id DESC LIMIT 1",
+                        (review_id, item_id, sel_draft, sel_stance)).fetchone()
+                if irow is None:
+                    # 无绑定结果 → 最近一条无版别老记录（legacy 另标不猜）
+                    irow = conn.execute(
+                        "SELECT draft_id, stance, status, payload, reason,"
+                        " created_at FROM impact_reports"
+                        " WHERE review_id=? AND item_id=? AND stance=''"
+                        " ORDER BY created_at DESC, id DESC LIMIT 1",
+                        (review_id, item_id)).fetchone()
+            except sqlite3.OperationalError:
+                irow = None
+        elif cols:
+            # 老表缺 stance 列：只读退化，整行按 legacy 读（不迁移不 ALTER）
+            try:
+                irow = conn.execute(
+                    "SELECT draft_id, NULL, status, payload, reason,"
+                    " created_at FROM impact_reports"
+                    " WHERE review_id=? AND item_id=?"
+                    " ORDER BY created_at DESC, id DESC LIMIT 1",
+                    (review_id, item_id)).fetchone()
+            except sqlite3.OperationalError:
+                irow = None
+        # cols 为空 = impact_reports 未建 → impact 保持 None
+        # 剩余额度（纯读）：revision.remaining_budget 走 _connect（带建表
+        # DDL），GET 侧同裸连接直查，缺表按未消耗计（复批 4）
+        used_rev = used_imp = 0
+        try:
+            brow = conn.execute(
+                "SELECT revision_used, impact_used FROM revision_budget"
+                " WHERE review_id=?", (review_id,)).fetchone()
+            if brow:
+                used_rev, used_imp = brow[0], brow[1]
+        except sqlite3.OperationalError:
+            pass  # revision_budget 未建（从未触发过生成/分析）
+    finally:
+        conn.close()
+    remaining = {
+        "revision": max(0, revision_limit_from_env() - used_rev),
+        "impact": max(0, impact_limit_from_env() - used_imp),
+    }
 
     drafts: list[dict[str, Any]] = []
     for did, created, status, payload in drows:
@@ -609,11 +688,5 @@ def revision_state(store: Any, review_id: str, item_id: str) -> dict[str, Any]:
             entry["reason"] = i_reason or str(pl.get("reason") or "")
         impact = entry
 
-    remaining = {
-        "revision": remaining_budget(review_id, "revision",
-                                     revision_limit_from_env()),
-        "impact": remaining_budget(review_id, "impact",
-                                   impact_limit_from_env()),
-    }
     return {"status": "ok", "item_id": item_id, "drafts": drafts,
             "selected": selected, "impact": impact, "remaining": remaining}
