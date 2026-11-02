@@ -64,3 +64,17 @@ def analyze_revision_impact(review_id: str, item_id: str,
     if result.get("status") == "not_supported":
         raise HTTPException(status_code=422, detail=result.get("reason"))
     return result
+
+
+@router.get("/review/{review_id}/items/{item_id}/revision/state")
+def revision_item_state(review_id: str, item_id: str) -> dict:
+    """聚合状态接口（B7-3a §四A）：页面刷新只读恢复三卡全部态。
+
+    纯读库——零 AI 调用、零扣额。一次返回 drafts 倒序（含选定标注/
+    全文恢复字段）、当前选定 (draft_id, stance)、牵连最新一次状态
+    （绑定版别+legacy+findings 输出检查）、剩余额度。
+    404：审查单或 item 不存在。"""
+    result = impact.revision_state(store, review_id, item_id)
+    if result.get("status") == "not_found":
+        raise HTTPException(status_code=404, detail=result.get("reason"))
+    return result

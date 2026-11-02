@@ -144,6 +144,9 @@
           <p id="detail-note" class="detail-note"></p>
           <p class="detail-label">原文 <button type="button" class="link evidence-jump hidden" id="detail-evidence-jump">看原文</button></p>
           <div id="detail-quote" class="detail-quote" tabindex="-1"></div>
+          <!-- B7-3a「改得有用」三卡：改写建议/选定/牵连检查（GET state 只读
+               恢复；触发类按钮显式点按；建议不回写判定层）。renderRevCards 填充 -->
+          <section id="rev-cards" class="rev-cards hidden" aria-label="修改建议"></section>
           <div id="detail-actions" class="detail-actions hidden">
             <button type="button" class="link ask-link" id="detail-ask">问清楚一点 →</button>
           </div>
@@ -205,6 +208,8 @@
         <p class="quote-title">原文</p>
         <div id="ask-quote" class="quote-body"></div>
       </div>
+      <!-- B7-3a 移动端三卡挂载（与桌面 #rev-cards 同渲染函数，单列堆叠） -->
+      <section id="rev-cards-ask" class="rev-cards hidden" aria-label="修改建议"></section>
       <!-- 段3/4 追问输入卡：480px 内答案（order:-1）提到输入之上 -->
       <div class="card ask-interact">
         <p id="ask-unavailable" class="muted hidden">追问暂未开通</p>

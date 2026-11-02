@@ -199,6 +199,7 @@
       $("results-body").classList.add("hidden");
       $("results-error").classList.add("hidden");
       $("item-detail").classList.add("hidden");
+      revHideAll(); // B7-3a：清单重渲/新审查时三卡一并收起
       resetStages();
       await pollReview();
     } catch (e) {
@@ -545,6 +546,7 @@
     list.innerHTML = "";
     state.selectedItemId = null;
     $("item-detail").classList.add("hidden");
+    revHideAll(); // B7-3a：清单重渲时三卡一并收起
 
     items.forEach((item) => {
       list.appendChild(buildItemRow(item, { blind: false }));
@@ -1283,6 +1285,13 @@
       $("detail-ask").onclick = null;
     }
 
+    // B7-3a 三卡：符合条件的检查项挂载（GET state 只读恢复，零消耗）
+    if (revEligible(item) && state.reviewId) {
+      loadRevCards(state.reviewId, item);
+    } else {
+      $("rev-cards").classList.add("hidden");
+    }
+
     detail.classList.remove("hidden");
     detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
@@ -1388,6 +1397,13 @@
     }
 
     show("ask");
+    // B7-3a 三卡（移动端 hash 屏与桌面「问清楚一点」共用本函数）：
+    // show 之后再挂载，revPickBox 才能按当前可见屏选对容器
+    if (revEligible(item) && state.reviewId) {
+      loadRevCards(state.reviewId, item);
+    } else {
+      $("rev-cards-ask").classList.add("hidden");
+    }
     window.scrollTo(0, 0);
   }
 
@@ -1904,6 +1920,328 @@
       el.classList.remove("hidden");
     }
   })();
+
+  // ===== B7-3a「改得有用」三卡（线框 docs/b7-3/wireframe-b7-3a.md）=====
+  // GET state 只读恢复；触发类 POST 用户显式点按；过期响应丢弃；
+  // 建议不回写判定层。挂载点：桌面 #rev-cards、移动 #rev-cards-ask，
+  // 由当前可见屏决定渲染目标（不看 offsetParent，看屏类名，确定性优先）。
+  const REV_STATE = { seq: 0, ctx: null, busy: false, lastData: null };
+
+  function revBoxes() {
+    return Array.prototype.slice.call(document.querySelectorAll(".rev-cards"));
+  }
+
+  function revHideAll() {
+    revBoxes().forEach((b) => b.classList.add("hidden"));
+  }
+
+  function revPickBox() {
+    const askScreen = $("screen-ask");
+    const wantAsk = !!(askScreen && !askScreen.classList.contains("hidden"));
+    return $(wantAsk ? "rev-cards-ask" : "rev-cards");
+  }
+
+  function revFmtTime(ts) {
+    try {
+      const d = new Date(ts * 1000);
+      return (d.getMonth() + 1) + "月" + d.getDate() + "日 " +
+        String(d.getHours()).padStart(2, "0") + ":" +
+        String(d.getMinutes()).padStart(2, "0");
+    } catch (e) { return ""; }
+  }
+
+  /** 读取失败层（线框 §1.5）：kind = network | login | gone。
+   * 只重发 GET state（纯读库零消耗），绝不触发任何 AI 调用。 */
+  function renderRevReadFail(kind) {
+    REV_STATE.busy = false;
+    const box = revPickBox();
+    if (!box || box.classList.contains("hidden")) return;
+    if (kind === "login") {
+      box.innerHTML =
+        '<p class="rev-line">登录已过期，请重新登录后再查看。</p>' +
+        '<button type="button" class="rev-btn" data-action="relogin">重新登录</button>';
+    } else if (kind === "gone") {
+      box.innerHTML =
+        '<p class="rev-line">这份审查记录已过期或不存在，无法查看修改建议。</p>' +
+        '<button type="button" class="rev-btn" data-action="back">返回清单</button>';
+    } else {
+      box.innerHTML =
+        '<p class="rev-line">暂时读不到您的方案记录，请检查网络后重新读取。</p>' +
+        '<button type="button" class="rev-btn" data-action="reread">重新读取</button>';
+    }
+  }
+
+  /** 三卡渲染：data 来自 GET state（只读渲染，不发明字段）。 */
+  function renderRevCards(item, data) {
+    const box = revPickBox();
+    if (!box || box.classList.contains("hidden")) return;
+    const sel = data.selected || null;
+    const parts = [];
+
+    // 卡一：改写建议卡
+    parts.push('<div class="rev-card"><p class="rev-card-title">✎ AI 修改建议</p>');
+    const drafts = data.drafts || [];
+    const remR = data.remaining ? data.remaining.revision : 0;
+    if (REV_STATE.busy === "generate") {
+      parts.push('<p class="rev-line">正在生成…</p>');
+    } else if (!drafts.length && remR === 0) {
+      parts.push('<p class="rev-line">本合同的生成次数已用完。</p>');
+    } else if (!drafts.length) {
+      parts.push('<button type="button" class="rev-btn primary" data-action="generate">生成修改建议</button>');
+      parts.push('<p class="rev-caption">本合同还可生成 ' + remR + " 次</p>");
+    } else {
+      drafts.forEach((d, i) => {
+        const head = (i === 0 ? "最新生成 · " : "此前生成 · ") + revFmtTime(d.created_at);
+        const selMark = d.is_selected
+          ? ' <span class="rev-chip">● 您已从这批选定</span>'
+          : "";
+        parts.push('<p class="rev-caption">' + head + selMark + "</p>");
+        if (d.status === "ok") {
+          (d.versions || []).forEach((v, vi) => {
+            const selectedHere = !!(sel && sel.draft_id === d.draft_id &&
+              sel.stance === v.stance);
+            parts.push('<div class="rev-version' + (selectedHere ? " selected" : "") + '">');
+            parts.push('<p class="rev-version-title">方案' + "一二三"[vi] + " · " +
+              escapeHtml(v.stance || "") + (selectedHere ? "（已选定）" : "") + "</p>");
+            parts.push('<p class="rev-text">' + escapeHtml(v.text || "") + "</p>");
+            parts.push('<p class="rev-caption">适用：' + escapeHtml(v.note || "") + "</p>");
+            parts.push('<button type="button" class="rev-btn" data-action="select" data-draft="' +
+              escapeHtml(d.draft_id) + '" data-stance="' + escapeHtml(v.stance || "") +
+              '">选定这一版</button>');
+            parts.push("</div>");
+          });
+          parts.push('<p class="rev-caption">三版共同理由：' + escapeHtml(d.rationale || "") + "</p>");
+          const asm = d.assumptions || [];
+          if (asm.length) {
+            parts.push('<p class="rev-caption">事实假设：</p>');
+            asm.forEach((a) => {
+              parts.push('<p class="rev-caption">· ' + escapeHtml(a) + "</p>");
+            });
+          }
+          parts.push('<p class="rev-caption">' + escapeHtml(d.declaration || "") + "</p>");
+        } else {
+          // 降级态如实显示，不展示残缺方案；重试要花次数，先讲清楚
+          parts.push('<p class="rev-line">修改建议这次没有生成成功，已为您记录在案。</p>');
+          if (remR > 0 && i === 0) {
+            parts.push('<button type="button" class="rev-btn" data-action="generate">再试一次</button>');
+            parts.push('<p class="rev-caption">再试一次将消耗一次可用次数（剩 ' + remR + " 次）</p>");
+          }
+        }
+      });
+    }
+    if (remR === 0 && drafts.length) {
+      parts.push('<p class="rev-caption">本合同的生成次数已用完。</p>');
+    }
+    // 注：线框 §7「导出报告将包含您选定的方案」承诺由 B7-3b（docx 草案
+    // 章节）交付后再上——能力未上线前不写这句（codex #163 复批 3）
+    parts.push("</div>");
+
+    // 卡二：选定卡
+    parts.push('<div class="rev-card"><p class="rev-card-title">☑ 您选定的版本</p>');
+    if (!sel) {
+      parts.push('<p class="rev-line">还没有选定。请从上方三版中选定一版。</p>');
+    } else {
+      const selBatch = drafts.find((d) => d.draft_id === sel.draft_id) || null;
+      parts.push('<p class="rev-line">已选定：' + escapeHtml(sel.stance || "") + "版" +
+        (selBatch ? "（" + revFmtTime(selBatch.created_at) + " 生成的那批）" : "") + "</p>");
+      parts.push('<p class="rev-caption">选定只代表您的选择，不会自动修改合同，也不代表重新审查通过。</p>');
+    }
+    parts.push("</div>");
+
+    // 卡三：牵连检查卡
+    parts.push('<div class="rev-card"><p class="rev-card-title">⛓ 改动会影响其他条款吗</p>');
+    const imp = data.impact || null;
+    const remI = data.remaining ? data.remaining.impact : 0;
+    if (!sel) {
+      // 未选定前置闸：有选定才能跑连带分析（后端同样校验，双保险）
+      parts.push('<p class="rev-line">请先在上方选定一版，再检查其他条款。</p>');
+      parts.push('<button type="button" class="rev-btn" disabled>检查其他条款</button>');
+    } else if (REV_STATE.busy === "impact") {
+      parts.push('<p class="rev-line">正在检查…</p>');
+    } else if (!imp) {
+      parts.push('<button type="button" class="rev-btn" data-action="impact">检查其他条款</button>');
+      parts.push('<p class="rev-caption">可用次数 ' + remI + "</p>");
+    } else {
+      const stale = !!(imp.legacy || (imp.bound && sel &&
+        (imp.bound.draft_id !== sel.draft_id || imp.bound.stance !== sel.stance)));
+      if (imp.legacy) {
+        parts.push('<p class="rev-line">这是一条历史检查记录（当时未登记版本），建议重新检查。</p>');
+      } else if (imp.bound && sel &&
+        (imp.bound.draft_id !== sel.draft_id || imp.bound.stance !== sel.stance)) {
+        parts.push('<p class="rev-line">该结果对应您此前选定的版本，已过期。建议对新选定版本重新检查。</p>');
+      }
+      if (imp.state === "ok" && !stale) {
+        // 摘录与说明按下标对齐；缺任一侧不凑对（宁缺一条，不错配一条）
+        (imp.excerpts || []).forEach((e, i) => {
+          const f = (imp.findings || []).find((x) => x.index === i);
+          if (!f) return;
+          parts.push('<div class="rev-finding">');
+          parts.push('<p class="rev-caption">▸ 第 ' + (i + 1) + " 条</p>");
+          parts.push('<p class="rev-text">摘录：' + escapeHtml(e.excerpt || "") + "</p>");
+          parts.push('<p class="rev-caption">说明：' + escapeHtml(f.note || "") + "</p>");
+          parts.push("</div>");
+        });
+        const hid = imp.hidden_findings || 0;
+        if (hid > 0) {
+          parts.push('<p class="rev-caption">有 ' + hid + " 条说明未通过安全检查，已如实隐藏。</p>");
+          parts.push('<p class="rev-caption">牵连分析结果不完整（' + hid + " 条说明未通过安全检查）。</p>");
+        }
+        if (imp.notice) {
+          parts.push('<p class="rev-caption">' + escapeHtml(imp.notice) + "</p>");
+        }
+      } else if (imp.state === "uncovered" && !stale) {
+        // F1/F2 两种「没查到」如实分开：材料缺失≠检索未命中
+        if (imp.uncovered_code === "missing_source") {
+          parts.push('<p class="rev-line">这份合同缺少可对照的完整内容，暂时无法检查其他条款。</p>');
+        } else {
+          parts.push('<p class="rev-line">检查过了：合同其他部分没有检索到与这处改动相关的条款。这不代表没有冲突。</p>');
+        }
+      } else if (imp.state === "degraded") {
+        parts.push('<p class="rev-line">这次检查没有完成，已为您记录在案。</p>');
+        if (remI > 0) {
+          parts.push('<button type="button" class="rev-btn" data-action="impact">再试一次</button>');
+          parts.push('<p class="rev-caption">再试一次将消耗一次可用次数（剩 ' + remI + " 次）</p>");
+        }
+      } else {
+        // not_initiated / 过期 / legacy：出「检查/重新检查」按钮（次数用完只留文案）
+        if (remI > 0) {
+          parts.push('<button type="button" class="rev-btn" data-action="impact">检查其他条款</button>');
+          parts.push('<p class="rev-caption">可用次数 ' + remI + "</p>");
+        } else {
+          parts.push('<p class="rev-caption">检查次数已用完</p>');
+        }
+      }
+    }
+    parts.push("</div>");
+
+    box.innerHTML = parts.join("");
+  }
+
+  /** 迟到响应判废：seq 变了或上下文（审查单+检查项）对不上 = 请求已
+   * 过期，丢弃不渲染（codex #163 复批 5——成功失败一律先验上下文）。 */
+  function revStaleResp(seq, reviewId, itemId) {
+    return seq !== REV_STATE.seq || !REV_STATE.ctx ||
+      REV_STATE.ctx.reviewId !== reviewId ||
+      REV_STATE.ctx.itemId !== itemId;
+  }
+
+  /** 触发类 POST（用户显式点按）。返回后一律 GET state 重渲染真实态
+   * （业务结果不在本地猜测——严格圈账口径在后端）。busy 在 POST 返回
+   * 时一律复位（codex #163 复批 1：成功路径不复位会永远「正在生成」）；
+   * 过期响应丢弃：上下文对不上不覆盖当前显示。 */
+  async function revTrigger(action, reviewId, item, body) {
+    if (REV_STATE.busy) return;
+    const seq = REV_STATE.seq;
+    const suffixByAction = {
+      generate: "/revision",
+      select: "/revision/select",
+      impact: "/revision/impact",
+    };
+    const suffix = suffixByAction[action];
+    if (!suffix) return;
+    REV_STATE.busy = action;
+    renderRevCards(item, REV_STATE.lastData || {}); // busy 文案 + 按钮禁用
+    let res;
+    try {
+      res = await fetch("/api/review/" + reviewId + "/items/" + item.id + suffix, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}),
+      });
+    } catch (e) {
+      REV_STATE.busy = false;
+      if (revStaleResp(seq, reviewId, item.id)) return;
+      renderRevReadFail("network");
+      return;
+    }
+    // POST 已返回：忙碌态一律复位，后续渲染全走 GET 真实态
+    REV_STATE.busy = false;
+    if (res.status === 401 || res.status === 404) {
+      if (revStaleResp(seq, reviewId, item.id)) return;
+      renderRevReadFail(res.status === 401 ? "login" : "gone");
+      return;
+    }
+    if (revStaleResp(seq, reviewId, item.id)) return; // 已切项：丢弃不刷新
+    await loadRevCards(reviewId, item);
+  }
+
+  /** 三卡容器点击委托（按钮随渲染重建，事件挂容器不挂按钮）。 */
+  function bindRevCards() {
+    revBoxes().forEach((box) => {
+      if (box.dataset.revBound) return;
+      box.dataset.revBound = "1";
+      box.addEventListener("click", (ev) => {
+        const btn = ev.target.closest("[data-action]");
+        if (!btn || btn.disabled) return;
+        const ctx = REV_STATE.ctx;
+        if (!ctx) return;
+        const act = btn.dataset.action;
+        if (act === "reread") { loadRevCards(ctx.reviewId, ctx.item); return; }
+        if (act === "relogin") { window.location.reload(); return; }
+        if (act === "back") {
+          // 记录已失效：走审查 hash 回清单（#/results 不是合法路由，
+          // 会命中 route.rid=null 分支把用户踢回上传页）
+          if (ctx.reviewId) window.location.hash = "#/review/" + ctx.reviewId;
+          else show("results");
+          return;
+        }
+        if (act === "generate") {
+          revTrigger("generate", ctx.reviewId, ctx.item, {});
+          return;
+        }
+        if (act === "select") {
+          revTrigger("select", ctx.reviewId, ctx.item, {
+            draft_id: btn.dataset.draft,
+            stance: btn.dataset.stance,
+          });
+          return;
+        }
+        if (act === "impact") {
+          const sel = ctx.selected;
+          if (!sel) return;
+          revTrigger("impact", ctx.reviewId, ctx.item, { draft_id: sel.draft_id });
+        }
+      });
+    });
+  }
+
+  /** 入口：点开「需关注」检查项详情时调用（桌面/移动共用渲染函数）。 */
+  function loadRevCards(reviewId, item) {
+    bindRevCards();
+    REV_STATE.seq += 1;
+    const seq = REV_STATE.seq;
+    REV_STATE.ctx = { reviewId: reviewId, itemId: item.id, item: item, selected: null };
+    const box = revPickBox();
+    revHideAll();
+    if (!box) return;
+    box.classList.remove("hidden");
+    box.innerHTML = '<p class="rev-line">正在读取…</p>';
+    fetch("/api/review/" + reviewId + "/items/" + item.id + "/revision/state")
+      .then(async (res) => {
+        // 过期判定前置（codex #163 复批 5）：切项后旧请求的成功/失败
+        // 分支一律丢弃，绝不覆盖新条目
+        if (seq !== REV_STATE.seq) return;
+        if (res.status === 401) { renderRevReadFail("login"); return; }
+        if (res.status === 404) { renderRevReadFail("gone"); return; }
+        if (!res.ok) { renderRevReadFail("network"); return; }
+        const data = await res.json();
+        // 二次校验（codex #163 二轮 P1）：读正文是异步的——头到时没切项
+        // 不代表正文读完没切，这里不复查就会把旧条目内容渲染到新条目上
+        if (seq !== REV_STATE.seq) return;
+        if (data.selected) REV_STATE.ctx.selected = data.selected;
+        REV_STATE.lastData = data;
+        renderRevCards(item, data);
+      })
+      .catch(() => {
+        if (seq === REV_STATE.seq) renderRevReadFail("network");
+      });
+  }
+
+  /** 三卡挂载门禁：仅「需关注且非补盲且有原文摘句」的检查项出三卡
+   * （与追问卡同一族；补盲待人工确认，不让它混进建议流）。 */
+  function revEligible(item) {
+    return item.status === "需关注" && !item._blind && !!item.quote;
+  }
 
   loadStanceMeta();
   resumeFromHash();
