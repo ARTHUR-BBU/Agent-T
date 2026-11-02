@@ -69,9 +69,13 @@ def build_report_docx(row: dict[str, Any], warnings: list | None = None) -> byte
     _conclusion(doc, row)
     _attention_table(doc, row)
     _item_details(doc, row)
-    _decisions(doc, row)
-    _blind_candidates(doc, row)
-    _policy_quotes(doc, row)
+    # 章节编号顺延只在草案章节真正渲染时发生（codex #165 复批 P2）：
+    # 无修订活动的旧报告保持 M4 原编号（四/五/六），字节契约不破
+    has_revision = bool(row.get("revision_section"))
+    _revision_section(doc, row)
+    _decisions(doc, row, has_revision)
+    _blind_candidates(doc, row, has_revision)
+    _policy_quotes(doc, row, has_revision)
     _appendix(doc, row)
     _footer(doc, row)
 
@@ -284,6 +288,129 @@ def _evidence_status_text(ev: Any) -> str:
     return "无证据票据"
 
 
+# B7-3b 草案章节固定文案（spec-b7-3-ui-report §五A：重审提示任何形态必带；
+# 文案待九哥评审后冻结——改文案=改字节，确定性契约测试会拦）
+REVISION_REVIEW_NOTICE = (
+    "重要提醒：选定修改建议不等于问题已解决——"
+    "请把修订后的文本当作新合同重新审查。"
+)
+REVISION_SECTION_DISCLAIMER = (
+    "本节内容由 AI 起草辅助生成，仅供参考；是否采纳由您自行判断，"
+    "重要事项请咨询专业律师。"
+)
+
+
+def _revision_entry_impact_lines(entry: dict[str, Any]) -> list[str]:
+    """单项牵连检查结果 → 报告行（§五A 四态如实 + 输出检查明示）。"""
+    imp = entry.get("impact")
+    if imp is None:
+        return ["牵连检查：还没有检查过。"]
+    if imp.get("legacy"):
+        return ["牵连检查：这是一次较早的检查（当时没有记录针对哪个方案），建议重新检查一次。"]
+    state = imp.get("state")
+    if state == "ok":
+        lines: list[str] = ["牵连检查（AI 帮您看这处改动会不会牵动合同别处，不构成法律意见）："]
+        excerpts = imp.get("excerpts") or []
+        findings = imp.get("findings") or []
+        hidden = imp.get("hidden_findings") or 0
+        # 被隐藏说明的**具体编号**（codex #165 复批 P1）：按编号出示对应
+        # 合同原文+「说明已隐藏」，不靠「可见数+隐藏数」反推——3 条摘录
+        # 只配出 1 条说明的事不能再发生
+        hidden_set = {int(x) for x in (imp.get("hidden_indexes") or [])}
+        for i, e in enumerate(excerpts):
+            f = next((x for x in findings if x.get("index") == i), None)
+            excerpt = e.get("excerpt") or ""
+            if f is not None:
+                lines.append(f"▸ 相关条款 {i + 1}｜摘录：{excerpt}")
+                lines.append(f"  说明：{f.get('note') or ''}")
+            elif i in hidden_set:
+                # 安检隐藏：摘录是合同原文（证据义务原样示出），说明如实
+                # 标注已隐藏，不让读者误以为完整
+                lines.append(f"▸ 相关条款 {i + 1}｜摘录：{excerpt}")
+                lines.append("  说明未通过安全检查，已隐藏。")
+            # 其余缺侧=数据不齐：宁缺一条，不错配一条
+        if hidden:
+            lines.append(
+                f"牵连检查结果不完整（{hidden} 条说明未通过安全检查）。")
+        if imp.get("notice"):
+            lines.append(str(imp["notice"]))
+        if not excerpts:
+            lines.append("没有找到需要一起查看的其他条款。")
+        return lines
+    if state == "uncovered":
+        if imp.get("uncovered_code") == "missing_source":
+            return ["牵连检查：合同缺少可对照的完整内容，暂时无法检查。"]
+        return ["牵连检查：合同其他部分没有找到与这处改动相关的条款"
+                "（不代表没有冲突）。"]
+    if state == "degraded":
+        return ["牵连检查：这次分析没有完成，请在页面上重试一次。"]
+    return [f"牵连检查：状态异常（{state}），请以页面显示为准。"]
+
+
+def _revision_section(doc: Any, row: dict[str, Any]) -> None:
+    """四、AI 修改建议（AI 起草辅助）（B7-3b §五A）。
+
+    数据来自路由层注入的 revision_section（impact.revision_report_section
+    纯读库组装，零 LLM）。全卷无修订活动 → 整章不渲染，M4 报告字节
+    契约不受影响。红线：禁语过滤已在组装层完成（版别整体处置）；
+    合同原文摘录是证据，原样不过滤；建议不回写判定层。"""
+    entries = row.get("revision_section") or []
+    if not entries:
+        return
+    doc.add_heading("四、AI 修改建议（AI 起草辅助，不构成法律意见）", level=1)
+    doc.add_paragraph(REVISION_SECTION_DISCLAIMER)
+    for entry in entries:
+        doc.add_heading(
+            f"【{entry.get('item_status') or '未判定'}】"
+            f"{entry.get('item_name') or ''}", level=2)
+        # 原文对照：证据义务，不做禁语清洗（同逐条明细口径）
+        p = doc.add_paragraph()
+        run = p.add_run("原文摘句：")
+        run.bold = True
+        p.add_run(entry.get("quote") or "")
+
+        draft = entry.get("draft")
+        if draft is None:
+            doc.add_paragraph("未选定修改建议。")
+        elif draft.get("banned"):
+            doc.add_paragraph(
+                "您选定的版别未通过安全检查，内容未写入报告。"
+                "建议重新生成或另选方案。")
+        elif draft.get("missing"):
+            doc.add_paragraph("选定记录不完整，内容未写入报告。")
+        else:
+            p = doc.add_paragraph()
+            run = p.add_run("您选定的方案：")
+            run.bold = True
+            p.add_run(draft.get("stance") or "")
+            p = doc.add_paragraph()
+            run = p.add_run("修改文本：")
+            run.bold = True
+            p.add_run(draft.get("text") or "")
+            p = doc.add_paragraph()
+            run = p.add_run("适用说明：")
+            run.bold = True
+            p.add_run(draft.get("note") or "")
+            p = doc.add_paragraph()
+            run = p.add_run("选择理由：")
+            run.bold = True
+            p.add_run(draft.get("rationale") or "")
+            assumptions = draft.get("assumptions") or []
+            p = doc.add_paragraph()
+            run = p.add_run("事实假设：")
+            run.bold = True
+            if assumptions:
+                p.add_run("；".join(assumptions))
+            else:
+                p.add_run("无补充假设")
+            if draft.get("declaration"):
+                doc.add_paragraph(draft["declaration"])
+
+        for line in _revision_entry_impact_lines(entry):
+            doc.add_paragraph(line)
+        doc.add_paragraph(REVISION_REVIEW_NOTICE)
+
+
 def _consistency_texts(decision: dict[str, Any]) -> list[str]:
     """决定一致性中文文案（§2.3，reasons 可并存）。"""
     texts = {
@@ -295,8 +422,9 @@ def _consistency_texts(decision: dict[str, Any]) -> list[str]:
     return [texts.get(r, r) or str(r) for r in decision.get("consistency_reasons") or []]
 
 
-def _decisions(doc: Any, row: dict[str, Any]) -> None:
-    """四、人工决定与确认（2c §4.2）：有决定或有未编号确认才出现本节。"""
+def _decisions(doc: Any, row: dict[str, Any], has_revision: bool = False) -> None:
+    """人工决定与确认（2c §4.2）：有决定或有未编号确认才出现本节。
+    编号随草案章节顺延：无=四（M4 原编号）；有=五（B7-3b）。"""
     questions = ((row.get("verify") or {}).get("questions") or [])
     objections = ((row.get("objections") or {}).get("objections") or [])
     decisions: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
@@ -317,7 +445,8 @@ def _decisions(doc: Any, row: dict[str, Any]) -> None:
     accepted = [ob for ob in objections if isinstance(ob, dict) and ob.get("accepted")]
     if not decisions and not unnumbered and not accepted:
         return  # Q4：三者皆无才省略整节
-    doc.add_heading("四、人工决定与确认", level=1)
+    doc.add_heading("四五"[1 if has_revision else 0] + "、人工决定与确认",
+                    level=1)
     if decisions:
         table = doc.add_table(rows=1, cols=6)
         table.style = "Table Grid"
@@ -378,11 +507,13 @@ def _decisions(doc: Any, row: dict[str, Any]) -> None:
             )
 
 
-def _blind_candidates(doc: Any, row: dict[str, Any]) -> None:
+def _blind_candidates(doc: Any, row: dict[str, Any],
+                      has_revision: bool = False) -> None:
     candidates = row.get("blind_candidates") or []
     if not candidates:
         return
-    doc.add_heading("五、模型补盲候选（需人工确认）", level=1)
+    doc.add_heading("五六"[1 if has_revision else 0] + "、模型补盲候选（需人工确认）",
+                    level=1)
     doc.add_paragraph(
         "以下为模型提出的候选风险，未经规则引擎确认，不构成审查结论，"
         "请人工核实后再决定是否采信。"
@@ -399,8 +530,9 @@ def _blind_candidates(doc: Any, row: dict[str, Any]) -> None:
         p.add_run(quote if quote.strip() else "暂无")
 
 
-def _policy_quotes(doc: Any, row: dict[str, Any]) -> None:
-    doc.add_heading("六、政策摘句", level=1)
+def _policy_quotes(doc: Any, row: dict[str, Any],
+                   has_revision: bool = False) -> None:
+    doc.add_heading("六七"[1 if has_revision else 0] + "、政策摘句", level=1)
     policies = [p for p in (row.get("policies") or []) if str(p).strip()]
     if not policies:
         doc.add_paragraph("本次审查未引用政策条款。")

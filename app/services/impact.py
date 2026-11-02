@@ -513,19 +513,25 @@ def _uncovered_code(payload: dict[str, Any]) -> str:
     return "no_match"
 
 
-def _findings_output_check(findings: list) -> tuple[list, int]:
+def _findings_output_check(findings: list) -> tuple[list, int, list[int]]:
     """findings 说明文本输出检查（施工卡 §五A：格式合格≠内容安全）。
-    禁语表同构检查——签约诱导类措辞若渗入说明，该条隐藏+计数，报告
-    明示「结果不完整」。合同原文摘录（excerpts）是证据，原样不过滤。"""
+    禁语表同构检查——签约诱导类措辞若渗入说明，该条隐藏+计数+**记编号**
+    （codex #165 复批 P1：报告要按编号出示被隐藏说明对应的合同原文摘录，
+    不能靠可见数+隐藏数反推）。合同原文摘录（excerpts）是证据，原样
+    不过滤。返回 (可见说明, 隐藏数, 隐藏编号列表)。"""
     visible: list[dict[str, Any]] = []
     hidden = 0
+    hidden_indexes: list[int] = []
     for f in findings or []:
         note = str(f.get("note") or "")
         if any(pat in note for pat in revision_prompts.BANNED_PATTERNS):
             hidden += 1
+            idx = f.get("index")
+            if isinstance(idx, int):
+                hidden_indexes.append(idx)
             continue
         visible.append(f)
-    return visible, hidden
+    return visible, hidden, hidden_indexes
 
 
 def revision_state(store: Any, review_id: str, item_id: str) -> dict[str, Any]:
@@ -673,10 +679,14 @@ def revision_state(store: Any, review_id: str, item_id: str) -> dict[str, Any]:
                 pl.get("uncovered_reason") or i_reason or "")
             entry["uncovered_code"] = _uncovered_code(pl)
         elif i_status == "ok":
-            findings, hidden = _findings_output_check(pl.get("findings") or [])
+            findings, hidden, hidden_indexes = _findings_output_check(
+                pl.get("findings") or [])
             entry.update({
                 "findings": findings,
                 "hidden_findings": hidden,
+                # 被隐藏说明的具体编号（codex #165 复批 P1）：报告按编号
+                # 出示对应合同原文摘录+「说明已隐藏」，不靠总数反推
+                "hidden_indexes": hidden_indexes,
                 "notice": pl.get("notice") or "",
                 "excerpts": pl.get("excerpts") or [],
                 "covered": bool(pl.get("covered", True)),
@@ -690,3 +700,87 @@ def revision_state(store: Any, review_id: str, item_id: str) -> dict[str, Any]:
 
     return {"status": "ok", "item_id": item_id, "drafts": drafts,
             "selected": selected, "impact": impact, "remaining": remaining}
+
+
+# ---- B7-3b：报告草案章节数据组装（§五A 规则；纯读库零 AI 零扣额） ----
+
+def _version_hits_banned(ver: dict[str, Any], batch: dict[str, Any]) -> bool:
+    """版别整体禁语检查（§五A：草案文本/理由/假设随所属版整体处置——
+    任一处命中，该版整体不入报告，如实标注，绝不掐头留尾）。
+    理由/假设/免责声明在批次层（state 组装口径），文本/适用在版别层。"""
+    texts = [str(ver.get("text") or ""), str(ver.get("note") or ""),
+             str(batch.get("rationale") or "")]
+    texts += [str(a) for a in batch.get("assumptions") or []]
+    return any(any(pat in t for pat in revision_prompts.BANNED_PATTERNS)
+               for t in texts)
+
+
+def revision_report_section(store: Any, review_id: str) -> list[dict[str, Any]]:
+    """报告「AI 修改建议（AI 起草辅助）」章节数据（B7-3b §五A）。
+
+    纯读库组装：逐项复用 revision_state 语义（绑定版别最新牵连/
+    legacy 不硬配/findings 输出检查），**零 LLM 调用、零扣额、零
+    schema 变更**。渲染规则：
+    - 无原文摘句（quote）的检查项不进章节（无对照锚）
+    - 无任何修订活动（无草案/无选定/无牵连）的项不进章节；全卷无
+      修订活动返回 []——章节整体不渲染，M4 报告字节契约不受影响
+    - 未选定 → 如实「未选定修改建议」，不展开候选文本（不虚构）
+    - 选定版命中禁语 → 该版整体不入报告，banned=True 如实标注
+    - 牵连数据直接沿用 state 组装（findings 已过滤+hidden_findings
+      计数），报告层据此明示「结果不完整」"""
+    review = store.get(review_id)
+    if review is None:
+        return []
+    out: list[dict[str, Any]] = []
+    for item in review.get("items") or []:
+        if not item.get("quote"):
+            continue  # 无原文对照锚不进章节
+        item_id = str(item.get("id") or "")
+        s = revision_state(store, review_id, item_id)
+        if s.get("status") != "ok":
+            continue
+        drafts = s.get("drafts") or []
+        selected = s.get("selected")
+        imp = s.get("impact")
+        if not drafts and not selected and not imp:
+            continue  # 无修订活动：不占报告篇幅
+        entry: dict[str, Any] = {
+            "item_id": item_id,
+            "item_name": str(item.get("name") or ""),
+            "item_status": str(item.get("status") or ""),
+            "quote": str(item.get("quote") or ""),
+            "draft": None,
+            "impact": imp,
+        }
+        if selected:
+            batch = next((d for d in drafts
+                          if d.get("draft_id") == selected.get("draft_id")),
+                         None)
+            ver = None
+            if batch is not None and batch.get("status") == "ok":
+                ver = next((v for v in batch.get("versions") or []
+                            if v.get("stance") == selected.get("stance")),
+                           None)
+            if batch is None or ver is None:
+                # 选定记录指向的批次/版别缺失（降级批或数据不全）：如实标注
+                entry["draft"] = {"banned": False, "missing": True,
+                                  "stance": selected.get("stance") or ""}
+            else:
+                banned = _version_hits_banned(ver, batch)
+                entry["draft"] = {
+                    "banned": banned,
+                    "missing": False,
+                    "stance": str(ver.get("stance") or ""),
+                    # 命中禁语：内容整体不入报告（宁缺勿污），只留标注
+                    "text": "" if banned else str(ver.get("text") or ""),
+                    "note": "" if banned else str(ver.get("note") or ""),
+                    "rationale": "" if banned else str(
+                        batch.get("rationale") or ""),
+                    "assumptions": ([] if banned else
+                                    [str(a) for a in
+                                     batch.get("assumptions") or []]),
+                    "declaration": "" if banned else str(
+                        batch.get("declaration") or ""),
+                }
+        out.append(entry)
+    return out

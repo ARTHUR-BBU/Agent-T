@@ -547,6 +547,11 @@ def download_report(review_id: str):
         # 主张编号/证据状态/决定一致性全部缺位（页面盖了红章、打印版还是旧的）
         from app.services.evidence import derive_claims_view
         view, warnings, _claim_warnings = derive_claims_view(row)
+        # B7-3b 草案章节数据（§五A）：纯读库组装，零 LLM 零扣额；全卷无
+        # 修订活动返回空列表 → 章节整体不渲染，报告字节契约不变
+        from app.services import impact as impact_service
+        view["revision_section"] = impact_service.revision_report_section(
+            store, review_id)
         data = report_service.build_report_docx(view, warnings)
     except ImportError:
         # python-docx 缺失时不裸抛，给出可操作的错误
