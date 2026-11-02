@@ -2032,8 +2032,11 @@
     if (remR === 0 && drafts.length) {
       parts.push('<p class="rev-caption">本合同的生成次数已用完。</p>');
     }
-    // 注：线框 §7「导出报告将包含您选定的方案」承诺由 B7-3b（docx 草案
-    // 章节）交付后再上——能力未上线前不写这句（codex #163 复批 3）
+    // B7-3b 已交付草案章节，导出承诺成立（#163 复批 3 撤下的那句加回）；
+    // 未选定时报告只写「未选定修改建议」，承诺句不成立故不显示
+    if (sel) {
+      parts.push('<p class="rev-caption">导出的报告会包含您选定的方案</p>');
+    }
     parts.push("</div>");
 
     // 卡二：选定卡
@@ -2045,6 +2048,7 @@
       parts.push('<p class="rev-line">已选定：' + escapeHtml(sel.stance || "") + "版" +
         (selBatch ? "（" + revFmtTime(selBatch.created_at) + " 生成的那批）" : "") + "</p>");
       parts.push('<p class="rev-caption">选定只代表您的选择，不会自动修改合同，也不代表重新审查通过。</p>');
+      parts.push('<p class="rev-caption">导出的报告会包含您选定的方案</p>');
     }
     parts.push("</div>");
 

@@ -1345,7 +1345,7 @@ def test_rev_cards_full_chain_busy_resets_and_single_post(home):
     home.click("#rev-cards [data-action=impact]")
     home.wait_for_selector("#rev-cards .rev-finding", state="visible")
     body = home.inner_text("#rev-cards")
-    assert "导出报告将包含您选定的方案" not in body, "B7-3b 未上线不得承诺导出（复批 3）"
+    assert "导出的报告会包含您选定的方案" in body, "B7-3b 已交付，选定后报告承诺成立"
     assert counts["select"] == 1 and counts["impact"] == 1
 
 
