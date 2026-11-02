@@ -1418,6 +1418,55 @@ def test_rev_cards_late_failure_does_not_overwrite(home):
     assert phase["state"] == "empty"  # B 的空态原样
 
 
+def test_rev_cards_late_body_after_headers_does_not_overwrite(home):
+    """二轮复批 P1（正文时间窗）：A 的响应头先到、正文挂起；切到 B 后
+    再放行 A 的正文——B 的卡片不得被覆盖、上下文不得被写成 A 的。
+    用 ReadableStream 真实拉宽「头到/正文未完」窗口（route.fulfill 做不到）。"""
+    phase, _ = _stub_rev_flow(home, second_attention=True)
+    marker = "迟到正文载荷-不应出现"
+    home.evaluate(
+        """() => {
+          const orig = window.fetch;
+          window.fetch = (url, opts) => {
+            if (String(url).includes('/items/sublet/revision/state')) {
+              const stream = new ReadableStream({
+                start(c) {
+                  window.__releaseA = () => {
+                    c.enqueue(new TextEncoder().encode(
+                      JSON.stringify(window.__payloadA)));
+                    c.close();
+                  };
+                },
+              });
+              return Promise.resolve(new Response(stream, {status: 200,
+                headers: {'Content-Type': 'application/json'}}));
+            }
+            return orig(url, opts);
+          };
+          window.__payloadA = {status: 'ok', item_id: 'sublet',
+            drafts: [{draft_id: 'd-late', created_at: 1730000000,
+              status: 'ok', is_selected: false, selected_stance: null,
+              versions: [{stance: '稳妥', text: '""" + marker + """', note: ''}],
+              rationale: '', assumptions: [], declaration: ''}],
+            selected: {draft_id: 'd-late', stance: '稳妥'},
+            impact: null, remaining: {revision: 4, impact: 3}};
+        }"""
+    )
+    home.locator("#item-list .item.attention").first.click()  # sublet：头到正文挂起
+    home.wait_for_timeout(300)
+    assert "正在读取" in home.inner_text("#rev-cards")
+    # 切到 deposit：空态立即渲染
+    home.locator("#item-list .item.attention").nth(1).click()
+    home.wait_for_selector("#rev-cards [data-action=generate]", state="visible")
+    # 此时 A 的正文才读完：二次校验必须丢弃
+    home.evaluate("window.__releaseA()")
+    home.wait_for_timeout(400)
+    assert home.is_visible("#rev-cards [data-action=generate]"), (
+        "迟到正文不得覆盖当前条目卡片")
+    assert marker not in home.inner_text("#rev-cards")
+    assert "正在读取" not in home.inner_text("#rev-cards")
+
+
 def test_rev_cards_post_not_found_shows_read_fail_layer(pw_browser, base_url):
     """POST 404（记录已失效）→ 读取失败层三分的 gone 态。
     用不受 js_errors 守卫的裸 page：故意打 404 必产生 console error，

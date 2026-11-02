@@ -2225,6 +2225,9 @@
         if (res.status === 404) { renderRevReadFail("gone"); return; }
         if (!res.ok) { renderRevReadFail("network"); return; }
         const data = await res.json();
+        // 二次校验（codex #163 二轮 P1）：读正文是异步的——头到时没切项
+        // 不代表正文读完没切，这里不复查就会把旧条目内容渲染到新条目上
+        if (seq !== REV_STATE.seq) return;
         if (data.selected) REV_STATE.ctx.selected = data.selected;
         REV_STATE.lastData = data;
         renderRevCards(item, data);
