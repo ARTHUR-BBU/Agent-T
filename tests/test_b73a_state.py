@@ -356,8 +356,9 @@ def test_findings_output_check_hides_banned_notes():
         {"index": 1, "note": "该条款建议签署前修改定金约定"},
         {"index": 2, "note": "与草案存在不一致"},
     ]
-    visible, hidden = impact._findings_output_check(findings)
+    visible, hidden, hidden_indexes = impact._findings_output_check(findings)
     assert hidden == 1
+    assert hidden_indexes == [1], "被隐藏说明必须记具体编号（#165 复批 P1）"
     assert [f["index"] for f in visible] == [0, 2]
     excerpts = [{"index": 1, "excerpt": _C3_QUOTE}]
     # 摘录不在 findings 检查范围——证据是合同原文，不是模型输出

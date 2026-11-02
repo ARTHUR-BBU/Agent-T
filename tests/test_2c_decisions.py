@@ -282,7 +282,7 @@ def test_t_c7_adopted_false_objection_still_shows_counter_status(monkeypatch):
     不得因「无决定」早退被吞。"""
     rid = _mk()
     text = _doc_text(client.get(f"/api/review/{rid}/report").content)
-    assert "五、人工决定与确认" in text, "有受理异议时决定节必须出现"
+    assert "四、人工决定与确认" in text, "有受理异议时决定节必须出现"
     assert "present" in text or "已定位并出具票据" in text, "反证状态必须渲染"
 
 
@@ -381,7 +381,7 @@ def test_t_c4_report_with_decision(monkeypatch):
     _confirm(rid)
     data = client.get(f"/api/review/{rid}/report").content
     text = _doc_text(data)
-    assert "五、人工决定与确认" in text
+    assert "四、人工决定与确认" in text
     assert "确认" in text
     d = _get_decision(rid)
     assert d["evidence_ids"][0] in text, "证据引用列必须出现（Codex P1 落实）"

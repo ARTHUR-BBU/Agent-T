@@ -165,7 +165,7 @@ def test_xz2c_blind_candidates_stay_in_own_section():
     text = _doc_text(build_report_docx(row))
     sec2 = text.index("二、需关注与未找到汇总")
     sec3 = text.index("三、逐条明细")
-    sec4 = text.index("六、模型补盲候选")  # 2c：四让位给「人工决定与确认」节
+    sec4 = text.index("五、模型补盲候选")  # 2c：四让位给「人工决定与确认」节
     assert "补盲独有风险点" not in text[sec2:sec3], "候选不得进规则汇总表"
     assert "补盲独有风险点" not in text[sec3:sec4], "候选不得混入逐条明细"
     assert text.index("补盲独有风险点") > sec4, "候选只出现在自己的节里"

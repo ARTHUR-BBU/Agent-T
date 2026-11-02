@@ -513,19 +513,25 @@ def _uncovered_code(payload: dict[str, Any]) -> str:
     return "no_match"
 
 
-def _findings_output_check(findings: list) -> tuple[list, int]:
+def _findings_output_check(findings: list) -> tuple[list, int, list[int]]:
     """findings 说明文本输出检查（施工卡 §五A：格式合格≠内容安全）。
-    禁语表同构检查——签约诱导类措辞若渗入说明，该条隐藏+计数，报告
-    明示「结果不完整」。合同原文摘录（excerpts）是证据，原样不过滤。"""
+    禁语表同构检查——签约诱导类措辞若渗入说明，该条隐藏+计数+**记编号**
+    （codex #165 复批 P1：报告要按编号出示被隐藏说明对应的合同原文摘录，
+    不能靠可见数+隐藏数反推）。合同原文摘录（excerpts）是证据，原样
+    不过滤。返回 (可见说明, 隐藏数, 隐藏编号列表)。"""
     visible: list[dict[str, Any]] = []
     hidden = 0
+    hidden_indexes: list[int] = []
     for f in findings or []:
         note = str(f.get("note") or "")
         if any(pat in note for pat in revision_prompts.BANNED_PATTERNS):
             hidden += 1
+            idx = f.get("index")
+            if isinstance(idx, int):
+                hidden_indexes.append(idx)
             continue
         visible.append(f)
-    return visible, hidden
+    return visible, hidden, hidden_indexes
 
 
 def revision_state(store: Any, review_id: str, item_id: str) -> dict[str, Any]:
@@ -673,10 +679,14 @@ def revision_state(store: Any, review_id: str, item_id: str) -> dict[str, Any]:
                 pl.get("uncovered_reason") or i_reason or "")
             entry["uncovered_code"] = _uncovered_code(pl)
         elif i_status == "ok":
-            findings, hidden = _findings_output_check(pl.get("findings") or [])
+            findings, hidden, hidden_indexes = _findings_output_check(
+                pl.get("findings") or [])
             entry.update({
                 "findings": findings,
                 "hidden_findings": hidden,
+                # 被隐藏说明的具体编号（codex #165 复批 P1）：报告按编号
+                # 出示对应合同原文摘录+「说明已隐藏」，不靠总数反推
+                "hidden_indexes": hidden_indexes,
                 "notice": pl.get("notice") or "",
                 "excerpts": pl.get("excerpts") or [],
                 "covered": bool(pl.get("covered", True)),

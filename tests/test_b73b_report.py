@@ -121,6 +121,22 @@ def test_no_revision_activity_keeps_legacy_bytes(env_store):
         {**_view(), "revision_section": []})
 
 
+def test_no_section_keeps_legacy_numbering():
+    """复批 P2：无草案章节 → 政策摘句保持 M4 原编号「六」；有草案章节
+    → 顺延为「七」。同一份数据只差 revision_section，编号跟着变。"""
+    row = {**_view(), "policies": ["政策条款一"]}
+    base = _doc_text(build_report_docx(row))
+    assert "六、政策摘句" in base
+    assert "七、政策摘句" not in base
+    assert "四、人工决定与确认" not in base  # 无决定数据照旧省略
+    with_section = _doc_text(build_report_docx(
+        {**row, "revision_section": [{
+            "item_id": "i", "item_name": "n", "item_status": "需关注",
+            "quote": "q", "draft": None, "impact": None}]}))
+    assert "七、政策摘句" in with_section
+    assert "六、政策摘句" not in with_section
+
+
 def test_determinism_same_payload_same_bytes():
     """确定性契约（M4 红线）：同输入两次拼装 → 同字节。"""
     payload = [{
@@ -168,8 +184,9 @@ def test_section_full_form_selected_with_impact(env_store):
     assert "选定草案≠解决问题" in text
     assert REVISION_REVIEW_NOTICE in text, "红线 5：重审提示必带"
     assert "五、人工决定与确认" not in text  # 无决定数据时该节照旧省略
-    # 编号顺延：明细(三) → 草案(四)，后续节让位
+    # 编号顺延：明细(三) → 草案(四)，政策摘句让位为七
     assert text.index("三、逐条明细") < text.index("四、AI 修改建议")
+    assert "七、政策摘句" in text
 
 
 def test_section_no_selection_honest_line(env_store):
@@ -277,6 +294,44 @@ def test_banned_finding_hidden_and_disclosed(env_store):
     assert "牵连检查结果不完整（1 条说明未通过安全检查）" in text
     assert "摘录：第十二条" in text, "合同原文是证据，不过滤（§五A）"
     assert "说明未通过安全检查，已隐藏" in text
+
+
+def test_hidden_finding_excerpt_shown_by_index(env_store):
+    """复批 P1：3 条摘录、1 条可见说明、1 条被隐藏说明——隐藏说明对应
+    的摘录必须按编号出示（摘录+「说明已隐藏」），不能靠总数反推导致
+    原文消失；第三条摘录无任何说明记录，宁缺不错配。"""
+    store, rid = env_store
+    draft_id = _select(store, rid)
+    payload = json.dumps({"findings": [
+        {"index": 0, "note": "第一条说明：口径一致"},
+        {"index": 1, "note": "该条款建议接受，不必再改"},
+    ], "excerpts": [
+        {"excerpt": "第七条 付款方式：验收合格后一次性支付。"},
+        {"excerpt": "第十二条 违约责任：违约方应赔偿守约方损失。"},
+        {"excerpt": "第一条 合同标的：办公设备采购。"},
+    ]}, ensure_ascii=False)
+    import sqlite3
+    revision._connect().close()
+    with impact._connect() as conn:
+        conn.execute(impact._IMPACT_REPORTS_DDL)
+    con = sqlite3.connect(str(store._path))
+    con.execute(
+        "INSERT INTO impact_reports (id, review_id, item_id, draft_id,"
+        " created_at, trace_id, payload, status, reason, stance)"
+        " VALUES ('ir-x', ?, 'unfair_terms', ?, 1.0, 't', ?, 'ok', '', ?)",
+        (rid, draft_id, payload, "平衡"))
+    con.commit()
+    con.close()
+    section = impact.revision_report_section(store, rid)
+    imp = section[0]["impact"]
+    assert imp["hidden_indexes"] == [1], "隐藏编号必须逐条记账"
+    text = _doc_text(build_report_docx({**_view(), "revision_section": section}))
+    assert "摘录：第七条 付款方式" in text
+    assert "摘录：第十二条 违约责任" in text, "被隐藏说明对应的原文必须出示"
+    assert "说明未通过安全检查，已隐藏" in text
+    assert "说明：第一条说明：口径一致" in text
+    assert "摘录：第一条 合同标的" not in text, "无说明记录的摘录宁缺不错配"
+    assert "牵连检查结果不完整（1 条说明未通过安全检查）" in text
 
 
 # ---------- 牵连四态如实 ----------

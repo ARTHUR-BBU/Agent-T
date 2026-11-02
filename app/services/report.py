@@ -69,10 +69,13 @@ def build_report_docx(row: dict[str, Any], warnings: list | None = None) -> byte
     _conclusion(doc, row)
     _attention_table(doc, row)
     _item_details(doc, row)
+    # 章节编号顺延只在草案章节真正渲染时发生（codex #165 复批 P2）：
+    # 无修订活动的旧报告保持 M4 原编号（四/五/六），字节契约不破
+    has_revision = bool(row.get("revision_section"))
     _revision_section(doc, row)
-    _decisions(doc, row)
-    _blind_candidates(doc, row)
-    _policy_quotes(doc, row)
+    _decisions(doc, row, has_revision)
+    _blind_candidates(doc, row, has_revision)
+    _policy_quotes(doc, row, has_revision)
     _appendix(doc, row)
     _footer(doc, row)
 
@@ -310,15 +313,19 @@ def _revision_entry_impact_lines(entry: dict[str, Any]) -> list[str]:
         excerpts = imp.get("excerpts") or []
         findings = imp.get("findings") or []
         hidden = imp.get("hidden_findings") or 0
+        # 被隐藏说明的**具体编号**（codex #165 复批 P1）：按编号出示对应
+        # 合同原文+「说明已隐藏」，不靠「可见数+隐藏数」反推——3 条摘录
+        # 只配出 1 条说明的事不能再发生
+        hidden_set = {int(x) for x in (imp.get("hidden_indexes") or [])}
         for i, e in enumerate(excerpts):
             f = next((x for x in findings if x.get("index") == i), None)
             excerpt = e.get("excerpt") or ""
             if f is not None:
                 lines.append(f"▸ 相关条款 {i + 1}｜摘录：{excerpt}")
                 lines.append(f"  说明：{f.get('note') or ''}")
-            elif hidden and len(findings) + hidden >= len(excerpts):
-                # 缺的这条有账可查=安检隐藏：摘录是合同原文（证据义务
-                # 原样示出），说明如实标注已隐藏，不让读者误以为完整
+            elif i in hidden_set:
+                # 安检隐藏：摘录是合同原文（证据义务原样示出），说明如实
+                # 标注已隐藏，不让读者误以为完整
                 lines.append(f"▸ 相关条款 {i + 1}｜摘录：{excerpt}")
                 lines.append("  说明未通过安全检查，已隐藏。")
             # 其余缺侧=数据不齐：宁缺一条，不错配一条
@@ -415,9 +422,9 @@ def _consistency_texts(decision: dict[str, Any]) -> list[str]:
     return [texts.get(r, r) or str(r) for r in decision.get("consistency_reasons") or []]
 
 
-def _decisions(doc: Any, row: dict[str, Any]) -> None:
-    """五、人工决定与确认（2c §4.2）：有决定或有未编号确认才出现本节。
-    （B7-3b：四让位给「AI 修改建议」节）"""
+def _decisions(doc: Any, row: dict[str, Any], has_revision: bool = False) -> None:
+    """人工决定与确认（2c §4.2）：有决定或有未编号确认才出现本节。
+    编号随草案章节顺延：无=四（M4 原编号）；有=五（B7-3b）。"""
     questions = ((row.get("verify") or {}).get("questions") or [])
     objections = ((row.get("objections") or {}).get("objections") or [])
     decisions: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
@@ -438,7 +445,8 @@ def _decisions(doc: Any, row: dict[str, Any]) -> None:
     accepted = [ob for ob in objections if isinstance(ob, dict) and ob.get("accepted")]
     if not decisions and not unnumbered and not accepted:
         return  # Q4：三者皆无才省略整节
-    doc.add_heading("五、人工决定与确认", level=1)
+    doc.add_heading("四五"[1 if has_revision else 0] + "、人工决定与确认",
+                    level=1)
     if decisions:
         table = doc.add_table(rows=1, cols=6)
         table.style = "Table Grid"
@@ -499,11 +507,13 @@ def _decisions(doc: Any, row: dict[str, Any]) -> None:
             )
 
 
-def _blind_candidates(doc: Any, row: dict[str, Any]) -> None:
+def _blind_candidates(doc: Any, row: dict[str, Any],
+                      has_revision: bool = False) -> None:
     candidates = row.get("blind_candidates") or []
     if not candidates:
         return
-    doc.add_heading("六、模型补盲候选（需人工确认）", level=1)
+    doc.add_heading("五六"[1 if has_revision else 0] + "、模型补盲候选（需人工确认）",
+                    level=1)
     doc.add_paragraph(
         "以下为模型提出的候选风险，未经规则引擎确认，不构成审查结论，"
         "请人工核实后再决定是否采信。"
@@ -520,8 +530,9 @@ def _blind_candidates(doc: Any, row: dict[str, Any]) -> None:
         p.add_run(quote if quote.strip() else "暂无")
 
 
-def _policy_quotes(doc: Any, row: dict[str, Any]) -> None:
-    doc.add_heading("七、政策摘句", level=1)
+def _policy_quotes(doc: Any, row: dict[str, Any],
+                   has_revision: bool = False) -> None:
+    doc.add_heading("六七"[1 if has_revision else 0] + "、政策摘句", level=1)
     policies = [p for p in (row.get("policies") or []) if str(p).strip()]
     if not policies:
         doc.add_paragraph("本次审查未引用政策条款。")
