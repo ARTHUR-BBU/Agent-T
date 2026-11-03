@@ -288,3 +288,76 @@ def test_no_criteria_unknown(tmp_path):
     r = reconcile(":memory:", review_id=None, traces=[], watermark=0.0,
                   expected={"precheck": 1})
     assert r["status"] == "unknown"
+
+
+# ---------- 双账模式（五轮：transport 审计日志=第二本账） ----------
+
+def test_audit_missing_ledger_row_unknown(tmp_path):
+    """审计行在、账行被删（第二次 precheck 漏账）→ 当场 unknown。"""
+    db = str(tmp_path / "t.db")
+    rows = [r for r in _full_chain_rows() if r["call_id"] != "c-pre"]
+    rows.append({"call_id": "c-pre2", "review_id": None, "node": "precheck",
+                 "trace_id": T_UP, "usage": _usage(), "created_at": 106.0})
+    _seed(db, rows)  # 账本只剩 1 条 precheck（另一条被删）
+    audit = [{"call_id": "c-pre", "node": "precheck"},
+             {"call_id": "c-pre2", "node": "precheck"},
+             {"call_id": "c-mr", "node": "model_review"},
+             {"call_id": "c-q", "node": "quality"},
+             {"call_id": "c-rev", "node": "revision"},
+             {"call_id": "c-imp", "node": "impact"}]
+    r = reconcile(db, review_id="r-acc", traces=[T_UP, T_REV, T_IMP],
+                  watermark=100.0, expected={}, audit_lines=audit)
+    assert r["status"] == "unknown"
+    assert any("账本缺行" in x and "c-pre" in x for x in r["reasons"])
+
+
+def test_audit_full_chain_ok(tmp_path):
+    """双账模式完整链（6 审计行=6 账行）→ ok；预期由审计行数推出。"""
+    db = str(tmp_path / "t.db")
+    _seed(db, _full_chain_rows())
+    audit = [{"call_id": "c-pre", "node": "precheck"},
+             {"call_id": "c-mr", "node": "model_review"},
+             {"call_id": "c-q", "node": "quality"},
+             {"call_id": "c-rev", "node": "revision"},
+             {"call_id": "c-imp", "node": "impact"}]
+    r = reconcile(db, review_id="r-acc", traces=[T_UP, T_REV, T_IMP],
+                  watermark=100.0, expected={}, audit_lines=audit)
+    assert r["status"] == "ok", r
+    assert r["actual_by_node"]["precheck"] == 1
+
+
+def test_audit_node_mismatch_unknown(tmp_path):
+    """审计行与账行 call_id 对上但 node 不符 → unknown（防串账）。"""
+    db = str(tmp_path / "t.db")
+    rows = _full_chain_rows()
+    rows[0] = {**rows[0], "node": "category_suggest"}
+    _seed(db, rows)
+    audit = [{"call_id": "c-pre", "node": "precheck"},
+             {"call_id": "c-mr", "node": "model_review"},
+             {"call_id": "c-q", "node": "quality"},
+             {"call_id": "c-rev", "node": "revision"},
+             {"call_id": "c-imp", "node": "impact"}]
+    r = reconcile(db, review_id="r-acc", traces=[T_UP, T_REV, T_IMP],
+                  watermark=100.0, expected={}, audit_lines=audit)
+    assert r["status"] == "unknown"
+    assert any("节点不符" in x for x in r["reasons"])
+
+
+def test_audit_overrides_interval_expected(tmp_path):
+    """双账模式下审计行数即逐笔证据，覆盖区间预期（质量层合并 1 次
+    ≠ 维度数——按审计行数不误报）。"""
+    db = str(tmp_path / "t.db")
+    _seed(db, _full_chain_rows())
+    audit = [{"call_id": "c-pre", "node": "precheck"},
+             {"call_id": "c-mr", "node": "model_review"},
+             {"call_id": "c-q", "node": "quality"},
+             {"call_id": "c-rev", "node": "revision"},
+             {"call_id": "c-imp", "node": "impact"}]
+    # 故意给一个按「维度数」推的错误预期 quality=3：审计行数(1)覆盖它
+    r = reconcile(db, review_id="r-acc", traces=[T_UP, T_REV, T_IMP],
+                  watermark=100.0,
+                  expected={"precheck": 1, "model_review": 1,
+                            "quality": 3, "revision": 1, "impact": 1},
+                  audit_lines=audit)
+    assert r["status"] == "ok", r
+    assert r["expected"]["quality"] == 1, "预期必须被审计行数覆盖"

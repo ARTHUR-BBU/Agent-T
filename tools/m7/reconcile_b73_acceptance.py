@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import pathlib
 import sqlite3
 
 # 峰值估算牌价（估算非实付）：输出 ¥8/M、输入 ¥2/M
@@ -87,9 +88,16 @@ def _interval_label(want) -> str:
 def reconcile(db_path: str, *, review_id: str | None,
               traces: list[str] | None = None,
               watermark: float = 0.0,
-              expected: dict[str, object]) -> dict:
+              expected: dict[str, object],
+              audit_lines: list[dict] | None = None) -> dict:
     """按 review_id + trace 集合取账行（**可证明归属**），与预期清单
-    （独立证据）逐笔比对。水位只出诊断不计入。返回
+    （独立证据）逐笔比对。水位只出诊断不计入。
+
+    **双账模式（audit_lines，可选）**：第二本账（transport 审计日志行，
+    与账本 emit 同点写、互为缺账证据）——每行 {call_id, node}。提供时：
+    每条审计行必须在账本中找到同 call_id 同 node 的账行，找不到 =
+    **账本缺行 = 费用未知**（当场发现，不靠区间/事后账单）；预期清单
+    改由审计行数推出（audit_lines 即账本之外的逐笔证据）。返回
     {"status": ok|unknown, ...}；unknown 时附 reason 列表；
     任何 SQL 异常 = 查询失败 = unknown（调用方须停）。"""
     reasons: list[str] = []
@@ -146,6 +154,27 @@ def reconcile(db_path: str, *, review_id: str | None,
             "账行无法证明归属本次验收（并发混入可能），未计入对账——"
             "请人工核对该批 call_id")
 
+    # 双账模式：审计行（账本之外的第二本账）逐条必须能在账本对上
+    if audit_lines:
+        audit_expected: dict[str, object] = {}
+        for a in audit_lines:
+            cid = a.get("call_id")
+            node = a.get("node")
+            if not cid or not node:
+                reasons.append(f"审计行缺 call_id/node：{a}")
+                continue
+            prev = audit_expected.get(node)
+            prev_n = prev if isinstance(prev, int) else 0
+            audit_expected[node] = prev_n + 1
+            hit = seen.get(cid)
+            if hit is None:
+                reasons.append(f"账本缺行：审计行 call_id={cid} node={node}"
+                               " 在账本中不存在——费用未知")
+            elif hit["node"] != node:
+                reasons.append(f"账行节点不符：审计 call_id={cid}"
+                               f" 审计 node={node} 账本 node={hit['node']}")
+        expected = audit_expected  # 审计行数即逐笔证据，覆盖区间预期
+
     # 行集合完整性：按 node 聚合实际行数 vs 独立证据预期（精确/区间）
     actual: dict[str, int] = {}
     for r in seen.values():
@@ -196,12 +225,22 @@ def main() -> int:
     ap.add_argument("--trace", action="append", default=[])
     ap.add_argument("--watermark", type=float, default=0.0,
                     help="仅诊断用（并发混入提示），不计入对账")
-    ap.add_argument("--expect", nargs="+", required=True,
-                    help="node=次数 或 node=下界..上界（如 precheck=1..2）")
+    ap.add_argument("--expect", nargs="+", default=None,
+                    help="node=次数 或 node=下界..上界（如 precheck=1..2）；"
+                         "提供 --audit 时由审计行数推出，本参数可省")
+    ap.add_argument("--audit", default=None,
+                    help="transport 审计日志行 JSON 文件（第二本账，双账"
+                         "模式）；行格式 {\"call_id\":…, \"node\":…}")
     args = ap.parse_args()
-    expected = dict(_parse_expect(kv) for kv in args.expect)
+    expected = dict(_parse_expect(kv) for kv in args.expect) \
+        if args.expect else {}
+    audit_lines = None
+    if args.audit:
+        audit_lines = json.loads(
+            pathlib.Path(args.audit).read_text(encoding="utf-8"))
     result = reconcile(args.db, review_id=args.review, traces=args.trace,
-                       watermark=args.watermark, expected=expected)
+                       watermark=args.watermark, expected=expected,
+                       audit_lines=audit_lines)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["status"] == _OK else 2
 
