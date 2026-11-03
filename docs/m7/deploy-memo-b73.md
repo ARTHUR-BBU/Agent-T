@@ -119,31 +119,38 @@
      ≈ ¥0.86+输入，¥2 控值够用）；代价=验收不含质量层真实链路，
      且改生产开关本身是变更
 
-   **圈账方案（v4：分 trace 合并+水位增量+实际分支清单+可执行脚本，
-   codex 三轮 P1×2 修正）**：
+   **圈账方案（v5：用量收严+归属可证明+独立证据区间，codex 四轮
+   P1×2 修正）**：
 
    - **全链不是同一个 trace（已核代码）**：上传/主链走上传 trace
-     （reviews.data.trace_id，单点生成于入口，建单后
-     `backfill_review_id` 幂等回填）；**revision / impact 各自生成
-     新 trace**（revision.py / impact.py `uuid4`，分别落
-     revision_drafts.trace_id / impact_reports.trace_id）。
-     **执行协议**：验收 executor 每步操作后如实记录
-     `trace 上传 / revision / impact` 三枚 trace + review_id
-   - **无单号也有账可查**（429 槽满/建单失败）：执行前记录账本水位
-     （`MAX(created_at)`）；未建单时按 `created_at > 水位 AND node IN
-     (precheck, category_suggest)` 增量扫描上传阶段账行——扫描不到
-     应收行 = 费用未知 = 停
-   - **预期清单 = 实际执行分支**（executor 如实记录每步实际跑了什么，
-     如 precheck 实际 1 或 2 行以账本为准）；费用表的「最多次数」只
-     是预留口径，不进核账清单
-   - **可执行核对器已落地+零付费正反验证**：
-     `tools/m7/reconcile_b73_acceptance.py`（纯本地 SQLite 只读，
-     零模型调用）——取行口径 = `review_id=rid OR trace_id IN (三枚)
-     OR (created_at>水位 AND node IN 上传节点)` 去重合并；与预期清单
-     逐笔比：**缺行/多行/预期外节点/缺 usage/usage 不可解析/outcome
-     异常/查询失败 = 费用未知 = 停**；测试
-     `tests/test_reconcile_b73.py` 12 场景（完整链分 trace/缺行/多行/
-     缺 usage/无单号水位打捞/水位前旧行不误入/零行应收/坏库…）全绿
+     （reviews.data.trace_id）；**revision / impact 各自生成新
+     trace**（revision_drafts.trace_id / impact_reports.trace_id）。
+     **执行协议**：executor 每步操作后如实记录三枚 trace + review_id；
+     无单号时若能从服务端日志拿到上传 trace，按 trace 归属（可证明）
+   - **归属必须可证明（四轮 P1-2）**：取行口径只有两条——
+     `review_id=rid` 或 `trace_id ∈ 三枚记录`。**水位增量扫描只做
+     诊断、绝不计入对账**：并发下其他用户的账行无法证明归属，出现
+     即出诊断提示（人工核对 call_id），宁可费用未知=停
+   - **用量校验收严（四轮 P1-1）**：usage 必须为对象且
+     output_tokens/input_tokens **两键齐备、非负有限数值**——
+     空对象/null/缺单键/非数值/负数/inf/nan 一律「费用未知」，
+     绝不用 `or 0` 把未知转零元；非合法行不计费但仍标 unknown
+   - **预期清单=独立证据（四轮修正，不拿账本定预期）**：
+     - suggest=0（force 请求参数）
+     - revision=1、impact=1（executor 主动触发拿到 200）
+     - model_review / quality = 审查单数据里的条目数 / 维度数
+       （review 数据为独立证据）
+     - precheck ∈ **[1,2] 区间**（上传响应 performed 证明 ≥1；
+       第 2 笔仅服务内解析失败重试分支、外部无独立证据——区间内
+       不外推，第二笔完整性由**供应商账单事后复核**兜底，如实声明）
+     - 低于区间下界=缺账（费用未知）；高于上界=多行（费用未知）；
+       区间内按已见行 usage 计费
+   - **可执行核对器+零付费正反验证**：
+     `tools/m7/reconcile_b73_acceptance.py`（纯本地 SQLite 只读）+
+     `tests/test_reconcile_b73.py` **20 场景**（用量 {} / null / 缺
+     单键 / null 值 / 负数 / 字符串 / inf 全反例；并发他人行不计入
+     +诊断提示；无单号有 trace=ok、无 trace=unknown；区间内 ok /
+     破下界 / 破上界；缺行/多行/预期外节点/异常 outcome/坏库）全绿
    - **停止规则**：费用未知 / 实算 ≥ 控制值（A=¥3、B=¥2，老板定案）
      → **不再跑任何后续验收项**并报备；失败不重试不追跑
    - 跑前 DeepSeek 余额探针照旧（余额 < 控制值即拒跑）
