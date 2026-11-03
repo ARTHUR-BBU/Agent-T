@@ -119,17 +119,31 @@
      ≈ ¥0.86+输入，¥2 控值够用）；代价=验收不含质量层真实链路，
      且改生产开关本身是变更
 
-   **圈账方案（v3：trace 主键+预期清单逐笔核，codex 二轮 P1-2）**：
+   **圈账方案（v4：分 trace 合并+水位增量+实际分支清单+可执行脚本，
+   codex 三轮 P1×2 修正）**：
 
-   - trace_id 单点生成于上传入口（routes.py，已核）——上传阶段
-     precheck 行以 trace 落账（建单前 review_id 为空，建单成功后
-     `backfill_review_id(rid, trace_id)` 幂等回填，routes.py 已核）
-   - **验收路径无 confirm 提前返回**（force=1）→ 单请求单 trace，
-     建单必成 → 全链账行同挂 (review_id, trace_id)
-   - **逐笔核账 ≠ 只查 STRICT_SPENT_CODE**（如实限定：它只发现已
-     存在行的缺 usage，不证明应有行存在）——核对脚本按 trace_id 取
-     全部账行，与**预期调用清单**（上表 6 节点的 node×次数集合）
-     逐笔比对：缺行/多行/任一行缺 usage/查询失败 = **费用未知 = 停**
+   - **全链不是同一个 trace（已核代码）**：上传/主链走上传 trace
+     （reviews.data.trace_id，单点生成于入口，建单后
+     `backfill_review_id` 幂等回填）；**revision / impact 各自生成
+     新 trace**（revision.py / impact.py `uuid4`，分别落
+     revision_drafts.trace_id / impact_reports.trace_id）。
+     **执行协议**：验收 executor 每步操作后如实记录
+     `trace 上传 / revision / impact` 三枚 trace + review_id
+   - **无单号也有账可查**（429 槽满/建单失败）：执行前记录账本水位
+     （`MAX(created_at)`）；未建单时按 `created_at > 水位 AND node IN
+     (precheck, category_suggest)` 增量扫描上传阶段账行——扫描不到
+     应收行 = 费用未知 = 停
+   - **预期清单 = 实际执行分支**（executor 如实记录每步实际跑了什么，
+     如 precheck 实际 1 或 2 行以账本为准）；费用表的「最多次数」只
+     是预留口径，不进核账清单
+   - **可执行核对器已落地+零付费正反验证**：
+     `tools/m7/reconcile_b73_acceptance.py`（纯本地 SQLite 只读，
+     零模型调用）——取行口径 = `review_id=rid OR trace_id IN (三枚)
+     OR (created_at>水位 AND node IN 上传节点)` 去重合并；与预期清单
+     逐笔比：**缺行/多行/预期外节点/缺 usage/usage 不可解析/outcome
+     异常/查询失败 = 费用未知 = 停**；测试
+     `tests/test_reconcile_b73.py` 12 场景（完整链分 trace/缺行/多行/
+     缺 usage/无单号水位打捞/水位前旧行不误入/零行应收/坏库…）全绿
    - **停止规则**：费用未知 / 实算 ≥ 控制值（A=¥3、B=¥2，老板定案）
      → **不再跑任何后续验收项**并报备；失败不重试不追跑
    - 跑前 DeepSeek 余额探针照旧（余额 < 控制值即拒跑）
