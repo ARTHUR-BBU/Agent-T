@@ -60,8 +60,47 @@ def _load_families() -> dict[str, list[str]]:
     return {str(k): [str(w) for w in v] for k, v in families.items()}
 
 
-# 摘录窗口：命中关键词前后各 40 字符（确保摘录里带条款正文而非孤立词）
+# 摘录窗口：命中关键词前后各 40 字符（无条款索引时的**降级**兜底窗；
+# 真实入口此场景已受限未覆盖，见 analyze_impact——辅助函数兜底不绕门禁）
 _EXCERPT_WINDOW = 40
+# 条款全段摘录上限（B7-4：同条款合并扩窗到条款全段，但「全段」不是
+# 无限制——超长按截断段出多条，切点落在句末标点语义完整处）
+_EXCERPT_MAX_CHARS = 300
+
+
+def _split_by_cap(seg_text: str, base: int,
+                  cap: int) -> list[tuple[int, int]]:
+    """把 [base, base+len) 按上限切为若干 (lo, hi) 段（全文绝对坐标），
+    切点优先落在句末标点（。；！）之后的语义完整处；单句超长则硬切。"""
+    cuts: list[tuple[int, int]] = []
+    lo = 0
+    n = len(seg_text)
+    while lo < n:
+        hi = min(lo + cap, n)
+        if hi < n:
+            best = -1
+            for i in range(hi - 1, lo, -1):
+                if seg_text[i] in "。；！":
+                    best = i + 1
+                    break
+            if best > lo:
+                hi = best
+        cuts.append((base + lo, base + hi))
+        lo = hi
+    return cuts
+
+
+def _clip_ranges(lo: int, hi: int, pos: int,
+                 ranges: list[tuple[int, int]]) -> tuple[int, int]:
+    """摘录窗在排除区间边界裁剪：不把被改条款原文渗进「其他条款」摘录
+    （否则摘录挂着原条款尾巴，定位语义被污染）。"""
+    for rlo, rhi in ranges:
+        if rlo < hi and rhi > lo:  # 窗口与排除区间相交
+            if pos >= rhi:
+                lo = max(lo, rhi)
+            elif pos < rlo:
+                hi = min(hi, rlo)
+    return lo, hi
 
 
 def find_related_clauses(
@@ -71,18 +110,27 @@ def find_related_clauses(
     clause_index: Optional[dict[str, Any]] = None,
     exclude_clause_ids: Optional[set[str]] = None,
 ) -> list[dict[str, Any]]:
-    """按词族在合同全文检索**其他条款**的摘录（关键词+位置+条款窗原文）。
+    """按词族在合同全文检索**其他条款**的摘录（B7-4 同条款合并版）。
 
     排除被改条款自身（codex #154 复批 3）：命中点落在被改条款的证据坐标
     区间内、或按条款索引定位到被改条款的 clause_id，则不计入——否则会把
-    原条款自己当成「其他相关条款」误报已覆盖。检索范围=词族命中处
-    （不做全卷扫描承诺，spec §3.2）；命中即带原文与坐标。"""
+    原条款自己当成「其他相关条款」误报已覆盖。
+
+    B7-4 同条款合并（老钱裁定，根治 I1「半截话+下一条款残片」近重复）：
+    - 同一条款多个命中 → **合并为一条**，摘录窗=条款全段；keyword 改为
+      **数组**（合并命中词逐一保留，多重性不丢）；position 取条款起始
+    - 条款超长超 _EXCERPT_MAX_CHARS → 按截断段出多条（切点句末标点
+      语义完整处）+ excerpt_truncated 标注（物理限制非语义判断）
+    - 无条款索引（或命中点在条款结构之外）→ **降级**维持旧桶去重窗
+      （仅辅助兜底；真实入口此场景已受限未覆盖，不绕门禁）
+    - 不同条款各自保留（现状）"""
     families = _load_families()
     keywords = families.get(item_id) or []
     ranges = exclude_positions or []
     exclude_ids = exclude_clause_ids or set()
-    excerpts: list[dict[str, Any]] = []
-    seen: set[int] = set()
+
+    # 第一遍：收集全部候选命中（排除逻辑不变）
+    hits: list[tuple[str, int, Optional[str]]] = []
     for kw in keywords:
         start = 0
         while True:
@@ -90,36 +138,80 @@ def find_related_clauses(
             if pos < 0:
                 break
             start = pos + len(kw)
-            # 排除原条款自身：证据坐标区间命中 or 条款索引归属命中
             if any(lo <= pos < hi for lo, hi in ranges):
                 continue
-            if exclude_ids and clause_index:
+            cid: Optional[str] = None
+            if clause_index:
                 cid = evidence_module._clause_at(clause_index, pos)
                 if cid and cid in exclude_ids:
                     continue
-            # 相邻命中去重（同一窗口内多个词命中合并为一条摘录）
+            hits.append((kw, pos, cid))
+
+    excerpts: list[dict[str, Any]] = []
+
+    def _fallback(hs: list[tuple[str, int, Optional[str]]]) -> None:
+        """降级桶去重窗（现状行为；keyword 统一为数组口径）。"""
+        seen: set[int] = set()
+        for kw, pos, _cid in hs:
             bucket = pos // _EXCERPT_WINDOW
             if bucket in seen:
                 continue
             seen.add(bucket)
             lo = max(0, pos - _EXCERPT_WINDOW)
             hi = min(len(text), pos + len(kw) + _EXCERPT_WINDOW)
-            # 摘录窗在排除区间边界裁剪：不把被改条款原文渗进「其他条款」
-            # 摘录（否则摘录挂着原条款尾巴，定位语义被污染）
-            for rlo, rhi in ranges:
-                if rlo < hi and rhi > lo:  # 窗口与排除区间相交
-                    if pos >= rhi:
-                        lo = max(lo, rhi)
-                    elif pos < rlo:
-                        hi = min(hi, rlo)
+            lo, hi = _clip_ranges(lo, hi, pos, ranges)
             excerpt = text[lo:hi].replace("\n", " ").strip()
             if excerpt:
                 excerpts.append({
                     "index": len(excerpts),
-                    "keyword": kw,
+                    "keyword": [kw],
                     "position": pos,
                     "excerpt": excerpt,
                 })
+
+    if not clause_index:
+        _fallback(hits)
+        return excerpts
+
+    # 有条款索引：按条款归组（cid=None 的散命中走降级窗）
+    by_id = {c.get("id"): c for c in (clause_index.get("clauses") or [])}
+    clause_hits: dict[str, list[tuple[str, int]]] = {}
+    loose: list[tuple[str, int, Optional[str]]] = []
+    for kw, pos, cid in hits:
+        if cid and cid in by_id:
+            clause_hits.setdefault(cid, []).append((kw, pos))
+        else:
+            loose.append((kw, pos, cid))
+    for cid in sorted(clause_hits, key=lambda c: int(
+            by_id[c].get("start") or 0)):
+        meta = by_id[cid]
+        clo = int(meta.get("start") or 0)
+        chi = int(meta.get("end") or 0)
+        if chi <= clo:
+            continue
+        segments = (_split_by_cap(text[clo:chi], clo, _EXCERPT_MAX_CHARS)
+                    if chi - clo > _EXCERPT_MAX_CHARS else [(clo, chi)])
+        multi = len(segments) > 1
+        for slo, shi in segments:
+            seg_kws = [kw for kw, pos in clause_hits[cid]
+                       if slo <= pos < shi]
+            if not seg_kws:
+                continue
+            lo, hi = _clip_ranges(slo, shi, slo, ranges)
+            excerpt = text[lo:hi].replace("\n", " ").strip()
+            if not excerpt:
+                continue
+            entry: dict[str, Any] = {
+                "index": len(excerpts),
+                "keyword": seg_kws,
+                "position": clo,
+                "excerpt": excerpt,
+                "clause_id": cid,
+            }
+            if multi:
+                entry["excerpt_truncated"] = True
+            excerpts.append(entry)
+    _fallback(loose)
     return excerpts
 
 
