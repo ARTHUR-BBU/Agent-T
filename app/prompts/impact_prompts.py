@@ -22,6 +22,11 @@ index 必须是给定摘录的编号；没有不一致时 findings 为空数组�
 def build_user(draft_text: str, excerpts: list[dict]) -> str:
     lines = [f"选定草案（改写后的条款文本）：\n{draft_text}\n", "合同全文中的相关条款摘录：\n"]
     for e in excerpts:
-        lines.append(f"[{e['index']}] {e['excerpt']}（位置≈第 {e['position']} 字符处）\n")
+        marker = ""
+        if e.get("excerpt_truncated"):
+            # 五轮修法：截断标注必须进模型输入——模型须知道本段非完整
+            # 条款，避免把分段当全条下结论
+            marker = "〔注意：本条款过长已按段送审，本段非完整条款原文，同条款其余段落另行送审〕\n"
+        lines.append(f"[{e['index']}] {marker}{e['excerpt']}（位置≈第 {e['position']} 字符处）\n")
     lines.append("\n请逐条判断与选定草案是否存在不一致，按系统约束输出 JSON。")
     return "".join(lines)

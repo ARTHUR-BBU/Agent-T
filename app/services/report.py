@@ -336,6 +336,9 @@ def _revision_entry_impact_lines(entry: dict[str, Any]) -> list[str]:
             lines.append(str(imp["notice"]))
         if not excerpts:
             lines.append("没有找到需要一起查看的其他条款。")
+        if any(e.get("excerpt_truncated") for e in excerpts):
+            lines.append("说明：相关条款过长，牵连内容已按段摘录送审，"
+                         "摘录非完整条款原文。")
         return lines
     if state == "uncovered":
         if imp.get("uncovered_code") == "missing_source":

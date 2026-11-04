@@ -2081,10 +2081,16 @@
           if (!f) return;
           parts.push('<div class="rev-finding">');
           parts.push('<p class="rev-caption">▸ 第 ' + (i + 1) + " 条</p>");
+          if (e.excerpt_truncated) {
+            parts.push('<p class="rev-caption">（本条款过长已按段摘录，非完整条款原文）</p>');
+          }
           parts.push('<p class="rev-text">摘录：' + escapeHtml(e.excerpt || "") + "</p>");
           parts.push('<p class="rev-caption">说明：' + escapeHtml(f.note || "") + "</p>");
           parts.push("</div>");
         });
+        if ((imp.excerpts || []).some((e) => e.excerpt_truncated)) {
+          parts.push('<p class="rev-caption">本条款过长：相关内容已按段送审并摘录，摘录非完整条款原文。</p>');
+        }
         const hid = imp.hidden_findings || 0;
         if (hid > 0) {
           parts.push('<p class="rev-caption">有 ' + hid + " 条说明未通过安全检查，已如实隐藏。</p>");
