@@ -134,8 +134,9 @@ def test_excluded_original_clause_absent():
 
 
 def test_long_clause_split_with_truncation_marker():
-    """超长条款（>上限）按截断段出多条+excerpt_truncated 标注；
-    切点为句末标点（段尾落在语义完整处）。"""
+    """超长条款（>上限）：**全部分段都产出**（含无关键词段，codex 五轮
+    P1——段外限制条件不得漏出分析视野）；每段 excerpt_truncated 标注；
+    切点为句末标点（段尾落在语义完整处）；段文本并集覆盖整条。"""
     long_text = (
         "第一条 合同标的：办公设备采购。\n"
         "第九条 特别约定："
@@ -158,6 +159,64 @@ def test_long_clause_split_with_truncation_marker():
     assert len(exc) >= 2, "超上限条款应按截断段出多条"
     for e in exc:
         assert len(e["excerpt"]) <= impact._EXCERPT_MAX_CHARS + 20
+    # 全段覆盖：各段去空格并集 = 整条去空格（无关键词段不得被跳过）
+    clause_meta = next(c for c in idx["clauses"] if "特别约定" in c["heading"])
+    whole = long_text[clause_meta["start"]:clause_meta["end"]].replace(
+        "\n", " ").replace(" ", "")
+    covered = "".join(e["excerpt"] for e in exc).replace(" ", "")
+    assert covered == whole, "截断段并集必须覆盖整条（段外内容不得漏出视野）"
+
+
+def test_long_clause_prompt_carries_all_segments_and_marker(monkeypatch):
+    """真实入口（codex 五轮回归要求）：analyze_impact 的模型提示词必须
+    含全部段文本+截断标注——删掉第二次送审段即被捕获。"""
+    import os
+    import tempfile
+    monkeypatch.setenv("STORE_DB_PATH",
+                       os.path.join(tempfile.mkdtemp(), "t.db"))
+    monkeypatch.setattr(impact.llm_ask, "_deepseek_key",
+                        lambda: "test-ds-key")
+    from tests.test_b72b_impact import _item, _GOOD
+    store = ReviewStore(db_path=os.environ["STORE_DB_PATH"])
+    long_text = (
+        "第一条 合同标的：办公设备采购。\n"
+        "第九条 定金：乙方违约的定金不予退还。\n"
+        "第十二条 违约责任：任何一方违约的，应向守约方支付违约金。"
+        + "".join(f"补充第{i}款 违约方须于三日内书面通知守约方，"
+                  "否则丧失该项权利。" for i in range(1, 20))
+        + "\n"
+    )
+    idx = build_clause_index(long_text)
+    ev = long_text.find("定金不予退还")
+    item = _item()
+    item["evidence_start"], item["evidence_end"] = ev, ev + 10
+    item["primary_clause_id"] = "c02"
+    item["clause_ids"] = ["c02"]
+    rid = store.create(filename="c.docx", category="procurement")
+    store.update(rid, status="done", items=[item], text=long_text,
+                 clause_index=idx)
+    r = revision.generate_revision(store, rid, "unfair_terms",
+                                   llm_call=lambda *a: _GOOD)
+    sel = impact.select_draft(store, rid, "unfair_terms", r["draft_id"],
+                              "平衡")
+    assert sel["status"] == "selected"
+    observed: dict = {}
+
+    def _impact_call(api_key, system, user):
+        observed["user"] = user
+        return json.dumps({"findings": [{"index": 0, "note": "第0段说明"}]},
+                          ensure_ascii=False)
+
+    res = impact.analyze_impact(store, rid, "unfair_terms", r["draft_id"],
+                                llm_call=_impact_call)
+    assert res["status"] == "ok", res
+    user = observed["user"]
+    assert "已按段送审" in user, "截断标注必须进模型输入"
+    # 全段覆盖：每段文本都在提示词（含无关键词的段）
+    exc = res["report"]["excerpts"]
+    assert len(exc) >= 2 and all(e.get("excerpt_truncated") for e in exc)
+    for e in exc:
+        assert e["excerpt"] in user, "段外内容不得漏出分析视野"
 
 
 def test_no_clause_index_fallback_bucket():

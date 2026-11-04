@@ -193,10 +193,11 @@ def find_related_clauses(
                     if chi - clo > _EXCERPT_MAX_CHARS else [(clo, chi)])
         multi = len(segments) > 1
         for slo, shi in segments:
+            # 五轮修法：长条款**全部分段都产出**（含无关键词段）——
+            # 只送含关键词段会让段外限制条件漏出分析视野；
+            # excerpt_truncated 标注随字段透传给提示词/页面/报告
             seg_kws = [kw for kw, pos in clause_hits[cid]
                        if slo <= pos < shi]
-            if not seg_kws:
-                continue
             lo, hi = _clip_ranges(slo, shi, slo, ranges)
             excerpt = text[lo:hi].replace("\n", " ").strip()
             if not excerpt:

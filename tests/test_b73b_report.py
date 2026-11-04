@@ -401,6 +401,28 @@ def test_impact_states_honest_in_report(env_store):
 
 # ---------- 编排一致性（§四A：报告跟随当时选定版） ----------
 
+def test_report_discloses_truncated_excerpts():
+    """codex #170 五轮 P1（报告侧）：截断摘录必须在报告里明示
+    「已按段摘录、非完整条款原文」。"""
+    payload = [{
+        "item_id": "unfair_terms", "item_name": "公平性",
+        "item_status": "需关注", "quote": _C3_QUOTE,
+        "draft": None,
+        "impact": {"bound": {"draft_id": "d1", "stance": "平衡"},
+                   "state": "ok", "legacy": False, "stale": False,
+                   "findings": [{"index": 0, "note": "第0段说明"}],
+                   "hidden_findings": 0, "notice": "",
+                   "excerpts": [
+                       {"excerpt": "第十二条前半段……", "index": 0,
+                        "excerpt_truncated": True},
+                       {"excerpt": "第十二条后半段……", "index": 1,
+                        "excerpt_truncated": True}],
+                   "covered": True},
+    }]
+    text = _doc_text(build_report_docx({**_view(), "revision_section": payload}))
+    assert "已按段摘录送审" in text and "非完整条款原文" in text
+
+
 def test_report_follows_selection_sequence(env_store):
     """查 A→切 B→导出→切回 A：每次组装的数据与当时选定版一致，不串。"""
     store, rid = env_store
