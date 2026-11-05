@@ -148,10 +148,11 @@ def _cover(doc: Any, row: dict[str, Any]) -> None:
         )
         run.bold = True
 
-    # A3 / 九哥：导出范围一句（灰字不抢评分卡）
+    # A3 / 九哥：导出范围一句（灰字不抢评分卡；B7-5a 起含 AI 发现与确认记录，
+    # 旧记录已存的自带说明按原样渲染——字节契约不破）
     scope = row.get("export_scope_note") or (
         "报告只含本次读到并展示的内容；未读部分不写入结论"
-        "（含规则核查、参考评分与补盲；不含页面 AI 观察及追问）"
+        "（含规则核查、AI 发现与确认记录、参考评分与补盲）"
     )
     p = doc.add_paragraph()
     run = p.add_run(scope)
@@ -310,6 +311,9 @@ def _revision_entry_impact_lines(entry: dict[str, Any]) -> list[str]:
     state = imp.get("state")
     if state == "ok":
         lines: list[str] = ["牵连检查（AI 帮您看这处改动会不会牵动合同别处，不构成法律意见）："]
+        # B7-5a：AI 发现项派生词族的如实声明（尽力检索，非品类配置）
+        if imp.get("keywords_source") == "derived_from_quote":
+            lines.append("（本条为 AI 发现：牵连检索词由发现引句自动派生，属尽力检索，非品类词族配置。）")
         excerpts = imp.get("excerpts") or []
         findings = imp.get("findings") or []
         hidden = imp.get("hidden_findings") or 0
@@ -443,11 +447,18 @@ def _decisions(doc: Any, row: dict[str, Any], has_revision: bool = False) -> Non
         if isinstance(q, dict) and q.get("status") in ("confirmed", "disputed")
         and not isinstance(q.get("decision"), dict)
     ]
+    # B7-5a：观察类发现（无问题行、无主张编号）的确认/争议记录
+    # （ai_finding_records 由报告入口注入，只收 confirmed/disputed）
+    obs_records = [
+        r for r in (row.get("ai_finding_records") or [])
+        if isinstance(r, dict) and r.get("title")
+        and r.get("status") in ("confirmed", "disputed")
+    ]
     # 受理异议反证状态（§4.1：四态中文直陈）——**不依赖决定存在**（v1.5 钉2：
     # 已受理未采纳的异议也要能看到反证状态）
     accepted = [ob for ob in objections if isinstance(ob, dict) and ob.get("accepted")]
-    if not decisions and not unnumbered and not accepted:
-        return  # Q4：三者皆无才省略整节
+    if not decisions and not unnumbered and not accepted and not obs_records:
+        return  # Q4：四者皆无才省略整节
     doc.add_heading("四五"[1 if has_revision else 0] + "、人工决定与确认",
                     level=1)
     if decisions:
@@ -491,6 +502,17 @@ def _decisions(doc: Any, row: dict[str, Any], has_revision: bool = False) -> Non
             + "；".join(
                 _scrub(q.get("title") or q.get("question") or "")[:40]
                 for q in unnumbered
+            )
+        )
+    if obs_records:
+        state_names = {"confirmed": "已确认", "disputed": "已争议撤回"}
+        doc.add_paragraph(
+            "以下 AI 观察发现已人工拍板（观察类无主张编号，未纳入决定链；"
+            "确认后已作为【AI 发现】条目列入逐条明细）："
+            + "；".join(
+                f"【AI 发现】{_scrub(r.get('title') or '')[:40]}"
+                f"（{state_names.get(r.get('status') or '', r.get('status') or '')}）"
+                for r in obs_records
             )
         )
     # 受理异议反证状态（§4.1：四态中文直陈）

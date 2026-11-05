@@ -312,6 +312,20 @@ class ReverifyRequest(BaseModel):
     question_id: str
 
 
+class AiFindingStatusRequest(BaseModel):
+    """B7-5a 统一发现状态提交。"""
+    finding_key: str
+    status: Literal["viewed", "confirmed", "disputed"]
+
+
+class AiFindingStatusResponse(BaseModel):
+    ok: bool
+    error: Optional[str] = None
+    finding_status: Optional[str] = None
+    item_id: Optional[str] = None
+    materialized: Optional[bool] = None
+
+
 class ReverifyResponse(BaseModel):
     ok: bool
     verify: Optional[VerifyInfo] = None
@@ -401,15 +415,19 @@ class ReviewSummary(BaseModel):
     facts: list[FactMaterial] = Field(default_factory=list)
     # A6 有界主动核验（旧记录 None；前端「需你确认」）
     verify: Optional[VerifyInfo] = None
+    # B7-5a 统一「AI 发现」清单（观察+疑点合并；旧记录/异常路径形状不变，
+    # available=False 前端静默隐藏）
+    ai_findings: Optional[dict[str, Any]] = None
     # 证据法批 2a：证据登记簿概览（纯读路径派生视图，每次响应即时重建；
     # 旧记录/异常路径为 None，前端零感知）
     evidence_registry: Optional[EvidenceRegistryInfo] = None
     # 批 2b-②：主张侧迁移警告（响应派生诊断——legacy_scope 等，绝不写回 store）
     claim_migration_warnings: list[ClaimMigrationWarningInfo] = Field(default_factory=list)
-    # 导出范围说明（九哥：报告只含本次读到并展示的内容…）
+    # 导出范围说明（九哥：报告只含本次读到并展示的内容…；
+    # B7-5a 起含 AI 发现与确认记录，原「不含 AI 观察及追问」作废）
     export_scope_note: str = (
         "报告只含本次读到并展示的内容；未读部分不写入结论"
-        "（含规则核查、参考评分与补盲；不含页面 AI 观察及追问）"
+        "（含规则核查、AI 发现与确认记录、参考评分与补盲）"
     )
 
 

@@ -31,7 +31,9 @@ from app.api.schemas import (
 )
 from app.api.routes_objection import router as _objection_router
 from app.api.routes_verify import _merge_evidence_index, _pack_verify, router as _verify_router
+from app.api.routes_ai_findings import router as _ai_finding_router
 from app.graph.pipeline import run_review
+from app.services import ai_findings as ai_findings_service
 from app.services import category_suggest as category_suggest_service
 from app.services import llm_ask, precheck as precheck_service, report as report_service
 from app.services import verify as verify_service
@@ -521,10 +523,12 @@ def get_review(review_id: str):
         evidence_registry=EvidenceRegistryInfo(**evidence_registry),
         claim_migration_warnings=[ClaimMigrationWarningInfo(**w) for w in claim_warnings],
         verify=_pack_verify(row.get("verify"), row=row),
+        # B7-5a：统一「AI 发现」清单（观察+疑点合并视图；纯读派生，不写回）
+        ai_findings=ai_findings_service.review_findings(row),
         export_scope_note=row.get("export_scope_note")
         or (
             "报告只含本次读到并展示的内容；未读部分不写入结论"
-            "（含规则核查、参考评分与补盲；不含页面 AI 观察及追问）"
+            "（含规则核查、AI 发现与确认记录、参考评分与补盲）"
         ),
     )
 
@@ -552,6 +556,14 @@ def download_report(review_id: str):
         from app.services import impact as impact_service
         view["revision_section"] = impact_service.revision_report_section(
             store, review_id)
+        # B7-5a：观察类发现（无问题行、无主张编号）的确认/争议记录——
+        # 派生问题类走 verify 决定链自动入节，这里只补观察类缺口
+        obs_findings = ai_findings_service.review_findings(view).get("findings") or []
+        view["ai_finding_records"] = [
+            {"title": f.get("title") or "", "status": f.get("status") or ""}
+            for f in obs_findings
+            if not f.get("question_id") and f.get("status") in ("confirmed", "disputed")
+        ]
         data = report_service.build_report_docx(view, warnings)
     except ImportError:
         # python-docx 缺失时不裸抛，给出可操作的错误
@@ -695,3 +707,4 @@ def ask(body: AskRequest):
 # 领域子路由聚合（URL 不变；本文件 router 即总 router）
 router.include_router(_verify_router)
 router.include_router(_objection_router)
+router.include_router(_ai_finding_router)

@@ -123,12 +123,11 @@ def trigger_verify(review_id: str):
     return packed
 
 
-@router.post(
-    "/review/{review_id}/confirm",
-    response_model=ConfirmResponse,
-)
-def confirm_question(review_id: str, body: ConfirmRequest):
-    """提交人工确认。只改 verify；规则 items 档位不动（Design B）。"""
+def confirm_core(review_id: str, body: ConfirmRequest) -> ConfirmResponse:
+    """确认核心（B7-5a 抽取）：供 /confirm 路由与 ai-finding 状态路由共用
+    ——派生问题的确认必须走同一条链（compose_decision 决定记录+Design B
+    校验+证据索引重建），否则报告「人工决定与确认」丢记录。"""
+    row = require_done_row(review_id)
     row = require_done_row(review_id)
     # 快照规则档位，写入后对照
     status_snap = {
@@ -207,6 +206,15 @@ def confirm_question(review_id: str, body: ConfirmRequest):
             logger.error("Design B violation on confirm review_id=%s", review_id)
             raise HTTPException(status_code=500, detail="内部错误：规则档位被意外改动")
     return ConfirmResponse(ok=True, verify=pack_verify(updated, row=row))
+
+
+@router.post(
+    "/review/{review_id}/confirm",
+    response_model=ConfirmResponse,
+)
+def confirm_question(review_id: str, body: ConfirmRequest):
+    """提交人工确认。只改 verify；规则 items 档位不动（Design B）。"""
+    return confirm_core(review_id, body)
 
 
 @router.post(

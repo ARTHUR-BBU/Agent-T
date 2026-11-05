@@ -575,6 +575,33 @@ def test_full_flow_smoke(home):
 
 # ---------- 阶段 2.1 质量层（route stub 注入假 done 记录——无 Key 环境测 UI） ----------
 
+def _stub_ai_findings(quality):
+    """按服务端 review_findings 合并口径造 ai_findings 载荷（B7-5a 统一面板）。"""
+    obs = ((quality or {}).get("observations") or []) \
+        if (quality or {}).get("available") else []
+    findings = []
+    for i, o in enumerate(obs):
+        dim = o.get("dimension") or ""
+        findings.append({
+            "finding_key": f"obs:{dim}:stub{i:02d}",
+            "source_type": "observ",
+            "fact_type": dim != "impact",
+            "dimension": dim,
+            "title": o.get("title") or "",
+            "comment": o.get("comment") or "",
+            "quote": o.get("quote") or "",
+            "clause_id": o.get("clause_id") or "",
+            "evidence": None,
+            "status": "pending" if dim != "impact" else "viewed",
+            "question_id": None,
+            "rule_link": "",
+            "materialized": False,
+            "item_id": None,
+            "item_status": None,
+        })
+    return {"available": True, "findings": findings}
+
+
 def _quality_review_stub(quality):
     """假 done 记录：1 条需关注 + 指定 quality 载荷 + 条款索引（供锚点查表）。"""
     return {
@@ -599,6 +626,7 @@ def _quality_review_stub(quality):
         ]},
         "stance": "neutral", "stance_declaration": "测试声明", "ask_available": False,
         "quality": quality,
+        "ai_findings": _stub_ai_findings(quality),
     }
 
 
@@ -625,8 +653,8 @@ def _stub_quality_flow(page, quality):
     page.wait_for_selector("#results-body", state="visible", timeout=15000)
 
 
-def test_quality_panel_renders_dimensions(home):
-    """三维度观察渲染：徽章/维度 chip/quote/comment/条款锚齐全，容器为虚线边框。"""
+def test_ai_findings_panel_renders_dimensions(home):
+    """B7-5a 统一面板：徽章/维度 chip/quote/comment/条款锚齐全，容器为虚线边框。"""
     _stub_quality_flow(home, {
         "available": True, "reason": None,
         "observations": [
@@ -642,19 +670,21 @@ def test_quality_panel_renders_dimensions(home):
         ],
         "disclaimer": "以上为 AI 观察，仅供参考。", "dropped_count": 0, "coverage": None,
     })
-    assert home.is_visible("#quality-panel")
-    assert "AI 观察" in home.inner_text("#quality-panel .source-badge.quality")
-    items = home.query_selector_all("#quality-panel .quality-item")
+    assert home.is_visible("#ai-findings-panel")
+    assert "AI 发现" in home.inner_text("#ai-findings-panel .source-badge.quality")
+    items = home.query_selector_all("#ai-findings-panel .quality-item")
     assert len(items) == 3
-    dims = [el.inner_text() for el in home.query_selector_all("#quality-panel .quality-dim")]
+    dims = [el.inner_text() for el in home.query_selector_all("#ai-findings-panel .quality-dim")]
     # 九哥人话化文案（09-13）：等待页副标题与结果页 chip 逐字呼应
     assert dims == ["有没有漏写", "有没有自相矛盾", "对您的影响"]
-    assert "待人工确认" in home.inner_text("#quality-panel")
-    # 条款锚：clause_id=c01 → 标题查表；clause_id=None → 只有待人工确认
-    assert "第一条 租金" in home.inner_text("#quality-panel")
+    # B7-5a 流水线：事实类待确认；观点类标「观点·无核对」
+    assert "待确认" in home.inner_text("#ai-findings-panel")
+    assert "观点·无核对" in home.inner_text("#ai-findings-panel")
+    # 条款锚：clause_id=c01 → 标题查表
+    assert "第一条 租金" in home.inner_text("#ai-findings-panel")
     # 虚线容器规格锁定（路线图 2.1 UI 规格）
     border_style = home.eval_on_selector(
-        "#quality-panel", "el => getComputedStyle(el).borderTopStyle"
+        "#ai-findings-panel", "el => getComputedStyle(el).borderTopStyle"
     )
     assert border_style == "dashed"
 
@@ -681,7 +711,7 @@ def test_quality_panel_hidden_without_quality_key(home):
     home.set_input_files("#file", str(FIXTURE))
     home.click("#btn-upload")
     home.wait_for_selector("#results-body", state="visible", timeout=15000)
-    assert not home.is_visible("#quality-panel")
+    assert not home.is_visible("#ai-findings-panel")
 
 
 def test_quality_panel_hidden_when_unavailable(home):
@@ -689,7 +719,7 @@ def test_quality_panel_hidden_when_unavailable(home):
     _stub_quality_flow(home, {"available": False, "reason": "llm_error",
                               "observations": [], "disclaimer": "", "dropped_count": 0,
                               "coverage": None})
-    assert not home.is_visible("#quality-panel")
+    assert not home.is_visible("#ai-findings-panel")
 
 
 def test_quality_panel_escapes_model_text(home):
@@ -706,13 +736,13 @@ def test_quality_panel_escapes_model_text(home):
         }],
         "disclaimer": "测试免责", "dropped_count": 0, "coverage": None,
     })
-    assert home.is_visible("#quality-panel")
+    assert home.is_visible("#ai-findings-panel")
     assert home.evaluate("window.__pwned === undefined"), "注入脚本不得执行"
-    assert home.query_selector_all("#quality-panel img") == []
-    assert home.query_selector_all("#quality-panel script") == []
+    assert home.query_selector_all("#ai-findings-panel img") == []
+    assert home.query_selector_all("#ai-findings-panel script") == []
     # 原样以文本呈现
-    assert "<img src=x" in home.inner_text("#quality-panel")
-    assert "<b>假加粗</b>" in home.inner_text("#quality-panel")
+    assert "<img src=x" in home.inner_text("#ai-findings-panel")
+    assert "<b>假加粗</b>" in home.inner_text("#ai-findings-panel")
 
 
 def test_quality_stage_analyzing_segment(home):

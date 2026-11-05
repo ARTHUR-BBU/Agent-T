@@ -1,0 +1,284 @@
+# -*- coding: utf-8 -*-
+"""B7-5a「AI 发现」流水线合并服务（spec-b75a-ai-findings.md）。
+
+合并「AI 观察」（quality）与「需你确认」（verify 疑点）为统一发现清单：
+- finding_key 结构化防撞号（codex #173 二轮：同标题「待核实」+空引句
+  两条不同问题必须不同号——键纳入 source+问题正文+证据身份）
+- 观察↔其派生问题合并为一条发现（共用核对证据/确认状态/物化检查项）
+- 跨源标注：与规则需关注条目同主题默认标「关联规则：{条目名}」
+  （同主题≠结论一致，不自动标「互相印证」）
+- 确认（事实类）→ 物化为 AI 发现检查项（tag_source="ai_finding"），
+  复用三卡/追问/报告明细全部既有机制；争议（反悔）→ 检查项停用
+  （状态改「已争议撤回」，生成/追问/牵连入口资格自然失效）；再确认
+  → 复活（状态机闭环）
+
+纯读/纯状态表操作，零 LLM 调用。
+"""
+from __future__ import annotations
+
+import hashlib
+import os
+import sqlite3
+import tempfile
+import time
+from typing import Any
+
+_STATUS_DDL = (
+    "CREATE TABLE IF NOT EXISTS ai_finding_status ("
+    "review_id TEXT NOT NULL, finding_key TEXT NOT NULL,"
+    "status TEXT NOT NULL, updated_at REAL NOT NULL,"
+    "PRIMARY KEY (review_id, finding_key))"
+)
+
+_VALID_STATUS = ("viewed", "confirmed", "disputed")
+
+_SEP = "\x1f"  # 键内分隔符：防字段拼接歧义（codex #173 二轮）
+
+
+def _sha(s: str) -> str:
+    return hashlib.sha1(s.encode("utf-8")).hexdigest()[:16]
+
+
+def _obs_key(dim: str, title: str, clause_id: str, quote: str) -> str:
+    """观察键：维度+标题+条款+引句 全部纳入（同标题不同条款=不同号）。"""
+    return f"obs:{dim}:{_sha(_SEP.join((dim, title, clause_id or '', quote or '')))[:16]}"
+
+
+def _ver_key(q: dict[str, Any]) -> str:
+    """疑点键：有 claim_id 用之；无则 来源+完整问题正文+证据身份。
+    现状代码会把多个不同问题统一命名「待核实」且引句为空——仅
+    title+quote 必撞号（codex 二轮实锤），故纳入更多字段。"""
+    claim = str(q.get("claim_id") or "")
+    if claim:
+        return f"ver:{claim}"
+    src = str(q.get("source") or "")
+    qtext = str(q.get("question") or "")
+    clause_id = str(q.get("clause_id") or "")
+    quote = str(q.get("quote") or "")
+    return f"ver:{_sha(_SEP.join((src, qtext, clause_id, quote)))[:16]}"
+
+
+def _db_path() -> str:
+    """与审查单库同文件（impact.py/revision.py 同款 env 约定）。"""
+    env = (os.getenv("STORE_DB_PATH") or "").strip()
+    if env:
+        return env
+    return os.path.join(tempfile.gettempdir(), "agent-t-reviews.db")
+
+
+def _q_db() -> sqlite3.Connection:
+    """打开状态表连接（懒建表，随库走）。"""
+    conn = sqlite3.connect(_db_path())
+    conn.execute(_STATUS_DDL)
+    return conn
+
+
+def _statuses(review_id: str) -> dict[str, str]:
+    conn = _q_db()
+    try:
+        rows = conn.execute(
+            "SELECT finding_key, status FROM ai_finding_status"
+            " WHERE review_id=?", (review_id,)).fetchall()
+        return {r[0]: r[1] for r in rows}
+    finally:
+        conn.close()
+
+
+def _save_status(review_id: str, key: str, status: str) -> None:
+    conn = _q_db()
+    try:
+        conn.execute(
+            "INSERT OR REPLACE INTO ai_finding_status"
+            " (review_id, finding_key, status, updated_at) VALUES (?,?,?,?)",
+            (review_id, key, status, time.time()))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _rule_labels(row: dict[str, Any]) -> list[str]:
+    """规则需关注条目名（跨源关联标注候选）。"""
+    return [str(i.get("name") or "") for i in (row.get("items") or [])
+            if isinstance(i, dict) and i.get("status") == "需关注" and i.get("name")]
+
+
+def _rule_link(title: str, comment: str, rule_names: list[str]) -> str:
+    """同主题检测（简单包含口径）：规则名出现在发现标题/说明中 →
+    「关联规则：{名}」；未命中不标注（同主题≠结论一致，不自动升级
+    「互相印证」——codex 二轮）。"""
+    text = title + _SEP + comment
+    for name in rule_names:
+        if name and name in text:
+            return f"关联规则：{name}"
+    return ""
+
+
+def review_findings(row: dict[str, Any]) -> dict[str, Any]:
+    """聚合统一发现清单（纯读）。row=审查单原始数据（含 quality/verify）。
+
+    返回 {"available", "findings": [{finding_key, source_type(observ|
+    question|standalone), fact_type, dimension, title, comment, quote,
+    clause_id, evidence, status, rule_link, materialized, item_id}]}"""
+    review_id = str(row.get("id") or "")
+    statuses = _statuses(review_id)
+    rule_names = _rule_labels(row)
+    observations = [(row.get("quality") or {}).get("observations") or []]
+    obs_list = observations[0]
+    questions = (row.get("verify") or {}).get("questions") or []
+
+    items = row.get("items") or []
+    item_by_finding: dict[str, dict[str, Any]] = {}
+    for it in items:
+        if isinstance(it, dict) and it.get("tag_source") == "ai_finding" \
+                and it.get("finding_key"):
+            item_by_finding[it["finding_key"]] = it
+
+    findings: list[dict[str, Any]] = []
+    used_question_ids: set[str] = set()
+
+    def _qid(q: dict[str, Any]) -> str:
+        return str(q.get("id") or "")
+
+    # 观察类发现（与其派生问题合并：title 逐字沿用是派生标识，已核代码）
+    for obs in obs_list:
+        if not isinstance(obs, dict):
+            continue
+        dim = str(obs.get("dimension") or "")
+        title = str(obs.get("title") or "").strip()
+        comment = str(obs.get("comment") or "").strip()
+        quote = str(obs.get("quote") or "").strip()
+        clause_id = str(obs.get("clause_id") or "")
+        key = _obs_key(dim, title, clause_id, quote)
+        derived = next((q for q in questions
+                        if isinstance(q, dict)
+                        and str(q.get("title") or "").strip() == title
+                        and _qid(q) not in used_question_ids), None)
+        fact_type = dim != "impact"
+        status = statuses.get(key, "pending" if fact_type else "viewed")
+        entry: dict[str, Any] = {
+            "finding_key": key,
+            "source_type": "observ",
+            "fact_type": fact_type,
+            "dimension": dim,
+            "title": title,
+            "comment": comment,
+            "quote": quote,
+            "clause_id": clause_id,
+            "evidence": None,
+            "status": status,
+            "question_id": None,
+            "rule_link": _rule_link(title, comment, rule_names),
+            "materialized": key in item_by_finding,
+            "item_id": (item_by_finding.get(key) or {}).get("id"),
+            "item_status": (item_by_finding.get(key) or {}).get("status"),
+        }
+        if derived is not None and isinstance(derived, dict):
+            used_question_ids.add(_qid(derived))
+            entry["source_type"] = "observ+question"
+            entry["question_id"] = derived.get("id")
+            entry["evidence"] = derived.get("verification")
+            # 派生问题的确认状态是权威状态（决定记录挂在它上面）
+            entry["status"] = str(derived.get("status") or status)
+        findings.append(entry)
+
+    # 独立疑点（pack_verify 源，非观察派生）
+    for q in questions:
+        if not isinstance(q, dict) or _qid(q) in used_question_ids:
+            continue
+        key = _ver_key(q)
+        findings.append({
+            "finding_key": key,
+            "source_type": "standalone",
+            "fact_type": True,  # 「请确认是否属实」= 事实类
+            "dimension": "",
+            "title": str(q.get("title") or "").strip(),
+            "comment": str(q.get("question") or "").strip(),
+            "quote": str(q.get("quote") or "").strip(),
+            "clause_id": str(q.get("clause_id") or ""),
+            "evidence": q.get("verification"),
+            "status": statuses.get(key, str(q.get("status") or "pending")),
+            "question_id": q.get("id"),
+            "rule_link": _rule_link(str(q.get("title") or ""),
+                                    str(q.get("question") or ""), rule_names),
+            "materialized": key in item_by_finding,
+            "item_id": (item_by_finding.get(key) or {}).get("id"),
+            "item_status": (item_by_finding.get(key) or {}).get("status"),
+        })
+
+    return {"available": True, "findings": findings}
+
+
+def materialize(
+    *, finding_key: str, quote: str, clause_id: str,
+    note: str, title: str,
+) -> dict[str, Any]:
+    """构造 AI 发现检查项（不落库，调用方经 store.update 追加）。"""
+    item_id = "ai_" + _sha(finding_key)[:12]
+    return {
+        "id": item_id,
+        "name": f"【AI 发现】{title}",
+        "status": "需关注",
+        "note": note,
+        "quote": quote,
+        "hits": [],
+        "evidence_start": None,
+        "evidence_end": None,
+        "primary_clause_id": clause_id or None,
+        "clause_ids": [clause_id] if clause_id else [],
+        "tag_source": "ai_finding",
+        "finding_key": finding_key,
+    }
+
+
+def set_status(store: Any, review_id: str, *, finding_key: str,
+               status: str) -> dict[str, Any]:
+    """状态入口（物化/停用/复活/留痕）。
+
+    注意：带 question_id 的派生发现，其确认走 confirm 路由链
+    （compose_decision 决定记录+Design B 校验，本函数不碰 verify），
+    本函数只负责状态表与检查项物化——调用方先走确认链再调本函数。"""
+    if status not in _VALID_STATUS:
+        return {"status": "error", "error": f"非法状态 {status!r}"}
+    row = store.get(review_id)
+    if row is None:
+        return {"status": "error", "error": "review_not_found"}
+    finding = next((f for f in review_findings(row).get("findings") or []
+                    if f["finding_key"] == finding_key), None)
+    if finding is None:
+        return {"status": "error", "error": "finding_not_found"}
+
+    if finding["fact_type"]:
+        # spec §四.2：无原文引句且无坐标的疑点不可物化（清单条目必须有
+        # 原文依据）——如实拒绝，状态照常留痕
+        if status == "confirmed" and not (finding.get("quote") or finding.get("clause_id")):
+            return {"status": "error",
+                    "error": "该发现无原文引句与坐标，不能作为清单条目（无原文依据）"}
+        _save_status(review_id, finding_key, status)
+
+    items = list(row.get("items") or [])
+    existing = next((i for i in items if isinstance(i, dict)
+                     and i.get("finding_key") == finding_key
+                     and i.get("tag_source") == "ai_finding"), None)
+    item_id = (existing or {}).get("id")
+
+    if status == "confirmed" and finding["fact_type"]:
+        if existing is None:
+            new_item = materialize(
+                finding_key=finding_key,
+                quote=finding.get("quote") or "",
+                clause_id=finding.get("clause_id") or "",
+                note=finding.get("comment") or "",
+                title=finding.get("title") or "")
+            items.append(new_item)
+            item_id = new_item["id"]
+        else:
+            # 复活（争议后再确认）
+            existing["status"] = "需关注"
+        store.update(review_id, items=items)
+    elif status == "disputed" and existing is not None:
+        # 反悔：物化项停用（资格判定走 status，历史留痕保留）
+        existing["status"] = "已争议撤回"
+        store.update(review_id, items=items)
+
+    return {"status": "ok", "finding_status": status,
+            "item_id": item_id, "materialized": item_id is not None}

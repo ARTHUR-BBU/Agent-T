@@ -575,8 +575,7 @@
       skipEl.classList.add("hidden");
     }
 
-    renderQuality(data);
-    renderVerify(data);
+    renderAiFindings(data);
     renderObjections(data);
   }
 
@@ -593,220 +592,50 @@
   };
 
 
-  /** A6 有界主动核验：需你确认（九哥文案 / 阳仔视觉）。
-   * 铁律：主动核查不改写清单四档；每条可追原文。 */
+  /** B7-5a 统一「AI 发现」面板：观察+核验疑点合并为一条流水线。
+   * 发现 → 自动取证核对 → 人拍板（确认/有异议）→ 事实类确认后物化为
+   * 清单检查项（可生成修改建议/可追问/入报告）；有异议=反悔撤回；
+   * 派生问题类的确认走既有 confirm 链（决定记录进报告「人工决定与确认」）。
+   * 观点类（对您的影响）无原文可核，如实标注「观点·无核对」，不可改写。
+   * 数据不可用（旧记录异常形态）整卡静默隐藏；textContent 纪律同前。 */
   const VERIFY_ASIDE = "主动核查只提疑点，不改变清单规则档";
   const VERIFY_FLOW = ["疑点", "取证", "核对", "问你"];
+  const FINDING_STATUS_LABEL = {
+    pending: "待确认",
+    viewed: "观点·无核对",
+    confirmed: "已确认",
+    disputed: "已争议撤回",
+    rechecked: "已再审",
+  };
 
-  function renderVerify(data) {
-    const panel = $("verify-panel");
-    if (!panel) return;
-    const v = data.verify;
-    panel.innerHTML = "";
-    if (!v || !v.available) {
-      panel.classList.add("hidden");
-      return;
+  async function refreshReviewAndRender(reviewId) {
+    try {
+      const res = await fetch(`/api/review/${reviewId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      state.review = data;
+      renderResults(data, { partial: data.completion !== "fully_complete" });
+    } catch (err) {
+      console.warn("ai-finding refresh error", err);
     }
-    const qs = Array.isArray(v.questions) ? v.questions : [];
-
-    const h = document.createElement("h3");
-    h.textContent = "需你确认";
-    panel.appendChild(h);
-
-    const flow = document.createElement("p");
-    flow.className = "verify-flow";
-    flow.setAttribute("aria-label", "核查流程");
-    // 有未确认 → 问你；全确认/再核过 → 核对；否则疑点
-    const pending = qs.filter((q) => q.status === "pending").length;
-    const anyRechecked = qs.some((q) => q.status === "rechecked");
-    let current = 0;
-    if (qs.length) current = 1; // 取证
-    if (qs.some((q) => q.verification && q.verification !== "unverified")) current = 2; // 核对
-    if (pending > 0 || qs.some((q) => q.status === "confirmed" || q.status === "disputed")) current = 3; // 问你
-    if (anyRechecked && pending === 0) current = 2;
-    VERIFY_FLOW.forEach((label, i) => {
-      if (i > 0) {
-        const sep = document.createElement("span");
-        sep.className = "flow-sep";
-        sep.textContent = "→";
-        flow.appendChild(sep);
-      }
-      const step = document.createElement("span");
-      step.className = "flow-step" + (i === current ? " is-current" : "");
-      step.textContent = label;
-      flow.appendChild(step);
-    });
-    panel.appendChild(flow);
-
-    const aside = document.createElement("p");
-    aside.className = "verify-aside";
-    aside.textContent = (v.disclaimer && !/盖章|改判/.test(v.disclaimer))
-      ? v.disclaimer
-      : VERIFY_ASIDE;
-    panel.appendChild(aside);
-
-    const budget = v.budget || {};
-    const roundsLeft = typeof budget.rounds_remaining === "number"
-      ? budget.rounds_remaining
-      : Math.max(0, (v.max_rounds || 0) - (v.rounds_used || 0));
-    const bud = document.createElement("p");
-    bud.className = "verify-budget";
-    bud.textContent = "还可再核 " + roundsLeft + " 次"
-      + (typeof budget.questions_pending === "number"
-        ? " · 待核实 " + budget.questions_pending + " 条"
-        : "");
-    panel.appendChild(bud);
-
-    if (!qs.length) {
-      const empty = document.createElement("p");
-      empty.className = "verify-empty";
-      empty.textContent = "暂无需要确认的事项";
-      panel.appendChild(empty);
-      panel.classList.remove("hidden");
-      return;
-    }
-
-    const ul = document.createElement("ul");
-    ul.className = "verify-list";
-    qs.forEach((q) => {
-      const li = document.createElement("li");
-      li.className = "verify-item";
-      li.dataset.qid = q.id || "";
-
-      const head = document.createElement("div");
-      head.className = "verify-item-head";
-      const badge = document.createElement("span");
-      badge.className = "verify-badge";
-      badge.textContent = "待核实"; // 九哥：别写成需关注
-      head.appendChild(badge);
-      if (q.status && q.status !== "pending") {
-        const st = document.createElement("span");
-        st.className = "verify-status";
-        st.textContent = q.status === "confirmed"
-          ? "已确认无误"
-          : q.status === "disputed"
-            ? "已补充说明"
-            : q.status === "rechecked"
-              ? "已再审"
-              : q.status;
-        head.appendChild(st);
-      }
-      li.appendChild(head);
-
-      const qEl = document.createElement("p");
-      qEl.className = "verify-q";
-      qEl.textContent = q.question || q.title || "";
-      li.appendChild(qEl);
-
-      if (q.quote) {
-        const quote = document.createElement("div");
-        quote.className = "quality-quote";
-        quote.textContent = "原文：" + q.quote;
-        li.appendChild(quote);
-        const jump = document.createElement("button");
-        jump.type = "button";
-        jump.className = "link evidence-jump";
-        jump.textContent = "看原文";
-        jump.onclick = () => jumpToEvidence(quote, q.evidence || null);
-        li.appendChild(jump);
-      }
-
-      const meta = document.createElement("p");
-      meta.className = "verify-meta";
-      const heading = clauseHeadingById(q.clause_id);
-      if (heading) {
-        const c = document.createElement("span");
-        c.textContent = "条款 " + heading;
-        meta.appendChild(c);
-      }
-      if (q.verification) {
-        const verLabel = {
-          verified: "摘句对得上",
-          ambiguous: "摘句位置不唯一",
-          missing: "原文未找到摘句",
-          unverified: "尚未核对",
-        };
-        const ver = document.createElement("span");
-        ver.textContent = verLabel[q.verification] || q.verification;
-        meta.appendChild(ver);
-      }
-      if (meta.childNodes.length) li.appendChild(meta);
-
-      const note = document.createElement("input");
-      note.type = "text";
-      note.className = "verify-note-input";
-      note.placeholder = "补充说明（可选）";
-      note.maxLength = 300;
-      if (q.human_note) {
-        note.value = q.human_note;
-        note.classList.add("is-open");
-      }
-      li.appendChild(note);
-
-      const actions = document.createElement("div");
-      actions.className = "verify-actions";
-
-      const btnNote = document.createElement("button");
-      btnNote.type = "button";
-      btnNote.className = "verify-btn-primary";
-      btnNote.textContent = "补充说明";
-      btnNote.onclick = () => {
-        if (!note.classList.contains("is-open")) {
-          note.classList.add("is-open");
-          note.focus();
-          return;
-        }
-        // 已展开：提交补充说明（不暗示改档）
-        submitVerifyConfirm(data.id, q.id, "dispute", note.value || "", note.value || "");
-      };
-
-      const btnOk = document.createElement("button");
-      btnOk.type = "button";
-      btnOk.className = "verify-btn-secondary";
-      btnOk.textContent = "确认无误";
-      btnOk.onclick = () => submitVerifyConfirm(data.id, q.id, "confirm", note.value || "", "");
-
-      const btnRe = document.createElement("button");
-      btnRe.type = "button";
-      btnRe.className = "verify-btn-secondary";
-      btnRe.textContent = "再审本条";
-      btnRe.disabled = !(q.status === "confirmed" || q.status === "disputed" || q.status === "rechecked");
-      btnRe.onclick = () => submitVerifyRecheck(data.id, q.id);
-
-      actions.appendChild(btnNote);
-      actions.appendChild(btnOk);
-      actions.appendChild(btnRe);
-      li.appendChild(actions);
-      ul.appendChild(li);
-    });
-    panel.appendChild(ul);
-    panel.classList.remove("hidden");
   }
 
-  async function submitVerifyConfirm(reviewId, questionId, choice, humanNote, revisedQuote) {
-    if (!reviewId || !questionId) return;
+  async function submitFindingStatus(reviewId, findingKey, status) {
+    if (!reviewId || !findingKey) return;
     try {
-      const res = await fetch("/api/review/" + reviewId + "/confirm", {
+      const res = await fetch("/api/review/" + reviewId + "/ai-finding/status", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          question_id: questionId,
-          choice: choice,
-          human_note: humanNote || "",
-          revised_quote: revisedQuote || "",
-        }),
+        body: JSON.stringify({ finding_key: findingKey, status: status }),
       });
       const body = await res.json();
       if (!res.ok || !body.ok) {
-        console.warn("confirm failed", body && body.error);
+        console.warn("ai-finding status failed", body && body.error);
         return;
       }
-      if (body.verify && state.review && state.review.id === reviewId) {
-        state.review.verify = body.verify;
-        renderVerify(state.review);
-      }
+      await refreshReviewAndRender(reviewId);
     } catch (err) {
-      console.warn("confirm error", err);
+      console.warn("ai-finding status error", err);
     }
   }
 
@@ -823,22 +652,20 @@
         console.warn("reverify failed", body && body.error);
         return;
       }
-      if (body.verify && state.review && state.review.id === reviewId) {
-        state.review.verify = body.verify;
-        renderVerify(state.review);
-      }
+      await refreshReviewAndRender(reviewId);
     } catch (err) {
       console.warn("reverify error", err);
     }
   }
 
-
-  function renderQuality(data) {
-    const panel = $("quality-panel");
+  function renderAiFindings(data) {
+    const panel = $("ai-findings-panel");
     if (!panel) return;
-    const q = data.quality;
-    const obs = (q && q.available && Array.isArray(q.observations)) ? q.observations : [];
-    if (!obs.length) {
+    const af = data.ai_findings;
+    const list = (af && af.available && Array.isArray(af.findings))
+      ? af.findings
+      : [];
+    if (!list.length) {
       panel.innerHTML = "";
       panel.classList.add("hidden");
       return;
@@ -849,77 +676,179 @@
     head.className = "quality-head";
     const badge = document.createElement("span");
     badge.className = "source-badge quality";
-    badge.textContent = "AI 观察";
+    badge.textContent = "AI 发现";
     head.appendChild(badge);
-    const disclaimer = document.createElement("span");
-    disclaimer.className = "quality-disclaimer";
-    let disc = (q && q.disclaimer) || "AI 观察仅供参考，需人工确认。";
-    if (q && q.coverage && q.coverage.limited) {
-      disc += "（合同较长，本次只读到部分内容，结论供参考）";
-    }
-    disclaimer.textContent = disc;
-    head.appendChild(disclaimer);
+    const disc = document.createElement("span");
+    disc.className = "quality-disclaimer";
+    disc.textContent = "AI 发现 → 自动取证核对 → 由您拍板；确认的事实类发现会列入清单、可生成修改建议并写入报告。";
+    head.appendChild(disc);
     panel.appendChild(head);
+
+    // 再核余量（沿用原需你确认预算行：只对派生问题类生效）
+    const v = data.verify;
+    if (v && v.available) {
+      const budget = v.budget || {};
+      const roundsLeft = typeof budget.rounds_remaining === "number"
+        ? budget.rounds_remaining
+        : Math.max(0, (v.max_rounds || 0) - (v.rounds_used || 0));
+      const bud = document.createElement("p");
+      bud.className = "verify-budget";
+      bud.textContent = "还可再核 " + roundsLeft + " 次"
+        + (typeof budget.questions_pending === "number"
+          ? " · 待核实 " + budget.questions_pending + " 条"
+          : "");
+      panel.appendChild(bud);
+    }
 
     const ul = document.createElement("ul");
     ul.className = "quality-list";
-    obs.forEach((o) => {
+    list.forEach((f) => {
       const li = document.createElement("li");
-      li.className = "quality-item";
+      li.className = "quality-item verify-item";
+      li.dataset.findingKey = f.finding_key || "";
 
       const line1 = document.createElement("p");
       line1.className = "quality-title-line";
       const dim = document.createElement("span");
       dim.className = "quality-dim";
-      dim.textContent = QUALITY_DIM_LABEL[o.dimension] || "观察";
+      dim.textContent = f.source_type === "standalone"
+        ? "需核实"
+        : (QUALITY_DIM_LABEL[f.dimension] || "观察");
       line1.appendChild(dim);
       const title = document.createElement("span");
       title.className = "quality-title";
-      title.textContent = o.title || "";
+      title.textContent = f.title || "";
       line1.appendChild(title);
+      const st = document.createElement("span");
+      st.className = "verify-status";
+      st.textContent = FINDING_STATUS_LABEL[f.status] || f.status || "";
+      line1.appendChild(st);
       li.appendChild(line1);
 
-      if (o.quote) {
+      if (f.comment) {
+        const c = document.createElement("p");
+        c.className = "quality-comment";
+        c.textContent = f.comment;
+        li.appendChild(c);
+      }
+
+      if (f.quote) {
         const quote = document.createElement("div");
         quote.className = "quality-quote";
-        quote.textContent = "原文：" + o.quote;
+        quote.textContent = "原文：" + f.quote;
         li.appendChild(quote);
         const jump = document.createElement("button");
         jump.type = "button";
         jump.className = "link evidence-jump";
         jump.textContent = "看原文";
-        jump.onclick = () => jumpToEvidence(quote, o.evidence || null);
+        jump.onclick = () => jumpToEvidence(quote, f.clause_id || null);
         li.appendChild(jump);
       }
 
-      if (o.comment) {
-        const comment = document.createElement("p");
-        comment.className = "quality-comment";
-        comment.textContent = o.comment;
-        li.appendChild(comment);
+      // 跨源标注（B7-5a）：同主题规则条目名，同主题≠结论一致
+      if (f.rule_link) {
+        const rl = document.createElement("p");
+        rl.className = "quality-meta-line";
+        const tag = document.createElement("span");
+        tag.className = "quality-clause";
+        tag.textContent = f.rule_link;
+        rl.appendChild(tag);
+        li.appendChild(rl);
       }
 
-      const line4 = document.createElement("p");
-      line4.className = "quality-meta-line";
-      const heading = clauseHeadingById(o.clause_id);
-      if (heading) {
-        const clause = document.createElement("span");
-        clause.className = "quality-clause";
-        clause.textContent = "条款 " + heading;
-        line4.appendChild(clause);
+      // 条款锚 + 核对证据（派生问题类）：核对状态中文直陈
+      const heading = f.clause_id ? clauseHeadingById(f.clause_id) : null;
+      if (heading || f.evidence) {
+        const verLabel = {
+          verified: "摘句对得上",
+          ambiguous: "摘句位置不唯一",
+          missing: "原文未找到摘句",
+          unverified: "尚未核对",
+        };
+        const meta = document.createElement("p");
+        meta.className = "verify-meta";
+        if (heading) {
+          const cs = document.createElement("span");
+          cs.textContent = "条款 " + heading;
+          meta.appendChild(cs);
+        }
+        if (f.evidence) {
+          const ver = document.createElement("span");
+          ver.textContent = verLabel[f.evidence] || f.evidence;
+          meta.appendChild(ver);
+        }
+        li.appendChild(meta);
       }
-      const confirm = document.createElement("span");
-      confirm.className = "quality-confirm";
-      confirm.textContent = "待人工确认";
-      line4.appendChild(confirm);
-      li.appendChild(line4);
 
+      // 物化状态：确认后已列入逐条清单
+      if (f.materialized) {
+        const mat = document.createElement("p");
+        mat.className = "verify-meta";
+        const mt = document.createElement("span");
+        mt.textContent = f.status === "disputed"
+          ? "已从清单撤回（可恢复确认）"
+          : "已列入下方清单，可生成修改建议、可追问";
+        mat.appendChild(mt);
+        li.appendChild(mat);
+      }
+
+      const actions = document.createElement("div");
+      actions.className = "verify-actions";
+
+      if (f.status === "pending" && f.fact_type) {
+        const btnOk = document.createElement("button");
+        btnOk.type = "button";
+        btnOk.className = "verify-btn-primary";
+        btnOk.textContent = "确认无误";
+        btnOk.onclick = () => submitFindingStatus(data.id, f.finding_key, "confirmed");
+        actions.appendChild(btnOk);
+
+        const btnNo = document.createElement("button");
+        btnNo.type = "button";
+        btnNo.className = "verify-btn-secondary";
+        btnNo.textContent = "有异议";
+        btnNo.onclick = () => submitFindingStatus(data.id, f.finding_key, "disputed");
+        actions.appendChild(btnNo);
+      } else if (f.status === "confirmed") {
+        const btnUndo = document.createElement("button");
+        btnUndo.type = "button";
+        btnUndo.className = "verify-btn-secondary";
+        btnUndo.textContent = "有异议（撤回）";
+        btnUndo.onclick = () => submitFindingStatus(data.id, f.finding_key, "disputed");
+        actions.appendChild(btnUndo);
+
+        // 再审本条降级为图标级次级动作（B7-5a §四.6；去留 B7-5b 再评估）
+        if (f.question_id) {
+          const btnRe = document.createElement("button");
+          btnRe.type = "button";
+          btnRe.className = "verify-btn-recheck";
+          btnRe.title = "再核一次（消耗再核余量）";
+          btnRe.textContent = "↻";
+          btnRe.onclick = () => submitVerifyRecheck(data.id, f.question_id);
+          actions.appendChild(btnRe);
+        }
+      } else if (f.status === "disputed") {
+        const btnRevive = document.createElement("button");
+        btnRevive.type = "button";
+        btnRevive.className = "verify-btn-secondary";
+        btnRevive.textContent = "恢复确认";
+        btnRevive.onclick = () => submitFindingStatus(data.id, f.finding_key, "confirmed");
+        actions.appendChild(btnRevive);
+      } else if (!f.fact_type) {
+        // 观点类：默认已阅，仅提供异议入口（观点不物化、不可改写）
+        const btnNo = document.createElement("button");
+        btnNo.type = "button";
+        btnNo.className = "verify-btn-secondary";
+        btnNo.textContent = "有异议";
+        btnNo.onclick = () => submitFindingStatus(data.id, f.finding_key, "disputed");
+        actions.appendChild(btnNo);
+      }
+      if (actions.childNodes.length) li.appendChild(actions);
       ul.appendChild(li);
     });
     panel.appendChild(ul);
     panel.classList.remove("hidden");
   }
-
   /** 阶段 3 异议层：规则异议候选（疑似误报/疑似漏报）。
    * 铁律 3：异议永不改档位——这里只展示候选线索；「采纳」只生成规则改进
    * 提案供人工评审，不是当次改判。只渲染 accepted=true 的条目
