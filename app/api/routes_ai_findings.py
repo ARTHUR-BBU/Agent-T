@@ -37,7 +37,11 @@ def set_ai_finding_status(review_id: str, body: AiFindingStatusRequest):
     if finding is None:
         return AiFindingStatusResponse(ok=False, error="finding_not_found")
 
-    if finding.get("question_id") and body.status in ("confirmed", "disputed"):
+    # 仅事实类派生发现走 confirm 决定链（codex 五轮 P2）：观点争议只是
+    # 反馈、不产生 claim 决定记录——观点全部走状态表权威，恢复已阅才能
+    # 盖过问题行旧态
+    if finding.get("question_id") and finding.get("fact_type") \
+            and body.status in ("confirmed", "disputed"):
         resp = confirm_core(review_id, ConfirmRequest(
             question_id=str(finding["question_id"]),
             choice="confirm" if body.status == "confirmed" else "dispute",

@@ -402,6 +402,82 @@ def test_materialize_carries_evidence(env_store):
     assert "摘句已核验定位" in text_out
 
 
+# ---------------- codex 五轮整改回归（并发串行 + 观点权威统一） ----------------
+
+
+def test_concurrent_confirms_keep_both_items(tmp_path, monkeypatch):
+    """codex 五轮 P1：两条发现并发确认不得丢检查项——「读改写」全程持
+    同一把 review 锁（与 confirm/recheck 串行化）。"""
+    import threading
+
+    monkeypatch.setenv("STORE_DB_PATH", str(tmp_path / "t3.db"))
+    s = ReviewStore(db_path=str(tmp_path / "t3.db"))
+    rid = s.create(filename="c.txt", category="procurement")
+    s.update(rid, status="done",
+             quality={"available": True, "observations": [
+                 {"dimension": "completeness", "title": "发现甲",
+                  "quote": "引句甲", "clause_id": "c01", "comment": ""},
+                 {"dimension": "completeness", "title": "发现乙",
+                  "quote": "引句乙", "clause_id": "c02", "comment": ""}]},
+             verify={"questions": []}, items=[])
+    keys = [f["finding_key"]
+            for f in afs.review_findings(s.get(rid))["findings"]]
+    assert len(keys) == 2
+    barrier = threading.Barrier(2)
+    results: list[dict] = []
+
+    def _confirm(key: str) -> None:
+        barrier.wait()  # 最大化并发窗口
+        results.append(afs.set_status(s, rid, finding_key=key,
+                                      status="confirmed"))
+
+    t1 = threading.Thread(target=_confirm, args=(keys[0],))
+    t2 = threading.Thread(target=_confirm, args=(keys[1],))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+    assert all(r["status"] == "ok" for r in results)
+    ai_items = [i for i in s.get(rid)["items"]
+                if i.get("tag_source") == "ai_finding"]
+    assert len(ai_items) == 2, f"并发确认丢项：{len(ai_items)}"
+
+
+def test_opinion_with_question_restore_viewed(tmp_path, monkeypatch):
+    """codex 五轮 P2：带派生问题的观点——争议→恢复已阅必须生效
+    （观点权威=状态表，不被问题行旧决定顶回）。"""
+    monkeypatch.setenv("STORE_DB_PATH", str(tmp_path / "t4.db"))
+    s = ReviewStore(db_path=str(tmp_path / "t4.db"))
+    rid = s.create(filename="c.txt", category="procurement")
+    s.update(rid, status="done",
+             quality={"available": True, "observations": [
+                 {"dimension": "impact", "title": "议价空间判断",
+                  "quote": "押金2000元", "clause_id": "c04",
+                  "comment": "观点正文"}]},
+             verify={"questions": [
+                 dict(_q("vq01", "议价空间判断", "请确认「议价空间判断」",
+                         source="quality_obs", quote="押金2000元",
+                         clause_id="c04"),
+                      source_ref="obs:0", status="pending")]},
+             items=[])
+    row = s.get(rid)
+    f0 = afs.review_findings(row)["findings"][0]
+    assert f0["fact_type"] is False and f0["question_id"] == "vq01"
+    key = f0["finding_key"]
+    # 争议（观点：不产生决定记录，只落状态表）
+    assert afs.set_status(s, rid, finding_key=key,
+                          status="disputed")["status"] == "ok"
+    assert afs.review_findings(s.get(rid))["findings"][0]["status"] == "disputed"
+    # 恢复已阅——旧态不得顶回（四轮版实测复现点）
+    assert afs.set_status(s, rid, finding_key=key,
+                          status="viewed")["status"] == "ok"
+    f2 = afs.review_findings(s.get(rid))["findings"][0]
+    assert f2["status"] == "viewed", "恢复已阅必须持久化"
+    # verify.questions 未被观点操作改写（不产生决定记录）
+    q = s.get(rid)["verify"]["questions"][0]
+    assert not isinstance(q.get("decision"), dict)
+
+
 # ---------------- codex 三轮整改回归（P1-1/P1-2/P2-4/P2-5） ----------------
 
 
