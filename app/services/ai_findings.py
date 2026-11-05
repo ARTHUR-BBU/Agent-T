@@ -113,6 +113,31 @@ def _rule_link(title: str, comment: str, rule_names: list[str]) -> str:
     return ""
 
 
+def _human_state(
+    q: Optional[dict[str, Any]], key: str,
+    statuses: dict[str, str], default_state: str,
+) -> tuple[str, Optional[str]]:
+    """人的确认决定 与 核对进度 分离（codex 四轮 P1-1）。
+
+    rechecked 只是核对进度（再核完成），不是人的新决定——决定优先级：
+    ① question.decision.choice（决定记录权威）② question.status 直陈
+    ③ rechecked → 状态表（统一入口每次拍板都落表）④ 默认态。"""
+    if not isinstance(q, dict):
+        return statuses.get(key) or default_state, None
+    check = str(q.get("status") or "")
+    d = q.get("decision")
+    choice = str(d.get("choice") or "") if isinstance(d, dict) else ""
+    if choice == "confirm":
+        return "confirmed", check
+    if choice == "dispute":
+        return "disputed", check
+    if check in ("confirmed", "disputed"):
+        return check, check
+    if check == "rechecked":
+        return statuses.get(key) or "confirmed", check
+    return statuses.get(key) or default_state, check
+
+
 def review_findings(row: dict[str, Any]) -> dict[str, Any]:
     """聚合统一发现清单（纯读）。row=审查单原始数据（含 quality/verify）。
 
@@ -168,7 +193,10 @@ def review_findings(row: dict[str, Any]) -> dict[str, Any]:
         key = _obs_key(dim, title, clause_id, quote)
         derived = derived_by_obs.get(obs_i)
         fact_type = dim != "impact"
-        status = statuses.get(key, "pending" if fact_type else "viewed")
+        default_state = "pending" if fact_type else "viewed"
+        obs_ev = obs.get("evidence")
+        ev_obj = obs_ev if isinstance(obs_ev, dict) else None
+        human, check = _human_state(derived, key, statuses, default_state)
         entry: dict[str, Any] = {
             "finding_key": key,
             "source_type": "observ",
@@ -178,8 +206,12 @@ def review_findings(row: dict[str, Any]) -> dict[str, Any]:
             "comment": comment,
             "quote": quote,
             "clause_id": clause_id,
-            "evidence": None,
-            "status": status,
+            # 证据对象（随行物化，codex 四轮 P2-2）与核对状态串分开：
+            # verification=核对结论字符串；evidence=EvidenceRef 对象
+            "verification": None,
+            "evidence": ev_obj,
+            "status": human,
+            "check_state": check,
             "question_id": None,
             "rule_link": _rule_link(title, comment, rule_names),
             "materialized": key in item_by_finding,
@@ -190,9 +222,9 @@ def review_findings(row: dict[str, Any]) -> dict[str, Any]:
             used_question_ids.add(_qid(derived))
             entry["source_type"] = "observ+question"
             entry["question_id"] = derived.get("id")
-            entry["evidence"] = derived.get("verification")
-            # 派生问题的确认状态是权威状态（决定记录挂在它上面）
-            entry["status"] = str(derived.get("status") or status)
+            entry["verification"] = str(derived.get("verification") or "") or None
+            if ev_obj is None and isinstance(derived.get("evidence"), dict):
+                entry["evidence"] = derived.get("evidence")
         findings.append(entry)
 
     # 独立疑点（pack_verify 源，非观察派生）
@@ -200,6 +232,8 @@ def review_findings(row: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(q, dict) or _qid(q) in used_question_ids:
             continue
         key = _ver_key(q)
+        q_ev = q.get("evidence")
+        human, check = _human_state(q, key, statuses, "pending")
         findings.append({
             "finding_key": key,
             "source_type": "standalone",
@@ -209,8 +243,10 @@ def review_findings(row: dict[str, Any]) -> dict[str, Any]:
             "comment": str(q.get("question") or "").strip(),
             "quote": str(q.get("quote") or "").strip(),
             "clause_id": str(q.get("clause_id") or ""),
-            "evidence": q.get("verification"),
-            "status": statuses.get(key, str(q.get("status") or "pending")),
+            "verification": str(q.get("verification") or "") or None,
+            "evidence": q_ev if isinstance(q_ev, dict) else None,
+            "status": human,
+            "check_state": check,
             "question_id": q.get("id"),
             "rule_link": _rule_link(str(q.get("title") or ""),
                                     str(q.get("question") or ""), rule_names),
@@ -224,9 +260,13 @@ def review_findings(row: dict[str, Any]) -> dict[str, Any]:
 
 def materialize(
     *, finding_key: str, quote: str, clause_id: str,
-    note: str, title: str,
+    note: str, title: str, evidence: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """构造 AI 发现检查项（不落库，调用方经 store.update 追加）。"""
+    """构造 AI 发现检查项（不落库，调用方经 store.update 追加）。
+
+    evidence（codex 四轮 P2-2）：原发现的有效证据对象随行入项——读路径
+    的主张标注/证据链按 item.evidence 派生，不随行则报告「无证据票据」、
+    主张编号为空。"""
     item_id = "ai_" + _sha(finding_key)[:12]
     return {
         "id": item_id,
@@ -235,6 +275,7 @@ def materialize(
         "note": note,
         "quote": quote,
         "hits": [],
+        "evidence": evidence if isinstance(evidence, dict) else None,
         "evidence_start": None,
         "evidence_end": None,
         "primary_clause_id": clause_id or None,
@@ -266,13 +307,15 @@ def set_status(store: Any, review_id: str, *, finding_key: str,
     if finding is None:
         return {"status": "error", "error": "finding_not_found"}
 
-    if finding["fact_type"]:
-        # spec §四.2：无原文引句且无坐标的疑点不可物化（清单条目必须有
-        # 原文依据）——如实拒绝，状态照常留痕
-        if status == "confirmed" and not (finding.get("quote") or finding.get("clause_id")):
-            return {"status": "error",
-                    "error": "该发现无原文引句与坐标，不能作为清单条目（无原文依据）"}
-        _save_status(review_id, finding_key, status)
+    # spec §四.2：无原文引句且无坐标的事实类不可物化（清单条目必须有
+    # 原文依据）——如实拒绝；观点类本就不物化，无此限制
+    if status == "confirmed" and finding["fact_type"] \
+            and not (finding.get("quote") or finding.get("clause_id")):
+        return {"status": "error",
+                "error": "该发现无原文引句与坐标，不能作为清单条目（无原文依据）"}
+    # 统一落表（codex 四轮 P2-3）：观点类的已阅/争议同样持久化——此前只在
+    # 事实类分支保存，观点争议刷新即回「已阅」。观点仍不可物化（下方守卫）
+    _save_status(review_id, finding_key, status)
 
     items = list(row.get("items") or [])
     existing = next((i for i in items if isinstance(i, dict)
@@ -285,6 +328,7 @@ def set_status(store: Any, review_id: str, *, finding_key: str,
             new_item = materialize(
                 finding_key=finding_key,
                 quote=finding.get("quote") or "",
+                evidence=finding.get("evidence"),
                 clause_id=finding.get("clause_id") or "",
                 note=finding.get("comment") or "",
                 title=finding.get("title") or "")

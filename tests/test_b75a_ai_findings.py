@@ -312,6 +312,96 @@ def test_find_related_clauses_keywords_override():
     assert all(e["excerpt"].find("违约金") >= 0 or e["excerpt"].find("逾期") >= 0
                for e in out)
 
+# ---------------- codex 四轮整改回归（P1-1/P2-2/P2-3） ----------------
+
+
+def test_rechecked_keeps_human_decision(env_store):
+    """codex 四轮 P1-1：再核只改核对进度，不吞人的决定。
+    ①决定记录优先 ②status 直陈 ③rechecked→状态表兜底。"""
+    s, rid = env_store
+    key = _merged_key(s, rid)
+    # 统一入口确认（落状态表+决定记录），随后模拟再核把问题态打成 rechecked
+    afs.set_status(s, rid, finding_key=key, status="confirmed")
+    row = s.get(rid)
+    for q in row["verify"]["questions"]:
+        q["status"] = "rechecked"
+        q["decision"] = {"choice": "confirm"}
+    s.update(rid, verify=row["verify"])
+    f = afs.review_findings(s.get(rid))["findings"][0]
+    assert f["status"] == "confirmed", "再核后仍应显示已确认（可撤回）"
+    assert f["check_state"] == "rechecked"
+
+    # 决定优先于核对进度：决定=争议 时即便 rechecked 也显示已争议撤回
+    row = s.get(rid)
+    for q in row["verify"]["questions"]:
+        q["decision"] = {"choice": "dispute"}
+    s.update(rid, verify=row["verify"])
+    f = afs.review_findings(s.get(rid))["findings"][0]
+    assert f["status"] == "disputed" and f["check_state"] == "rechecked"
+
+    # 无决定记录的 rechecked → 状态表兜底（此前确认落过表=confirmed）
+    row = s.get(rid)
+    for q in row["verify"]["questions"]:
+        q["decision"] = None
+    s.update(rid, verify=row["verify"])
+    f = afs.review_findings(s.get(rid))["findings"][0]
+    assert f["status"] == "confirmed"
+
+
+def test_opinion_dispute_persists(env_store, tmp_path, monkeypatch):
+    """codex 四轮 P2-3：观点类（无派生问题）的争议持久化——刷新不回退；
+    恢复已阅同样落表。观点保持不可物化。"""
+    monkeypatch.setenv("STORE_DB_PATH", str(tmp_path / "t2.db"))
+    s = ReviewStore(db_path=str(tmp_path / "t2.db"))
+    rid = s.create(filename="c.txt", category="procurement")
+    s.update(rid, status="done",
+             quality={"available": True, "observations": [
+                 {"dimension": "impact", "title": "议价空间判断",
+                  "quote": "", "clause_id": "", "comment": "观点正文"}]},
+             verify={"questions": []}, items=[])
+    row = s.get(rid)
+    key = afs.review_findings(row)["findings"][0]["finding_key"]
+    out = afs.set_status(s, rid, finding_key=key, status="disputed")
+    assert out["status"] == "ok"
+    f = afs.review_findings(s.get(rid))["findings"][0]
+    assert f["status"] == "disputed", "观点争议必须持久化"
+    assert not [i for i in s.get(rid)["items"]
+                if i.get("tag_source") == "ai_finding"], "观点不可物化"
+    # 恢复已阅
+    afs.set_status(s, rid, finding_key=key, status="viewed")
+    f = afs.review_findings(s.get(rid))["findings"][0]
+    assert f["status"] == "viewed"
+
+
+def test_materialize_carries_evidence(env_store):
+    """codex 四轮 P2-2：确认物化时证据随行——item.evidence 保留原发现
+    的证据对象（读路径证据链/主张编号按它派生），报告不再「无证据票据」。"""
+    from app.services.evidence import build_evidence
+    from app.services.evidence import document_version_for
+    s, rid = env_store
+    text = "违约金为合同总价款的30%"
+    ev = build_evidence(text=text, quote=text, parse_source="quality",
+                        document_version=document_version_for(text))
+    ev["verification"] = "verified"
+    row = s.get(rid)
+    row["quality"]["observations"][0]["evidence"] = ev
+    # 全文必须随卷（缺全文的证据经归一化定位不到会被降级清票——合理行为）
+    s.update(rid, text=text, quality=row["quality"])
+    key = _merged_key(s, rid)
+    out = afs.set_status(s, rid, finding_key=key, status="confirmed")
+    assert out["status"] == "ok"
+    it = next(i for i in s.get(rid)["items"]
+              if i.get("tag_source") == "ai_finding")
+    assert isinstance(it.get("evidence"), dict)
+    assert it["evidence"].get("evidence_id") == ev["evidence_id"]
+    # 报告侧：有证据票据 → 「摘句已核验定位」，不再是「无证据票据」
+    rrow = _report_row()
+    rrow["items"] = [dict(it, name="【AI 发现】缺违约金上限")]
+    doc = Document(io.BytesIO(build_report_docx(rrow)))
+    text_out = "\n".join(p.text for p in doc.paragraphs)
+    assert "摘句已核验定位" in text_out
+
+
 # ---------------- codex 三轮整改回归（P1-1/P1-2/P2-4/P2-5） ----------------
 
 

@@ -721,7 +721,10 @@
       line1.appendChild(title);
       const st = document.createElement("span");
       st.className = "verify-status";
-      st.textContent = FINDING_STATUS_LABEL[f.status] || f.status || "";
+      // 人的决定与核对进度分开呈现（codex 四轮 P1-1）：已再审只附加显示，
+      // 不吞掉确认状态
+      st.textContent = (FINDING_STATUS_LABEL[f.status] || f.status || "")
+        + (f.check_state === "rechecked" ? "·已再审" : "");
       line1.appendChild(st);
       li.appendChild(line1);
 
@@ -756,9 +759,9 @@
         li.appendChild(rl);
       }
 
-      // 条款锚 + 核对证据（派生问题类）：核对状态中文直陈
+      // 条款锚 + 核对证据（派生问题类）：核对结论中文直陈
       const heading = f.clause_id ? clauseHeadingById(f.clause_id) : null;
-      if (heading || f.evidence) {
+      if (heading || f.verification) {
         const verLabel = {
           verified: "摘句对得上",
           ambiguous: "摘句位置不唯一",
@@ -772,9 +775,9 @@
           cs.textContent = "条款 " + heading;
           meta.appendChild(cs);
         }
-        if (f.evidence) {
+        if (f.verification) {
           const ver = document.createElement("span");
-          ver.textContent = verLabel[f.evidence] || f.evidence;
+          ver.textContent = verLabel[f.verification] || f.verification;
           meta.appendChild(ver);
         }
         li.appendChild(meta);
@@ -831,8 +834,10 @@
         const btnRevive = document.createElement("button");
         btnRevive.type = "button";
         btnRevive.className = "verify-btn-secondary";
-        btnRevive.textContent = "恢复确认";
-        btnRevive.onclick = () => submitFindingStatus(data.id, f.finding_key, "confirmed");
+        // 事实类恢复确认（复活检查项）；观点类恢复已阅（不物化）
+        btnRevive.textContent = f.fact_type ? "恢复确认" : "恢复已阅";
+        btnRevive.onclick = () => submitFindingStatus(
+          data.id, f.finding_key, f.fact_type ? "confirmed" : "viewed");
         actions.appendChild(btnRevive);
       } else if (!f.fact_type) {
         // 观点类：默认已阅，仅提供异议入口（观点不物化、不可改写）
