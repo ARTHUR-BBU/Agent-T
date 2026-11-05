@@ -26,6 +26,9 @@ DOCX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingm
 _ATTENTION = "需关注"
 _NOT_FOUND = "未找到"
 _NA = "本类不适用"
+# B7-5a（codex 三轮 P2-4）：AI 发现反悔停用档位——历史留痕保留，但**退出
+# 当前风险统计**（不算「需关注」也不落「无法识别档位从严处理」）
+_WITHDRAWN = "已争议撤回"
 
 # python-docx(lxml) 遇控制字符直接抛错：合同原文经 errors='replace'/pypdf/docling
 # 提取后可能残留 \x0b\x0c 等，不清洗则该条审查的报告导出永久 500（肉饼审计 P1）
@@ -74,6 +77,7 @@ def build_report_docx(row: dict[str, Any], warnings: list | None = None) -> byte
     has_revision = bool(row.get("revision_section"))
     _revision_section(doc, row)
     _decisions(doc, row, has_revision)
+    _ai_opinions(doc, row)
     _blind_candidates(doc, row, has_revision)
     _policy_quotes(doc, row, has_revision)
     _appendix(doc, row)
@@ -168,12 +172,17 @@ def _conclusion(doc: Any, row: dict[str, Any]) -> None:
     items = row.get("items") or []
     counts = {s: 0 for s in _known_statuses()}
     unknown = 0
+    withdrawn = 0
     for it in items:
         status = it.get("status")
         # isinstance 守卫（小智娘 P2-1）：list/dict 等不可哈希脏值走从严分支，
         # 不能在 dict 成员判断上 TypeError 炸 500——fail-closed 而非 fail-loud
         if isinstance(status, str) and status in counts:
             counts[status] += 1
+        elif status == _WITHDRAWN:
+            # B7-5a（codex 三轮 P2-4）：撤回是历史留痕，退出当前风险统计——
+            # 既不进「需关注」也不落「无法识别档位从严处理」
+            withdrawn += 1
         else:
             # 未知/变体档位不许静默吞掉（遗留项①，肉饼 P2-2）：计数守恒，
             # 且从严往风险侧倒，绝不落进「全部通过」的错误背书
@@ -181,6 +190,8 @@ def _conclusion(doc: Any, row: dict[str, Any]) -> None:
     doc.add_paragraph(
         f"共核查 {len(items)} 项：通过 {counts['通过']} · 需关注 {counts[_ATTENTION]}"
         f" · 未找到 {counts[_NOT_FOUND]} · 本类不适用 {counts[_NA]}"
+        + (f" · 已争议撤回 {withdrawn} 项（AI 发现已撤回，历史留痕，不计入风险）"
+           if withdrawn else "")
         + (f" · 无法识别档位 {unknown} 项" if unknown else "")
     )
     if unknown:
@@ -225,7 +236,8 @@ def _attention_table(doc: Any, row: dict[str, Any]) -> None:
     known = _known_statuses()
     hard = [
         it for it in (row.get("items") or [])
-        if it.get("status") in (_ATTENTION, _NOT_FOUND) or it.get("status") not in known
+        if it.get("status") in (_ATTENTION, _NOT_FOUND)
+        or (it.get("status") not in known and it.get("status") != _WITHDRAWN)
     ]
     if not hard:
         # 措辞降调（外部审计：关键词初筛系统不应用绝对化表述，防误读为法律结论）
@@ -530,6 +542,31 @@ def _decisions(doc: Any, row: dict[str, Any], has_revision: bool = False) -> Non
                 + state_names.get(st, "未走反证资格判定"),
                 style="List Bullet",
             )
+
+
+def _ai_opinions(doc: Any, row: dict[str, Any]) -> None:
+    """B7-5a（codex 三轮 P2-5）：观点类发现单列「AI 观点」小节。
+
+    观点无原文引句可核对、不构成清单条目、不可生成修改建议——如实声明
+    边界，仅供参考。无观点不渲染整节（旧报告字节契约不破）。
+    ai_finding_opinions 由报告入口注入（routes.download_report）。"""
+    ops = [
+        o for o in (row.get("ai_finding_opinions") or [])
+        if isinstance(o, dict) and (o.get("title") or o.get("comment"))
+    ]
+    if not ops:
+        return
+    doc.add_heading("AI 观点（仅供参考）", level=1)
+    doc.add_paragraph(
+        "以下为 AI 的观点性观察（无原文引句可核对、不构成清单条目，"
+        "不可生成修改建议），请结合实际自行判断："
+    )
+    for o in ops:
+        p = doc.add_paragraph(style="List Bullet")
+        p.add_run(f"【{o.get('dimension_label') or '观点'}】"
+                  f"{o.get('title') or ''}").bold = True
+        if o.get("comment"):
+            doc.add_paragraph(_scrub(o["comment"]), style="List Bullet")
 
 
 def _blind_candidates(doc: Any, row: dict[str, Any],

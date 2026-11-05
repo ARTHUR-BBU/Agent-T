@@ -265,8 +265,16 @@ def select_draft(store: Any, review_id: str, item_id: str,
     review = store.get(review_id)
     if review is None:
         return {"status": "not_found", "reason": "review_not_found"}
-    if not any(i.get("id") == item_id for i in review.get("items") or []):
+    sel_item = next((i for i in review.get("items") or []
+                     if i.get("id") == item_id), None)
+    if sel_item is None:
         return {"status": "not_found", "reason": "item_not_found"}
+    # B7-5a 反悔闭环（codex 三轮 P1-2）：AI 发现已争议撤回=停用，选定入口
+    # 一并关死（与生成/牵连/追问同一资格判据 status=="需关注"）
+    if sel_item.get("tag_source") == "ai_finding" \
+            and sel_item.get("status") != "需关注":
+        return {"status": "not_supported", "reason": "item_disabled",
+                "message": "该 AI 发现已争议撤回，不可选定草案（可恢复确认后再操作）"}
     with _connect() as conn:
         row = conn.execute(
             "SELECT review_id, item_id, status, payload FROM revision_drafts"
@@ -483,6 +491,12 @@ def analyze_impact(
                 None)
     if item is None:
         return {"status": "not_found", "reason": "item_not_found"}
+    # B7-5a 反悔闭环（codex 三轮 P1-2）：停用的 AI 发现不可发起牵连——
+    # 此前只判存在不判资格，撤回后仍会走完检索并返回「未覆盖」假象
+    if item.get("tag_source") == "ai_finding" \
+            and item.get("status") != "需关注":
+        return {"status": "not_supported", "reason": "item_disabled",
+                "message": "该 AI 发现已争议撤回，不可发起连带影响分析（可恢复确认后再操作）"}
 
     # codex #154 复批 2：选定落到具体版别，分析对象=选中的 (draft, stance)
     selected = get_selected(review_id, item_id)

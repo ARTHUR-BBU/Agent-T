@@ -564,6 +564,21 @@ def download_report(review_id: str):
             for f in obs_findings
             if not f.get("question_id") and f.get("status") in ("confirmed", "disputed")
         ]
+        # B7-5a（codex 三轮 P2-5）：观点类发现正文导出（「AI 观点」小节）
+        _dim_labels = {
+            "completeness": "有没有漏写",
+            "consistency": "有没有自相矛盾",
+            "impact": "对您的影响",
+        }
+        view["ai_finding_opinions"] = [
+            {
+                "title": f.get("title") or "",
+                "comment": f.get("comment") or "",
+                "dimension_label": _dim_labels.get(
+                    f.get("dimension") or "", "观点"),
+            }
+            for f in obs_findings if f.get("fact_type") is False
+        ]
         data = report_service.build_report_docx(view, warnings)
     except ImportError:
         # python-docx 缺失时不裸抛，给出可操作的错误
@@ -667,6 +682,10 @@ def ask(body: AskRequest):
     item = next((i for i in items if i.get("id") == body.item_id), None)
     if not item:
         raise HTTPException(status_code=404, detail="清单项不存在")
+    # B7-5a 反悔闭环：停用的 AI 发现不可追问（与生成/选定/牵连同一资格判据）
+    if item.get("tag_source") == "ai_finding" and item.get("status") != "需关注":
+        raise HTTPException(status_code=409,
+                            detail="该 AI 发现已争议撤回，暂不能追问（可恢复确认后再操作）")
 
     # 宪法 P0-D1/D5：Ask 也进 LLM 调用账本（不能成为观测盲区）
     # B2-3 §2.1：ask 是独立入口——每次追问生成一张自己的证（关联 review 既有值）

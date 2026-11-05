@@ -6,8 +6,10 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field
 
 
-Status = Literal["通过", "需关注", "未找到", "本类不适用"]
-TagSource = Literal["rule", "blind"]
+# B7-5a：AI 发现物化项 tag_source="ai_finding"；反悔停用 status="已争议撤回"
+# （历史留痕档位——报告不计风险，生成/选定/牵连/追问入口资格判据失效）
+Status = Literal["通过", "需关注", "未找到", "本类不适用", "已争议撤回"]
+TagSource = Literal["rule", "blind", "ai_finding"]
 CompletionStage = Literal["rules_complete", "ai_partial", "quality_complete", "fully_complete"]
 
 

@@ -21,7 +21,7 @@ import os
 import sqlite3
 import tempfile
 import time
-from typing import Any
+from typing import Any, Optional
 
 _STATUS_DDL = (
     "CREATE TABLE IF NOT EXISTS ai_finding_status ("
@@ -139,8 +139,25 @@ def review_findings(row: dict[str, Any]) -> dict[str, Any]:
     def _qid(q: dict[str, Any]) -> str:
         return str(q.get("id") or "")
 
-    # 观察类发现（与其派生问题合并：title 逐字沿用是派生标识，已核代码）
-    for obs in obs_list:
+    # 派生配对用稳定身份（codex 三轮 P1-3）：核验问题从观察派生时固定带
+    # source="quality_obs" + source_ref="obs:{下标}"（verify.py _add）——
+    # 按下标配对，绝不按 title 配（同标题不同条款会配错对、串确认状态）
+    def _obs_idx(q: dict[str, Any]) -> Optional[int]:
+        if str(q.get("source") or "") != "quality_obs":
+            return None
+        ref = str(q.get("source_ref") or "")
+        tail = ref[4:] if ref.startswith("obs:") else ""
+        return int(tail) if tail.isdigit() else None
+
+    derived_by_obs: dict[int, dict[str, Any]] = {}
+    for q in questions:
+        if isinstance(q, dict):
+            idx = _obs_idx(q)
+            if idx is not None:
+                derived_by_obs[idx] = q
+
+    # 观察类发现（与其派生问题按下标配对合并——codex 三轮 P1-3）
+    for obs_i, obs in enumerate(obs_list):
         if not isinstance(obs, dict):
             continue
         dim = str(obs.get("dimension") or "")
@@ -149,10 +166,7 @@ def review_findings(row: dict[str, Any]) -> dict[str, Any]:
         quote = str(obs.get("quote") or "").strip()
         clause_id = str(obs.get("clause_id") or "")
         key = _obs_key(dim, title, clause_id, quote)
-        derived = next((q for q in questions
-                        if isinstance(q, dict)
-                        and str(q.get("title") or "").strip() == title
-                        and _qid(q) not in used_question_ids), None)
+        derived = derived_by_obs.get(obs_i)
         fact_type = dim != "impact"
         status = statuses.get(key, "pending" if fact_type else "viewed")
         entry: dict[str, Any] = {

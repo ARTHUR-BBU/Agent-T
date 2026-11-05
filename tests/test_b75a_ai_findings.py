@@ -62,7 +62,8 @@ def test_obs_key_same_title_different_clause():
 
 
 def test_merge_derived_question_into_observation():
-    """派生问题（title 逐字沿用）并入观察为一条发现；独立疑点单独成条。"""
+    """派生问题（source=quality_obs + source_ref=obs:{下标}）并入观察为
+    一条发现；独立疑点单独成条。"""
     row = {
         "id": "r",
         "quality": {"available": True, "observations": [
@@ -70,8 +71,9 @@ def test_merge_derived_question_into_observation():
              "quote": "验收按双方口头", "clause_id": "c01", "comment": "c"},
         ]},
         "verify": {"questions": [
-            _q("vq01", "缺验收标准", "请确认是否属实", source="quality",
-               quote="验收按双方口头", clause_id="c01"),
+            dict(_q("vq01", "缺验收标准", "请确认是否属实", source="quality_obs",
+                    quote="验收按双方口头", clause_id="c01"),
+                 source_ref="obs:0"),
             _q("vq09", "待核实", "独立疑点正文", source="pack_verify"),
         ]},
         "items": [],
@@ -85,6 +87,37 @@ def test_merge_derived_question_into_observation():
     standalone = fs[1]
     assert standalone["source_type"] == "standalone"
     assert standalone["question_id"] == "vq09"
+
+
+def test_merge_pairs_by_obs_ref_not_title():
+    """codex 三轮 P1-3：同标题不同条款的观察按下标配对，绝不按 title
+    配（title 配对会串确认状态——交换顺序即复现）。"""
+    row = {
+        "id": "r",
+        "quality": {"available": True, "observations": [
+            {"dimension": "completeness", "title": "同名观察",
+             "quote": "引句甲", "clause_id": "c01", "comment": ""},
+            {"dimension": "completeness", "title": "同名观察",
+             "quote": "引句乙", "clause_id": "c02", "comment": ""},
+        ]},
+        "verify": {"questions": [
+            dict(_q("vq01", "同名观察", "请确认「同名观察」是否属实？",
+                    source="quality_obs", quote="引句甲", clause_id="c01"),
+                 source_ref="obs:0", status="confirmed"),
+            dict(_q("vq02", "同名观察", "请确认「同名观察」是否属实？",
+                    source="quality_obs", quote="引句乙", clause_id="c02"),
+                 source_ref="obs:1", status="disputed"),
+        ]},
+        "items": [],
+    }
+    fs = afs.review_findings(row)["findings"]
+    assert len(fs) == 2
+    by_quote = {f["quote"]: f for f in fs}
+    # 甲观察只继承甲问题的状态（下标配对，不串台）
+    assert by_quote["引句甲"]["status"] == "confirmed"
+    assert by_quote["引句甲"]["question_id"] == "vq01"
+    assert by_quote["引句乙"]["status"] == "disputed"
+    assert by_quote["引句乙"]["question_id"] == "vq02"
 
 
 def test_default_status_by_fact_type():
@@ -137,8 +170,10 @@ def env_store(tmp_path, monkeypatch):
                   "quote": "违约金为合同总价款的30%", "clause_id": "c02",
                   "comment": "无上限约定"}]},
              verify={"questions": [
-                 _q("vq01", "缺违约金上限", "请确认是否属实", source="quality",
-                    quote="违约金为合同总价款的30%", clause_id="c02")]},
+                 dict(_q("vq01", "缺违约金上限", "请确认是否属实",
+                         source="quality_obs",
+                         quote="违约金为合同总价款的30%", clause_id="c02"),
+                      source_ref="obs:0")]},
              items=[{"id": "penalty", "name": "违约金约定", "status": "需关注",
                      "note": "n", "quote": "定金不予退还", "hits": []}])
     return s, rid
@@ -277,6 +312,84 @@ def test_find_related_clauses_keywords_override():
     assert all(e["excerpt"].find("违约金") >= 0 or e["excerpt"].find("逾期") >= 0
                for e in out)
 
+# ---------------- codex 三轮整改回归（P1-1/P1-2/P2-4/P2-5） ----------------
+
+
+def _route_row():
+    """路由级用例的假 done 记录（全局 store 单例 + TestClient）。"""
+    from app.services.evidence import document_version_for
+    text = "第四条 违约金为合同总价款的30%。"
+    return {
+        "filename": "c.txt", "category": "procurement", "status": "done",
+        "stage": "done", "created_at": "2026-11-05 10:00",
+        "scorecard": {}, "blind_candidates": [], "blind_skipped_messages": [],
+        "blind_skipped_reason": None, "blind_enabled": False,
+        "text": text, "document_version": document_version_for(text),
+        "policies": [], "error": None,
+        "items": [],
+        "quality": {"available": True, "observations": [
+            {"dimension": "completeness", "title": "缺违约金上限",
+             "quote": "违约金为合同总价款的30%", "clause_id": "c04",
+             "comment": "无上限"}]},
+        "verify": {"available": True, "reason": None, "questions": [
+            {"id": "vq01", "source": "quality_obs", "source_ref": "obs:0",
+             "source_subject_key": "k",
+             "question": "请确认：「缺违约金上限」是否属实？",
+             "title": "缺违约金上限", "clause_id": "c04",
+             "quote": "违约金为合同总价款的30%", "verification": "verified",
+             "status": "pending"}]},
+        "objections": {"available": True, "objections": []},
+    }
+
+
+def test_route_confirm_then_review_get_200():
+    """codex 三轮 P1-1：确认→物化→GET /api/review 必须仍 200。
+
+    旧响应 schema 只认 tag_source rule/blind 与四档 status，物化项
+    （ai_finding/已争议撤回）会把读接口打成 500。"""
+    from app.services.store import store as global_store
+    from tests.test_evidence_claims import client  # noqa: F401 复用 TestClient
+    rid = global_store.create(**_route_row())
+    row = global_store.get(rid)
+    key = afs.review_findings(row)["findings"][0]["finding_key"]
+    resp = client.post(f"/api/review/{rid}/ai-finding/status",
+                       json={"finding_key": key, "status": "confirmed"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["ok"] is True
+    got = client.get(f"/api/review/{rid}")
+    assert got.status_code == 200, got.text
+    body = got.json()
+    ai_items = [i for i in body["items"] if i.get("tag_source") == "ai_finding"]
+    assert len(ai_items) == 1 and ai_items[0]["status"] == "需关注"
+    assert body["ai_findings"]["available"] is True
+    # 撤回后 GET 同样 200（「已争议撤回」档位可序列化）
+    disp = client.post(f"/api/review/{rid}/ai-finding/status",
+                       json={"finding_key": key, "status": "disputed"})
+    assert disp.status_code == 200 and disp.json()["ok"] is True
+    got2 = client.get(f"/api/review/{rid}")
+    assert got2.status_code == 200
+    assert any(i["status"] == "已争议撤回" for i in got2.json()["items"])
+
+
+def test_withdrawn_item_select_and_impact_rejected(env_store):
+    """codex 三轮 P1-2：撤回后选定/牵连入口关死（item_disabled），
+    恢复确认后资格复原。生成/追问入口已有同判据闸。"""
+    from app.services.impact import analyze_impact, select_draft
+    s, rid = env_store
+    key = _merged_key(s, rid)
+    out = afs.set_status(s, rid, finding_key=key, status="confirmed")
+    ai_id = out["item_id"]
+    afs.set_status(s, rid, finding_key=key, status="disputed")
+    r1 = select_draft(s, rid, ai_id, "draft_x", "平衡")
+    assert r1["status"] == "not_supported" and r1["reason"] == "item_disabled"
+    r2 = analyze_impact(s, rid, ai_id, "draft_x", llm_call=lambda *a: "")
+    assert r2["status"] == "not_supported" and r2["reason"] == "item_disabled"
+    # 恢复确认 → 资格复原（选定走到下一层校验=草案不存在）
+    afs.set_status(s, rid, finding_key=key, status="confirmed")
+    r3 = select_draft(s, rid, ai_id, "draft_x", "平衡")
+    assert r3["status"] == "not_found" and r3["reason"] == "draft_not_found"
+
+
 # ---------------- 报告收录 ----------------
 
 
@@ -321,6 +434,39 @@ def test_report_includes_ai_finding_materials():
     assert "已确认" in text
     # 范围文案（新默认）
     assert "AI 发现与确认记录" in text
+
+
+def test_report_withdrawn_not_counted_as_risk():
+    """codex 三轮 P2-4：已争议撤回退出风险统计——不进「需关注与未找到」
+    表、不算「无法识别档位从严处理」，结论行单列留痕计数。"""
+    doc = Document(io.BytesIO(build_report_docx(_report_row())))
+    text = "\n".join(p.text for p in doc.paragraphs)
+    assert "无法识别档位" not in text
+    assert "按需关注处理" not in text
+    assert "已争议撤回 1 项" in text
+    # 二节汇总表只收真正风险项（撤回条目不进表）
+    table_text = "\n".join(
+        c.text for t in doc.tables for r in t.rows for c in r.cells)
+    assert "【AI 发现】缺违约金上限" in table_text
+    assert "【AI 发现】某事实存疑" not in table_text
+
+
+def test_report_ai_opinions_section():
+    """codex 三轮 P2-5：观点类发现导出「AI 观点」小节（无观点不渲染）。"""
+    row = _report_row()
+    row["ai_finding_opinions"] = [
+        {"title": "押金退还条件空悬", "comment": "观点唯一标记OPX9Q",
+         "dimension_label": "对您的影响"},
+    ]
+    doc = Document(io.BytesIO(build_report_docx(row)))
+    text = "\n".join(p.text for p in doc.paragraphs)
+    assert "AI 观点（仅供参考）" in text
+    assert "观点唯一标记OPX9Q" in text
+    # 无观点 → 整节不渲染（字节契约）
+    row2 = _report_row()
+    doc2 = Document(io.BytesIO(build_report_docx(row2)))
+    text2 = "\n".join(p.text for p in doc2.paragraphs)
+    assert "AI 观点（仅供参考）" not in text2
 
 
 def test_report_legacy_scope_note_bytes_unchanged():
