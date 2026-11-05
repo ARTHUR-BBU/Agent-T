@@ -232,6 +232,21 @@ def test_invalid_status_and_missing_finding(env_store):
     assert afs.set_status(s, rid, finding_key=key,
                           status="bogus")["status"] == "error"
 
+
+def test_finding_key_resolved_on_normalized_view(env_store):
+    """键同源（读路径派生属性预堵）：GET 页面在 derive_claims_view 归一化
+    视图上发键（claim_id 不写回 store），set_status 必须同源解析——
+    否则 ver:{claim_id} 形态的键会 finding_not_found。"""
+    from app.services.evidence import derive_claims_view
+    s, rid = env_store
+    row = s.get(rid)
+    norm, _w, _cw = derive_claims_view(row)
+    keys = [f["finding_key"] for f in afs.review_findings(norm)["findings"]]
+    assert keys
+    for k in keys:
+        out = afs.set_status(s, rid, finding_key=k, status="viewed")
+        assert out["status"] == "ok", f"页面键 {k} 解析失败"
+
 # ---------------- 派生词族（牵连尽力检索） ----------------
 
 

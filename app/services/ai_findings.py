@@ -242,7 +242,12 @@ def set_status(store: Any, review_id: str, *, finding_key: str,
     row = store.get(review_id)
     if row is None:
         return {"status": "error", "error": "review_not_found"}
-    finding = next((f for f in review_findings(row).get("findings") or []
+    # finding_key 口径与页面同源：统一在 derive_claims_view 归一化视图上解析
+    # （claim_id 是读路径派生属性——原行没有、归一后有；不归一则 GET 下发的
+    # ver:{claim_id} 键在这里会解析不到，codex 复批预堵）
+    from app.services.evidence import derive_claims_view
+    norm_row, _w, _cw = derive_claims_view(row)
+    finding = next((f for f in review_findings(norm_row).get("findings") or []
                     if f["finding_key"] == finding_key), None)
     if finding is None:
         return {"status": "error", "error": "finding_not_found"}

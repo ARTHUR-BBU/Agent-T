@@ -28,8 +28,11 @@ def set_ai_finding_status(review_id: str, body: AiFindingStatusRequest):
     同一发现只有一条确认链。"""
     require_done_row(review_id)
     row = store.get(review_id) or {}
+    # 键解析与 GET 页面同源：claim_id 是读路径派生属性，须在归一化视图上算
+    from app.services.evidence import derive_claims_view
+    norm_row, _w, _cw = derive_claims_view(row)
     finding = next(
-        (f for f in ai_findings_service.review_findings(row).get("findings") or []
+        (f for f in ai_findings_service.review_findings(norm_row).get("findings") or []
          if f["finding_key"] == body.finding_key), None)
     if finding is None:
         return AiFindingStatusResponse(ok=False, error="finding_not_found")
