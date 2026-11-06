@@ -70,6 +70,62 @@ body {
   padding: var(--space-2) var(--space-2) var(--space-4);
 }
 
+/* ---- B7-5b 桌面双栏（阳仔线框 §1）：唯一新 token=布局宽度变量；
+     <1024 全部不生效（移动/平板带 DOM 与行为与旧版逐字节一致） ---- */
+:root { --side-w: 340px; }
+@media (min-width: 1280px) { :root { --side-w: 400px; } }
+@media (min-width: 1024px) {
+  #app { max-width: 1280px; }
+  #screen-results .results-cols {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--side-w);
+    gap: var(--space-3, 12px);
+    align-items: start;
+  }
+  .col-side {
+    position: sticky;
+    top: var(--space-2, 16px);
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+  }
+}
+.side-empty {
+  color: var(--color-text-secondary, #6e6e73);
+  font: var(--type-caption, 12px/1.5 inherit);
+  padding: var(--space-2, 16px);
+}
+.detail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1, 8px);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-1, 8px);
+}
+
+/* B7-5b「问清楚」对话框（§2.1）：白卡+中性遮罩，不复用 precheck 琥珀底
+   （琥珀=「AI 在等你决定」；问清楚是普通问答）。零新颜色 token */
+.ask-dialog {
+  width: min(640px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  border: 1px solid var(--color-divider, #d2d2d7);
+  background: var(--color-surface, #fff);
+  border-radius: var(--radius-card, 12px);
+  padding: var(--space-2, 16px);
+}
+.ask-dialog::backdrop { background: var(--color-backdrop, rgba(0, 0, 0, 0.4)); }
+.ask-dialog .card { margin-bottom: var(--space-2, 16px); }
+.ask-dialog-head {
+  margin-bottom: var(--space-2, 16px);
+  position: relative;
+}
+/* codex 九轮 P2-4：可见关闭通道（close 事件统一清理） */
+.ask-dialog-close { position: absolute; right: 0; top: 0; }
+/* codex 九轮 P2-5：桌面弹窗答案也在输入框上方（镜像移动端 480px 的
+   order 排序——现有排序只在手机断点生效，弹窗内需单独声明） */
+.ask-dialog .ask-interact { display: flex; flex-direction: column; }
+.ask-dialog .ask-interact .answer { order: -1; }
+
 .screen.hidden,
 .hidden { display: none !important; }
 

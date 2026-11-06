@@ -166,6 +166,7 @@
     const err = $("upload-error");
     err.classList.add("hidden");
     hidePrecheckConfirm();
+    closeAskContext(); // codex 十轮 P1：新合同会话开始，旧问答上下文清场
     if (!fileInput.files || !fileInput.files[0]) {
       err.textContent = "请先选择合同文件。";
       err.classList.remove("hidden");
@@ -546,6 +547,7 @@
     list.innerHTML = "";
     state.selectedItemId = null;
     $("item-detail").classList.add("hidden");
+    syncSideEmpty();
     revHideAll(); // B7-3a：清单重渲时三卡一并收起
 
     items.forEach((item) => {
@@ -749,6 +751,7 @@
       }
 
       // 跨源标注（B7-5a）：同主题规则条目名，同主题≠结论一致
+      // B7-5b C3：带 rule_item_id 时可点 → 跳到该规则条目并选中
       if (f.rule_link) {
         const rl = document.createElement("p");
         rl.className = "quality-meta-line";
@@ -756,6 +759,14 @@
         tag.className = "quality-clause";
         tag.textContent = f.rule_link;
         rl.appendChild(tag);
+        if (f.rule_item_id) {
+          const go = document.createElement("button");
+          go.type = "button";
+          go.className = "link finding-jump";
+          go.textContent = "看这条规则";
+          go.onclick = () => jumpToItem(f.rule_item_id);
+          rl.appendChild(go);
+        }
         li.appendChild(rl);
       }
 
@@ -784,6 +795,7 @@
       }
 
       // 物化状态：确认后已列入逐条清单
+      // B7-5b C3：在线（非撤回）且已知 item_id 时可点 → 回跳清单该条
       if (f.materialized) {
         const mat = document.createElement("p");
         mat.className = "verify-meta";
@@ -792,6 +804,14 @@
           ? "已从清单撤回（可恢复确认）"
           : "已列入下方清单，可生成修改建议、可追问";
         mat.appendChild(mt);
+        if (f.status !== "disputed" && f.item_id) {
+          const go = document.createElement("button");
+          go.type = "button";
+          go.className = "link finding-jump";
+          go.textContent = "看清单中的这条";
+          go.onclick = () => jumpToItem(f.item_id);
+          mat.appendChild(go);
+        }
         li.appendChild(mat);
       }
 
@@ -820,15 +840,33 @@
         btnUndo.onclick = () => submitFindingStatus(data.id, f.finding_key, "disputed");
         actions.appendChild(btnUndo);
 
-        // 再审本条降级为图标级次级动作（B7-5a §四.6；去留 B7-5b 再评估）
+        // 再审入口（B7-5b §4，codex 七轮 P2：仅 ≥1024 调整；<1024 保留现状）
+        // 桌面：去掉常驻 ↻ 半成品图标（无 CSS=隐形入口+隐形扣费双杀），
+        // 改条件化文字链接——只在「上次核对没把握」时出现；结论「摘句对得上」
+        // 不出口（白耗余量）。移动端：↻ 图标照旧
         if (f.question_id) {
-          const btnRe = document.createElement("button");
-          btnRe.type = "button";
-          btnRe.className = "verify-btn-recheck";
-          btnRe.title = "再核一次（消耗再核余量）";
-          btnRe.textContent = "↻";
-          btnRe.onclick = () => submitVerifyRecheck(data.id, f.question_id);
-          actions.appendChild(btnRe);
+          if (mqDesktop.matches) {
+            const lowConf = !f.verification
+              || f.verification === "unverified"
+              || f.verification === "ambiguous"
+              || f.verification === "missing";
+            if (lowConf) {
+              const btnRe = document.createElement("button");
+              btnRe.type = "button";
+              btnRe.className = "link evidence-jump";
+              btnRe.textContent = "再核一次（耗 1 次余量）";
+              btnRe.onclick = () => submitVerifyRecheck(data.id, f.question_id);
+              actions.appendChild(btnRe);
+            }
+          } else {
+            const btnRe = document.createElement("button");
+            btnRe.type = "button";
+            btnRe.className = "verify-btn-recheck";
+            btnRe.title = "再核一次（消耗再核余量）";
+            btnRe.textContent = "↻";
+            btnRe.onclick = () => submitVerifyRecheck(data.id, f.question_id);
+            actions.appendChild(btnRe);
+          }
         }
       } else if (f.status === "disputed") {
         const btnRevive = document.createElement("button");
@@ -1210,10 +1248,32 @@
       }
     }
 
+    // B7-5b 详情头（右栏离清单远，详情必须自带身份）：名+档位 tag+来源徽章
+    const head = $("detail-head");
+    if (head) {
+      head.innerHTML = "";
+      const nm = document.createElement("span");
+      nm.className = "detail-head-name";
+      nm.textContent = item.name || "";
+      head.appendChild(nm);
+      head.appendChild(_statusTagEl(item));
+      const hb = document.createElement("span");
+      hb.className = item._blind
+        ? "source-badge blind"
+        : (item.tag_source === "ai_finding"
+          ? "source-badge quality" : "source-badge rule");
+      hb.textContent = item._blind
+        ? "补盲"
+        : (item.tag_source === "ai_finding" ? "AI 发现" : "系统核查");
+      head.appendChild(hb);
+      head.classList.remove("hidden");
+    }
+
     // Blind candidates need human confirm; do not offer rule-style ask as if stamped
     if (item.status === "需关注" && !item._blind) {
       actions.classList.remove("hidden");
-      $("detail-ask").onclick = () => openAskDetail(item);
+      $("detail-ask").onclick = () =>
+        (mqDesktop.matches ? openAskDialog(item) : openAskDetail(item));
     } else {
       actions.classList.add("hidden");
       $("detail-ask").onclick = null;
@@ -1227,6 +1287,7 @@
     }
 
     detail.classList.remove("hidden");
+    syncSideEmpty();
     detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
@@ -1247,18 +1308,16 @@
    * 直达共用）。阅读顺序=说明→原文→(答案)→追问输入（roadmap 裁决 1/2）。
    * 三类条目分流追问卡（阳仔 3.3）：仅「需关注且非补盲」出追问卡——
    * 补盲渲染成「追问暂未开通」是把「待人工确认」误读成「未开通」。 */
-  function openAskDetail(item) {
+  /** B7-5b（codex 八轮 P1-1 补明）：两种入口共用**完整初始化**——抽取范围
+   * 是 openAskDetail 的全部前置工作（登记/seq 判废/立场文案/状态行/段1/
+   * 段2/段3-4 可用性门禁与禁用态/清空旧答案与 chips），不只段1/段2。
+   * 节点查找改 document 级：.ask-interact 搬进 dialog 后旧容器查找必失效。 */
+  function fillAskContext(item) {
     // 切换条目即作废进行中的追问响应（可信度 P1 F04）
     if (!state.askItem || state.askItem.id !== item.id) {
       state.askReqSeq += 1;
     }
     state.askItem = item;
-    const selKey = item._blind ? "blind:" + item.id : item.id;
-    state.selectedItemId = selKey;
-    document.querySelectorAll(".item").forEach((el) => {
-      el.classList.toggle("selected", el.dataset.itemId === selKey);
-    });
-
     // 页头：条目名 + 档位/来源双通道（tag 文字+底色；徽章描边）
     $("ask-title").textContent = item.name || "问清楚一点";
     const askGuide = $("ask-stance-guide");
@@ -1267,14 +1326,12 @@
     if (askIron) askIron.textContent = STANCE_IRON_LAW;
     const statusLine = $("ask-status-line");
     statusLine.innerHTML = "";
-    const tag = document.createElement("span");
-    tag.className = `tag ${statusClass(item.status)}`;
-    tag.textContent = statusLabel(item.status);
-    statusLine.appendChild(tag);
+    statusLine.appendChild(_statusTagEl(item));
     if (item.status === "需关注") {
+      // 来源徽章（codex 九轮 P2-6：来源标识与档位 tag 是两回事，缺了会把
+      // 来源信息丢成两个重复档位）
       const badge = document.createElement("span");
       badge.className = item._blind ? "source-badge blind" : "source-badge rule";
-      // 九哥词表：补盲≠待核实；规则侧展示「系统核查」
       badge.textContent = item._blind ? "补盲" : "系统核查";
       statusLine.appendChild(badge);
     }
@@ -1303,7 +1360,7 @@
 
     // 段3/4 追问卡显隐分流 + 可用性门禁（现状逻辑收编）
     const askable = item.status === "需关注" && !item._blind;
-    const interactCard = $("screen-ask").querySelector(".ask-interact");
+    const interactCard = document.querySelector(".ask-interact");
     const available = !!(state.review && state.review.ask_available);
     const banner = $("ask-unavailable");
     const btn = $("btn-ask");
@@ -1329,6 +1386,16 @@
         input.disabled = true;
       }
     }
+
+  }
+
+  function openAskDetail(item) {
+    fillAskContext(item);
+    const selKey = item._blind ? "blind:" + item.id : item.id;
+    state.selectedItemId = selKey;
+    document.querySelectorAll(".item").forEach((el) => {
+      el.classList.toggle("selected", el.dataset.itemId === selKey);
+    });
 
     show("ask");
     // B7-3a 三卡（移动端 hash 屏与桌面「问清楚一点」共用本函数）：
@@ -1628,7 +1695,7 @@
     const route = routeFromHash();
     if (route.itemId && state.reviewId === route.rid) {
       const item = findItemByKey(route.itemId);
-      if (item) openAskDetail(item);
+      if (item) openItemAsk(item);
     }
   }
 
@@ -1636,6 +1703,10 @@
   // 此时刷新会让「刷新丢结果」事故从 Back 路径复发）。
   // 阶段 2.4：同 rid 内 item 段变化走本地详情页切换，不重新轮询。
   window.addEventListener("hashchange", () => {
+    // codex 十轮 P1：任何 hash 导航都视为退出当前问答上下文（桌面弹窗
+    // 不绑 hash，openAskDialog 自身不触发本事件——凡 hash 变了必是用户
+    // 在导航，旧弹窗/旧条目一律清场）
+    closeAskContext();
     const route = routeFromHash();
     if (route.rid !== state.reviewId) {
       if (route.rid) {
@@ -1651,7 +1722,7 @@
     if (route.itemId) {
       const item = findItemByKey(route.itemId);
       if (item) {
-        openAskDetail(item);
+        openItemAsk(item);
       } else {
         show("results"); // 找不到条目（旧记录/数据不齐）：回结果页不装详情
       }
@@ -2018,7 +2089,12 @@
           if (e.excerpt_truncated) {
             parts.push('<p class="rev-caption">（本条款过长已按段摘录，非完整条款原文）</p>');
           }
-          parts.push('<p class="rev-text">摘录：' + escapeHtml(e.excerpt || "") + "</p>");
+          // B7-5b C3：牵连摘录「看原文」（codex 九轮 P2-3：定位对象=摘录
+          // 本身——flash 摘录文本，不碰当前条目的「所在条款」身份提示）
+          parts.push('<p class="rev-text" data-rev-excerpt>摘录：' + escapeHtml(e.excerpt || "") + "</p>");
+          if (e.clause_id) {
+            parts.push('<button type="button" class="link evidence-jump" data-rev-jump="' + escapeHtml(String(e.clause_id)) + '">看原文</button>');
+          }
           parts.push('<p class="rev-caption">说明：' + escapeHtml(f.note || "") + "</p>");
           parts.push("</div>");
         });
@@ -2115,6 +2191,20 @@
       if (box.dataset.revBound) return;
       box.dataset.revBound = "1";
       box.addEventListener("click", (ev) => {
+        // B7-5b C3：牵连摘录「看原文」（codex 九轮 P2-3）——定位=flash
+        // 对应摘录文本；绝不调用 jumpToEvidence（它会把当前条目的
+        // 「所在条款」旁注改写成牵连条款）
+        const jumpBtn = ev.target.closest("[data-rev-jump]");
+        if (jumpBtn) {
+          const finding = jumpBtn.closest(".rev-finding");
+          const ex = finding ? finding.querySelector("[data-rev-excerpt]") : null;
+          if (ex) {
+            ex.scrollIntoView({ behavior: "smooth", block: "center" });
+            ex.classList.add("is-flash");
+            setTimeout(() => ex.classList.remove("is-flash"), 1600);
+          }
+          return;
+        }
         const btn = ev.target.closest("[data-action]");
         if (!btn || btn.disabled) return;
         const ctx = REV_STATE.ctx;
@@ -2186,6 +2276,163 @@
   function revEligible(item) {
     return item.status === "需关注" && !item._blind && !!item.quote;
   }
+
+  /** B7-5b 桌面双栏 + 「问清楚」对话框（阳仔线框；codex 七/八轮补明）。
+   * 节点搬迁零复制（revPickBox/mqMobile 同款先例）；<1024 搬回原位，
+   * DOM 与旧版逐字节一致。判废机制一行不碰——关闭弹窗只是 seq 计数器的
+   * 新增使用点（守卫判定逻辑原样）。 */
+  const mqDesktop = window.matchMedia("(min-width: 1024px)");
+  const askDialog = $("ask-dialog");
+
+  function _statusTagEl(item) {
+    const tag = document.createElement("span");
+    tag.className = `tag ${statusClass(item.status)}`;
+    tag.textContent = statusLabel(item.status);
+    return tag;
+  }
+
+  function syncSideEmpty() {
+    // 右栏空态：仅桌面且未选中条目时可见（显隐与 item-detail.hidden 取反）
+    const se = $("side-empty");
+    const d = $("item-detail");
+    if (!se || !d) return;
+    se.classList.toggle(
+      "hidden", !(mqDesktop.matches && d.classList.contains("hidden")));
+  }
+
+  function cleanupAskSession() {
+    // codex 七轮 P1-2：关弹窗=作废在途响应+按钮复位——晚到旧响应被
+    // isAskResponseCurrent 的 seq 比对拒写；守卫逻辑本身零改动
+    state.askReqSeq += 1;
+    const btn = $("btn-ask");
+    if (btn) btn.disabled = false;
+  }
+
+  function applyDesktopLayout() {
+    // #item-detail：≥1024 进右栏 aside；<1024 按启动时锚点搬回原位
+    const detail = $("item-detail");
+    const aside = document.querySelector(".col-side");
+    if (detail && aside) {
+      if (mqDesktop.matches) {
+        if (detail.parentNode !== aside) aside.appendChild(detail);
+      } else if (detailAnchor.parent
+                 && detail.parentNode !== detailAnchor.parent) {
+        detailAnchor.parent.insertBefore(detail, detailAnchor.next);
+      }
+    }
+    // ask 三节点：≥1024 搬进 dialog 宿主；<1024 逆 DOM 序还原
+    // （参照兄弟要先归位，否则 insertBefore 抛 HierarchyRequestError）
+    const askHost = $("ask-dialog-body");
+    if (askHost) {
+      const askNodes = [$("ask-note-card"), $("ask-quote-card"),
+                        document.querySelector(".ask-interact")];
+      if (mqDesktop.matches) {
+        askNodes.forEach((n) => {
+          if (n && n.parentNode !== askHost) askHost.appendChild(n);
+        });
+      } else {
+        askNodes.slice().reverse().forEach((n) => {
+          if (!n) return;
+          const a = askNodeAnchors.get(n);
+          if (a && a.parent && n.parentNode !== a.parent) {
+            a.parent.insertBefore(n, a.next);
+          }
+        });
+      }
+    }
+    syncSideEmpty();
+  }
+
+  // 锚点捕获（启动时一次；next 存真实节点引用，节点搬走后引用依然有效）
+  const detailAnchor = (() => {
+    const d = $("item-detail");
+    return { parent: d.parentNode, next: d.nextSibling };
+  })();
+  const askNodeAnchors = new Map();
+  [$("ask-note-card"), $("ask-quote-card"),
+   document.querySelector(".ask-interact")].forEach((n) => {
+    if (n) askNodeAnchors.set(n, { parent: n.parentNode, next: n.nextSibling });
+  });
+
+  function openAskDialog(item) {
+    fillAskContext(item);
+    $("ask-dialog-title").textContent = item.name || "问清楚一点";
+    // 弹窗自带 head：状态行镜像（#ask-status-line 原件留在移动屏）
+    const dlgStatus = $("ask-dialog-status");
+    const srcStatus = $("ask-status-line");
+    if (dlgStatus) {
+      dlgStatus.innerHTML = "";
+      if (srcStatus) {
+        Array.from(srcStatus.childNodes).forEach((c) => {
+          dlgStatus.appendChild(c.cloneNode(true));
+        });
+      }
+    }
+    askDialog.showModal(); // 自带焦点圈定；Esc=cancel→close
+  }
+
+  function jumpToItem(itemId) {
+    // C3 跨源跳转：复用行点击=高亮+右栏填充（任何跳转不丢当前位置）
+    const row = document.querySelector(
+      `.item[data-item-id="${CSS.escape(String(itemId))}"]`);
+    if (row) row.click();
+  }
+
+  /** B7-5b（codex 十轮 P1）：退出问答上下文统一清理——浏览器 Back/前进/
+   * 跨合同切换时，关弹窗+作废在途响应+**清除旧条目**。不清 askItem 的话
+   * isAskResponseCurrent 只比对其余字段，甲合同的旧条目可能配着乙合同的
+   * 新 reviewId 发出去。askItem 一清，迟到旧响应双保险拒写。 */
+  function closeAskContext() {
+    if (askDialog.open) askDialog.close(); // close 事件内含 seq+1 与按钮复位
+    state.askItem = null;
+    state.askReqSeq += 1;
+    const btn = $("btn-ask");
+    if (btn) btn.disabled = false;
+  }
+
+  // 三通道（关闭按钮/Esc/点遮罩）统一汇入 close 事件做清理
+  const askDialogClose = $("ask-dialog-close");
+  if (askDialogClose) {
+    askDialogClose.addEventListener("click", () => askDialog.close());
+  }
+  askDialog.addEventListener("close", cleanupAskSession);
+  askDialog.addEventListener("click", (e) => {
+    if (e.target === askDialog) askDialog.close(); // 点遮罩
+  });
+
+  /** B7-5b（codex 九轮 P1-1）：路由级问清楚入口统一分流——桌面=弹窗
+   * （背后结果页+右栏详情），移动/平板带=hash 问答页。直达链接、
+   * hashchange、断点穿越三处都走本入口，不再各自为政。 */
+  function openItemAsk(item) {
+    if (mqDesktop.matches) {
+      show("results");
+      selectItem(item);
+      openAskDialog(item);
+    } else {
+      openAskDetail(item);
+    }
+  }
+
+  mqDesktop.addEventListener("change", () => {
+    // codex 七轮 P1-2：dialog 开着跨断点——先清理关闭再搬节点，禁止带开搬迁
+    if (askDialog.open) askDialog.close();
+    applyDesktopLayout();
+    // codex 九轮 P1-1：问答页跨断点统一处理——桌面没有独立问答页（节点
+    // 已搬进 dialog），若正显示 #screen-ask，转回结果页并按当前条目弹 dialog
+    const askScreen = $("screen-ask");
+    if (mqDesktop.matches && askScreen
+        && !askScreen.classList.contains("hidden") && state.askItem) {
+      const route = routeFromHash();
+      const item = (route.itemId ? findItemByKey(route.itemId) : null)
+        || state.askItem;
+      show("results");
+      selectItem(item);
+      openAskDialog(item);
+    }
+    // codex 九轮 P2-2：跨断点刷新 AI 发现面板（↻ 入口随宽度双向切换）
+    if (state.review) renderAiFindings(state.review);
+  });
+  applyDesktopLayout(); // 首次进入即按当前断点归位
 
   loadStanceMeta();
   resumeFromHash();

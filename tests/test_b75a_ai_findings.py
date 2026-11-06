@@ -154,7 +154,9 @@ def test_rule_link_annotation():
     }
     fs = afs.review_findings(row)["findings"]
     assert fs[0]["rule_link"] == "关联规则：违约金约定"
+    assert fs[0]["rule_item_id"] == "penalty"  # B7-5b C3：前端跳转用
     assert fs[1]["rule_link"] == ""
+    assert fs[1]["rule_item_id"] is None
 
 # ---------------- 物化 / 反悔闭环 ----------------
 

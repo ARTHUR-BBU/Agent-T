@@ -137,8 +137,19 @@ def _new_page(pw_browser, viewport=None):
 
 @pytest.fixture()
 def page(pw_browser):
-    """桌面视口（Playwright 默认 1280×720）。"""
-    pg, ctx, js_errors = _new_page(pw_browser)
+    """平板带视口（900×900）——B7-5b 双栏断点（≥1024）之下=现状守护带：
+    既有全部用例语义不变（<1024 DOM/行为逐字节与旧版一致）。桌面新行为
+    （双栏/问清楚 dialog）由 desktop_page 专测。"""
+    pg, ctx, js_errors = _new_page(pw_browser, viewport={"width": 900, "height": 900})
+    yield pg
+    ctx.close()
+    assert js_errors == [], f"前端 JS 错误：{js_errors}"
+
+
+@pytest.fixture()
+def desktop_page(pw_browser):
+    """桌面视口（1280×900，命中 B7-5b ≥1024 双栏断点）：双栏/对话框专用。"""
+    pg, ctx, js_errors = _new_page(pw_browser, viewport={"width": 1280, "height": 900})
     yield pg
     ctx.close()
     assert js_errors == [], f"前端 JS 错误：{js_errors}"
@@ -171,6 +182,14 @@ def mobile_home(mobile_page, base_url):
     mobile_page._e2e_base = base_url  # type: ignore[attr-defined]
     _goto_home(mobile_page)
     return mobile_page
+
+
+@pytest.fixture()
+def desktop_home(desktop_page, base_url):
+    """B7-5b 桌面双栏（≥1024）：双栏布局/问清楚 dialog/↻ 条件化专用。"""
+    desktop_page._e2e_base = base_url  # type: ignore[attr-defined]
+    _goto_home(desktop_page)
+    return desktop_page
 
 
 def _upload(page, path: Path = FIXTURE, category: str = "lease", stance: str | None = None):
@@ -630,10 +649,13 @@ def _quality_review_stub(quality):
     }
 
 
-def _stub_quality_flow(page, quality):
+def _stub_quality_flow(page, quality, *, ask_available=False):
     """拦截 upload + review 轮询，注入带 quality 的假 done 记录并走到结果页。"""
     import json as _json
 
+    stub = _quality_review_stub(quality)
+    if ask_available:
+        stub["ask_available"] = True
     page.route(
         "**/api/upload",
         lambda route: route.fulfill(
@@ -645,8 +667,15 @@ def _stub_quality_flow(page, quality):
         "**/api/review/e2eq00001",
         lambda route: route.fulfill(
             status=200, content_type="application/json",
-            body=_json.dumps(_quality_review_stub(quality), ensure_ascii=False),
+            body=_json.dumps(stub, ensure_ascii=False),
         ),
+    )
+    # 点行会触发三卡只读恢复（revision/state）；stub 单没有草案记录，
+    # 空态 200 即可（不挡的话打真服务器 404 会进 js_errors 守卫）
+    page.route(
+        "**/api/review/e2eq00001/items/*/revision/state",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json", body="{}"),
     )
     page.set_input_files("#file", str(FIXTURE))
     page.click("#btn-upload")
@@ -1516,3 +1545,359 @@ def test_rev_cards_post_not_found_shows_read_fail_layer(pw_browser, base_url):
         assert "已过期或不存在" in page.inner_text("#rev-cards")
     finally:
         ctx.close()
+
+
+# ---------- B7-5b 桌面双栏 + 问清楚 dialog（≥1024 专用；<1024=现状守护带） ----------
+
+_DESKTOP_MIN_QUALITY = {
+    "available": True, "reason": None,
+    "observations": [
+        {"dimension": "completeness", "title": "缺交付验收安排",
+         "quote": "第四条 本合同一式两份", "clause_id": None,
+         "comment": "异议期过短，建议延长。", "needs_confirm": True},
+    ],
+    "disclaimer": "", "dropped_count": 0, "coverage": None,
+}
+
+
+def _stub_desktop_findings_flow(page, findings):
+    """带自定义 ai_findings 的假 done 记录（桌面用例：↻ 条件化/跳转）。"""
+    import json as _json
+
+    stub = _quality_review_stub(None)
+    stub["ai_findings"] = {"available": True, "findings": findings}
+    stub["ask_available"] = True
+    page.route(
+        "**/api/upload",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}),
+        ),
+    )
+    page.route(
+        "**/api/review/e2eq00001",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps(stub, ensure_ascii=False),
+        ),
+    )
+    page.route(
+        "**/api/review/e2eq00001/items/*/revision/state",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json", body="{}"),
+    )
+    page.set_input_files("#file", str(FIXTURE))
+    page.click("#btn-upload")
+    page.wait_for_selector("#results-body", state="visible", timeout=15000)
+
+
+def _finding(**overrides):
+    f = {
+        "finding_key": "obs:completeness:stub", "source_type": "observ+question",
+        "fact_type": True, "dimension": "completeness",
+        "title": "缺交付验收", "comment": "c", "quote": "第四条 本合同一式两份",
+        "clause_id": None, "verification": None, "evidence": None,
+        "status": "confirmed", "check_state": None, "question_id": "vq01",
+        "rule_link": "", "rule_item_id": None,
+        "materialized": False, "item_id": None, "item_status": None,
+    }
+    f.update(overrides)
+    return f
+
+
+def test_desktop_two_column_detail_in_side(desktop_home):
+    """双栏：点条目 → #item-detail 搬进右栏 aside 且带详情头；未选时右栏空态。"""
+    _stub_quality_flow(desktop_home, _DESKTOP_MIN_QUALITY)
+    assert desktop_home.is_visible("#side-empty")
+    desktop_home.click("#item-list .item")
+    inside = desktop_home.eval_on_selector(
+        ".col-side", "el => !!el.querySelector('#item-detail')")
+    assert inside, "≥1024 时 #item-detail 应搬进右栏 aside"
+    assert desktop_home.is_visible("#item-detail")
+    assert not desktop_home.is_visible("#side-empty")
+    # 详情头自带身份（名 + 档位 tag）
+    head_text = desktop_home.inner_text("#detail-head")
+    assert "转租限制" in head_text
+    assert "需关注" in head_text
+
+
+def test_tablet_band_detail_inline(home):
+    """平板带（<1024）=现状守护带：详情留在左栏原位、右栏空态永不出现。"""
+    _stub_quality_flow(home, _DESKTOP_MIN_QUALITY)
+    home.click("#item-list .item")
+    assert home.eval_on_selector(
+        ".col-main", "el => !!el.querySelector('#item-detail')")
+    assert not home.is_visible("#side-empty")
+
+
+def test_desktop_ask_dialog_flow(desktop_home):
+    """问清楚对话框：弹窗内问答、关闭后右栏详情/三卡原样都在。"""
+    import json as _json
+
+    _stub_quality_flow(desktop_home, _DESKTOP_MIN_QUALITY, ask_available=True)
+    desktop_home.route("**/api/ask", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"ok": True, "item_id": "sublet",
+                          "answer": {"问题是啥": "对话框答案标记DLG9"},
+                          "quote_verified": True}, ensure_ascii=False)))
+    desktop_home.click("#item-list .item")
+    desktop_home.click("#detail-ask")
+    assert desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
+    # ask 三节点搬进 dialog（零复制：交互卡在新宿主内）
+    assert desktop_home.eval_on_selector(
+        "#ask-dialog-body", "el => !!el.querySelector('.ask-interact')")
+    desktop_home.fill("#ask-input", "这条怎么改？")
+    desktop_home.click("#btn-ask")
+    desktop_home.wait_for_selector("#ask-answer:not(.hidden)", timeout=8000)
+    assert "对话框答案标记DLG9" in desktop_home.inner_text("#ask-answer")
+    # Esc 关闭 → 右栏详情还在（任何跳转不丢当前位置）
+    desktop_home.keyboard.press("Escape")
+    assert not desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
+    assert desktop_home.is_visible("#item-detail")
+
+
+def test_desktop_ask_close_midflight_discards_late_answer(desktop_home):
+    """codex 八轮验收：发送中关闭→重开→旧响应晚到不写入；按钮状态复位。"""
+    held = []
+    desktop_home.route("**/api/ask", lambda route: held.append(route))
+    _stub_quality_flow(desktop_home, _DESKTOP_MIN_QUALITY, ask_available=True)
+    desktop_home.click("#item-list .item")
+    desktop_home.click("#detail-ask")
+    desktop_home.fill("#ask-input", "问题")
+    desktop_home.click("#btn-ask")
+    desktop_home.wait_for_timeout(400)
+    assert desktop_home.eval_on_selector("#btn-ask", "el => el.disabled"), \
+        "请求在途时发送按钮应禁用"
+    # 发送中 Esc 关闭：seq+1 作废 + 按钮复位
+    desktop_home.keyboard.press("Escape")
+    assert not desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
+    assert not desktop_home.eval_on_selector("#btn-ask", "el => el.disabled")
+    # 重开同条目
+    desktop_home.click("#detail-ask")
+    assert desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
+    # 旧响应晚到：seq 不匹配 → 不得写入
+    import json as _json
+    held.pop().fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"ok": True, "item_id": "sublet",
+                          "answer": {"问题是啥": "迟到旧答案STALE7"}},
+                         ensure_ascii=False))
+    desktop_home.wait_for_timeout(600)
+    assert "STALE7" not in desktop_home.inner_text("#ask-dialog-body")
+
+
+def test_desktop_recheck_entry_conditional(desktop_home):
+    """≥1024：confirmed+摘句对得上 无再核入口；低置信结论 出「再核一次」。"""
+    findings = [
+        _finding(title="核对过的发现", verification="verified",
+                 finding_key="obs:completeness:v", question_id="vq01"),
+        _finding(title="没把握的发现", verification="unverified",
+                 finding_key="obs:completeness:u", question_id="vq02"),
+    ]
+    _stub_desktop_findings_flow(desktop_home, findings)
+    panel = desktop_home.inner_text("#ai-findings-panel")
+    assert "再核一次（耗 1 次余量）" in panel, "低置信条目应有再核链接"
+    links = desktop_home.query_selector_all(
+        "#ai-findings-panel .verify-actions .evidence-jump")
+    assert len(links) == 1, "结论「摘句对得上」的条目不应有再核入口"
+
+
+def test_tablet_recheck_icon_unchanged(home):
+    """<1024 保留现状：↻ 图标入口不受桌面条件化影响（codex 七轮 P2）。"""
+    findings = [
+        _finding(title="核对过的发现", verification="verified",
+                 finding_key="obs:completeness:v", question_id="vq01"),
+        _finding(title="没把握的发现", verification="unverified",
+                 finding_key="obs:completeness:u", question_id="vq02"),
+    ]
+    _stub_desktop_findings_flow(home, findings)
+    icons = home.query_selector_all("#ai-findings-panel .verify-btn-recheck")
+    assert len(icons) == 2, "平板带现状：confirmed 条目 ↻ 图标照旧"
+    assert "再核一次（耗 1 次余量）" not in home.inner_text("#ai-findings-panel")
+
+
+def test_desktop_finding_jump_to_rule_item(desktop_home):
+    """C3 跨源跳转：关联规则/已列入清单可点 → 跳到对应清单条目并选中。"""
+    findings = [
+        _finding(title="与违约金约定相关", verification="verified",
+                 finding_key="obs:completeness:r", question_id="vq01",
+                 rule_link="关联规则：转租限制", rule_item_id="sublet",
+                 materialized=True, item_id="sublet", item_status="需关注"),
+    ]
+    _stub_desktop_findings_flow(desktop_home, findings)
+    desktop_home.click("#ai-findings-panel .finding-jump >> nth=0")
+    # 跳到规则条目：右栏详情头换成「转租限制」
+    desktop_home.wait_for_timeout(300)
+    assert "转租限制" in desktop_home.inner_text("#detail-head")
+
+
+# ---------- B7-5b codex 九轮整改回归（六处） ----------
+
+def test_ask_badge_keeps_source_label(home):
+    """codex 九轮 P2-6：问答页状态行=档位 tag+来源徽章，不是两个重复档位。"""
+    _stub_quality_flow(home, _DESKTOP_MIN_QUALITY)
+    home.click("#item-list .item")
+    home.click("#detail-ask")  # <1024：跳问答页
+    home.wait_for_selector("#screen-ask:not(.hidden)", state="visible")
+    tags = home.query_selector_all("#ask-status-line .tag")
+    assert len(tags) == 1, "状态行只应有一个档位 tag"
+    assert "系统核查" in home.inner_text("#ask-status-line"), "来源徽章不得丢失"
+
+
+def test_desktop_dialog_has_close_button_and_answer_above_input(desktop_home):
+    """codex 九轮 P2-4/P2-5：可见关闭按钮；答案四段式在输入框上方。"""
+    import json as _json
+
+    _stub_quality_flow(desktop_home, _DESKTOP_MIN_QUALITY, ask_available=True)
+    desktop_home.route("**/api/ask", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"ok": True, "item_id": "sublet",
+                          "answer": {"问题是啥": "答案标记ANS2"}},
+                         ensure_ascii=False)))
+    desktop_home.click("#item-list .item")
+    desktop_home.click("#detail-ask")
+    assert desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
+    # P2-4：关闭按钮存在且走同一清理
+    assert desktop_home.is_visible("#ask-dialog-close")
+    desktop_home.click("#ask-dialog-close")
+    assert not desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
+    # P2-5：重开发问，答案 y 坐标应小于输入框（在输入框上方）
+    desktop_home.click("#detail-ask")
+    desktop_home.fill("#ask-input", "问题")
+    desktop_home.click("#btn-ask")
+    desktop_home.wait_for_selector("#ask-answer:not(.hidden)", timeout=8000)
+    ans_y = desktop_home.eval_on_selector(
+        "#ask-answer", "el => el.getBoundingClientRect().top")
+    input_y = desktop_home.eval_on_selector(
+        "#ask-input", "el => el.getBoundingClientRect().top")
+    assert ans_y < input_y, "桌面弹窗答案应在输入框上方"
+    assert "答案标记ANS2" in desktop_home.inner_text("#ask-answer")
+
+
+def test_widen_from_ask_page_opens_dialog(home):
+    """codex 九轮 P1-1：平板问答页（900px）拉宽到桌面——问答页收回、
+    结果页+右栏详情+弹窗接管；不出现「内容藏进未打开弹窗」的空问答页。"""
+    _stub_quality_flow(home, _DESKTOP_MIN_QUALITY, ask_available=True)
+    home.click("#item-list .item")
+    home.click("#detail-ask")  # 900px：跳问答页
+    assert home.eval_on_selector(
+        "#screen-ask", "el => !el.classList.contains('hidden')")
+    home.set_viewport_size({"width": 1280, "height": 900})
+    home.wait_for_timeout(400)
+    assert home.eval_on_selector(
+        "#screen-ask", "el => el.classList.contains('hidden')"), \
+        "桌面无独立问答页：应转回结果页"
+    assert home.eval_on_selector("#ask-dialog", "el => el.open"), \
+        "当前条目应改由弹窗接管"
+    assert home.is_visible("#item-detail")
+
+
+def test_recheck_entry_refreshes_on_breakpoint_change(home):
+    """codex 九轮 P2-2：1023↔1024 双向切换，再核入口随宽度刷新。"""
+    findings = [
+        _finding(title="没把握的发现", verification="unverified",
+                 finding_key="obs:completeness:u", question_id="vq02"),
+    ]
+    _stub_desktop_findings_flow(home, findings)  # 900px 平板带
+    assert home.query_selector_all("#ai-findings-panel .verify-btn-recheck")
+    home.set_viewport_size({"width": 1280, "height": 900})
+    home.wait_for_timeout(400)
+    assert not home.query_selector_all("#ai-findings-panel .verify-btn-recheck"), \
+        "拉宽后 ↻ 图标应被条件化文字链接替换"
+    assert "再核一次（耗 1 次余量）" in home.inner_text("#ai-findings-panel")
+    home.set_viewport_size({"width": 900, "height": 900})
+    home.wait_for_timeout(400)
+    assert home.query_selector_all("#ai-findings-panel .verify-btn-recheck"), \
+        "缩回平板带 ↻ 图标应恢复"
+
+
+def test_rev_excerpt_jump_flashes_excerpt_keeps_clause(home):
+    """codex 九轮 P2-3：牵连「看原文」=flash 对应摘录；当前条目的
+    「所在条款」身份提示不被改写。"""
+    import json as _json
+
+    _stub_quality_flow(home, _DESKTOP_MIN_QUALITY)
+    home.route("**/api/review/e2eq00001/items/*/revision/state",
+               lambda route: route.fulfill(
+                   status=200, content_type="application/json",
+                   body=_json.dumps({
+                       # 摘录卡有「未选定前置闸」：必须带选定且与 impact.bound
+                       # 匹配，ok 分支才渲染摘录
+                       "selected": {"draft_id": "d1", "stance": "平衡"},
+                       "impact": {"state": "ok",
+                                  "bound": {"draft_id": "d1", "stance": "平衡"},
+                                  "excerpts": [{"index": 0, "keyword": ["转租"],
+                                                "position": 0, "clause_id": "c01",
+                                                "excerpt": "第一条 租金与转租相关约定全文摘录。"}],
+                                  "findings": [{"index": 0, "note": "说明一"}],
+                                  "hidden_findings": 0, "hidden_indexes": [],
+                                  "notice": ""}},
+                       ensure_ascii=False)))
+    home.click("#item-list .item")  # sublet：c04 → 「所在条款：第四条 房屋使用」
+    home.wait_for_selector("#rev-cards:not(.hidden)", state="visible")
+    clause_before = home.inner_text("#detail-clause")
+    home.click("#rev-cards [data-rev-jump]")
+    home.wait_for_timeout(200)
+    assert home.eval_on_selector(
+        "[data-rev-excerpt]", "el => el.classList.contains('is-flash')"), \
+        "应 flash 对应摘录文本"
+    clause_after = home.inner_text("#detail-clause")
+    assert clause_after == clause_before, "当前条目的条款身份提示不得被改写"
+
+
+def test_back_and_review_switch_close_ask_dialog(desktop_home):
+    """codex 十轮 P1：Back／跨合同切换必须退出问答上下文（关弹窗+清旧
+    条目），迟到旧响应不得写入——杜绝甲合同问题发给乙合同。"""
+    import json as _json
+
+    _stub_quality_flow(desktop_home, _DESKTOP_MIN_QUALITY, ask_available=True)
+    held = []
+    desktop_home.route("**/api/ask", lambda route: held.append(route))
+    # 走 item 直达路由弹开 dialog（桌面=弹窗分流）
+    desktop_home.evaluate(
+        "window.location.hash = '#/review/e2eq00001/item/sublet'")
+    desktop_home.wait_for_timeout(300)
+    assert desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
+    # codex 十一轮补强：真正发送一个问题并确认请求已挂起（held 不能空转，
+    # 否则迟到响应检查形同虚设）
+    desktop_home.fill("#ask-input", "甲合同的问题")
+    desktop_home.click("#btn-ask")
+    desktop_home.wait_for_timeout(300)
+    assert held, "追问请求应已发出且被挂起"
+    assert desktop_home.eval_on_selector("#btn-ask", "el => el.disabled"), \
+        "请求在途时发送按钮应禁用"
+    # Back：hash 退回结果页 → dialog 必须关闭
+    desktop_home.go_back()
+    desktop_home.wait_for_timeout(300)
+    assert not desktop_home.eval_on_selector("#ask-dialog", "el => el.open"), \
+        "浏览器 Back 必须退出问答上下文"
+    # 重开 dialog 再跨合同切换（hash 到另一 rid；stub 供第二份合同）
+    desktop_home.evaluate(
+        "window.location.hash = '#/review/e2eq00001/item/sublet'")
+    desktop_home.wait_for_timeout(300)
+    assert desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
+    stub2 = _quality_review_stub(None)
+    stub2["id"] = "e2ez00002"
+    stub2["filename"] = "乙合同.txt"
+    desktop_home.route(
+        "**/api/review/e2ez00002",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps(stub2, ensure_ascii=False)))
+    desktop_home.route(
+        "**/api/review/e2ez00002/items/*/revision/state",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json", body="{}"))
+    desktop_home.evaluate("window.location.hash = '#/review/e2ez00002'")
+    desktop_home.wait_for_timeout(500)
+    assert not desktop_home.eval_on_selector("#ask-dialog", "el => el.open"), \
+        "跨合同切换必须退出旧问答上下文"
+    # 迟到旧响应也不得写入（askItem 已清，双保险拒写）
+    assert held, "被挂起的旧请求此刻才放行"
+    held.pop().fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"ok": True, "item_id": "sublet",
+                          "answer": {"问题是啥": "跨合同迟到STALE9"}},
+                         ensure_ascii=False))
+    desktop_home.wait_for_timeout(400)
+    assert "STALE9" not in desktop_home.inner_text("body")

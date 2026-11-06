@@ -173,7 +173,7 @@ def find_related_clauses(
     def _fallback(hs: list[tuple[str, int, Optional[str]]]) -> None:
         """降级桶去重窗（现状行为；keyword 统一为数组口径）。"""
         seen: set[int] = set()
-        for kw, pos, _cid in hs:
+        for kw, pos, cid in hs:
             bucket = pos // _EXCERPT_WINDOW
             if bucket in seen:
                 continue
@@ -188,6 +188,8 @@ def find_related_clauses(
                     "keyword": [kw],
                     "position": pos,
                     "excerpt": excerpt,
+                    # B7-5b C3：前端「看原文」定位（降级窗命中也尽量带坐标）
+                    "clause_id": cid,
                 })
 
     if not clause_index:

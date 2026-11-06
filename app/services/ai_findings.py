@@ -98,21 +98,23 @@ def _save_status(review_id: str, key: str, status: str) -> None:
         conn.close()
 
 
-def _rule_labels(row: dict[str, Any]) -> list[str]:
-    """规则需关注条目名（跨源关联标注候选）。"""
-    return [str(i.get("name") or "") for i in (row.get("items") or [])
+def _rule_labels(row: dict[str, Any]) -> list[tuple[str, str]]:
+    """规则需关注条目 (名, id)（跨源关联标注候选；B7-5b C3 补 id 供前端跳转）。"""
+    return [(str(i.get("name") or ""), str(i.get("id") or ""))
+            for i in (row.get("items") or [])
             if isinstance(i, dict) and i.get("status") == "需关注" and i.get("name")]
 
 
-def _rule_link(title: str, comment: str, rule_names: list[str]) -> str:
+def _rule_link(title: str, comment: str,
+               rule_items: list[tuple[str, str]]) -> tuple[str, Optional[str]]:
     """同主题检测（简单包含口径）：规则名出现在发现标题/说明中 →
-    「关联规则：{名}」；未命中不标注（同主题≠结论一致，不自动升级
-    「互相印证」——codex 二轮）。"""
+    「关联规则：{名}」+ 规则条目 id（前端可点跳转）；未命中不标注
+    （同主题≠结论一致，不自动升级「互相印证」——codex 二轮）。"""
     text = title + _SEP + comment
-    for name in rule_names:
+    for name, iid in rule_items:
         if name and name in text:
-            return f"关联规则：{name}"
-    return ""
+            return f"关联规则：{name}", (iid or None)
+    return "", None
 
 
 def _human_state(
@@ -207,6 +209,7 @@ def review_findings(row: dict[str, Any]) -> dict[str, Any]:
         default_state = "pending" if fact_type else "viewed"
         obs_ev = obs.get("evidence")
         ev_obj = obs_ev if isinstance(obs_ev, dict) else None
+        rule_label, rule_item_id = _rule_link(title, comment, rule_names)
         human, check = _human_state(derived, key, statuses, default_state,
                                     fact_type)
         entry: dict[str, Any] = {
@@ -225,7 +228,8 @@ def review_findings(row: dict[str, Any]) -> dict[str, Any]:
             "status": human,
             "check_state": check,
             "question_id": None,
-            "rule_link": _rule_link(title, comment, rule_names),
+            "rule_link": rule_label,
+            "rule_item_id": rule_item_id,
             "materialized": key in item_by_finding,
             "item_id": (item_by_finding.get(key) or {}).get("id"),
             "item_status": (item_by_finding.get(key) or {}).get("status"),
@@ -245,6 +249,8 @@ def review_findings(row: dict[str, Any]) -> dict[str, Any]:
             continue
         key = _ver_key(q)
         q_ev = q.get("evidence")
+        rule_label, rule_item_id = _rule_link(
+            str(q.get("title") or ""), str(q.get("question") or ""), rule_names)
         human, check = _human_state(q, key, statuses, "pending")
         findings.append({
             "finding_key": key,
@@ -260,8 +266,8 @@ def review_findings(row: dict[str, Any]) -> dict[str, Any]:
             "status": human,
             "check_state": check,
             "question_id": q.get("id"),
-            "rule_link": _rule_link(str(q.get("title") or ""),
-                                    str(q.get("question") or ""), rule_names),
+            "rule_link": rule_label,
+            "rule_item_id": rule_item_id,
             "materialized": key in item_by_finding,
             "item_id": (item_by_finding.get(key) or {}).get("id"),
             "item_status": (item_by_finding.get(key) or {}).get("status"),
