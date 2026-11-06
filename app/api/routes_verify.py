@@ -123,89 +123,97 @@ def trigger_verify(review_id: str):
     return packed
 
 
-def confirm_core(review_id: str, body: ConfirmRequest) -> ConfirmResponse:
-    """确认核心（B7-5a 抽取）：供 /confirm 路由与 ai-finding 状态路由共用
-    ——派生问题的确认必须走同一条链（compose_decision 决定记录+Design B
-    校验+证据索引重建），否则报告「人工决定与确认」丢记录。"""
-    row = require_done_row(review_id)
-    row = require_done_row(review_id)
-    # 快照规则档位，写入后对照
+def _confirm_under_lock(review_id: str, body: ConfirmRequest) -> ConfirmResponse:
+    """确认核心实作——调用方必须已持有该 review 的锁。
+
+    B7-5a（codex 六轮 P1）：ai-finding 状态路由把「决定+状态+物化」
+    合成一次持锁时段时调用本函数；独立 /confirm 路由经 confirm_core
+    加锁后进入。"""
+    row = store.get(review_id) or {}
+    # 快照规则档位，写入后对照（Design B）
     status_snap = {
         str(i.get("id")): i.get("status")
         for i in (row.get("items") or [])
         if isinstance(i, dict) and i.get("id")
     }
-    with verify_service.lock_for(review_id):
-        row = store.get(review_id) or row
-        try:
-            updated = verify_service.apply_confirmation(
-                row.get("verify") or {},
-                question_id=body.question_id,
-                choice=body.choice,
-                human_note=body.human_note or "",
-                revised_quote=body.revised_quote or "",
-            )
-        except KeyError:
-            return ConfirmResponse(ok=False, error="问题不存在")
-        except ValueError as exc:
-            return ConfirmResponse(ok=False, error=str(exc))
-        # 2c（§3.1）：写时派生 claim 三元组并挂决定记录（唯一流水线，同函数同公式）
-        from app.services.evidence import compose_decision, derive_claims_view
-        from datetime import datetime, timezone
-        view, _w, _cw = derive_claims_view({
-            "text": row.get("text") or "",
-            "document_version": row.get("document_version") or "",
-            "rule_pack": row.get("rule_pack"),
-            "items": row.get("items") or [],
-            "verify": updated,
-        })
-        vq = next(
-            (q for q in (view.get("verify") or {}).get("questions") or []
-             if isinstance(q, dict) and q.get("id") == body.question_id),
-            None,
+    try:
+        updated = verify_service.apply_confirmation(
+            row.get("verify") or {},
+            question_id=body.question_id,
+            choice=body.choice,
+            human_note=body.human_note or "",
+            revised_quote=body.revised_quote or "",
         )
-        claim_id = (vq or {}).get("claim_id") or ""
-        if claim_id and isinstance(vq, dict):
-            # 钉4（Codex）：决定记录沿用 apply_confirmation 截断后的字段值——
-            # 未截断的请求原文会让两处表示不一致，且给 SQLite 留无界写入面
-            existing = None
-            u_note = u_quote = ""
-            for q in updated.get("questions") or []:
-                if isinstance(q, dict) and q.get("id") == body.question_id:
-                    existing = (
-                        q.get("decision")
-                        if isinstance(q.get("decision"), dict) else None
-                    )
-                    u_note = q.get("human_note") or ""
-                    u_quote = q.get("revised_quote") or ""
-            decision = compose_decision(
-                document_version=row.get("document_version") or "",
-                claim_id=claim_id,
-                claim_content_hash=vq.get("claim_content_hash") or "",
-                evidence_ids=[r.get("evidence_id") for r in vq.get("evidence_refs") or []],
-                decision_type="human_confirm" if body.choice == "confirm" else "human_dispute",
-                choice=body.choice,
-                human_note=u_note,
-                revised_quote=u_quote,
-                decided_at=datetime.now(timezone.utc).isoformat(),
-                existing=existing,
-            )
-            for q in updated.get("questions") or []:
-                if isinstance(q, dict) and q.get("id") == body.question_id:
-                    q["decision"] = decision
-        # Design B：update 只带 verify，不带 items
-        store.update(review_id, verify=updated)
-        _merge_evidence_index(review_id)
-        after = store.get(review_id) or {}
-        after_snap = {
-            str(i.get("id")): i.get("status")
-            for i in (after.get("items") or [])
-            if isinstance(i, dict) and i.get("id")
-        }
-        if after_snap != status_snap:
-            logger.error("Design B violation on confirm review_id=%s", review_id)
-            raise HTTPException(status_code=500, detail="内部错误：规则档位被意外改动")
+    except KeyError:
+        return ConfirmResponse(ok=False, error="问题不存在")
+    except ValueError as exc:
+        return ConfirmResponse(ok=False, error=str(exc))
+    # 2c（§3.1）：写时派生 claim 三元组并挂决定记录（唯一流水线，同函数同公式）
+    from app.services.evidence import compose_decision, derive_claims_view
+    from datetime import datetime, timezone
+    view, _w, _cw = derive_claims_view({
+        "text": row.get("text") or "",
+        "document_version": row.get("document_version") or "",
+        "rule_pack": row.get("rule_pack"),
+        "items": row.get("items") or [],
+        "verify": updated,
+    })
+    vq = next(
+        (q for q in (view.get("verify") or {}).get("questions") or []
+         if isinstance(q, dict) and q.get("id") == body.question_id),
+        None,
+    )
+    claim_id = (vq or {}).get("claim_id") or ""
+    if claim_id and isinstance(vq, dict):
+        # 钉4（Codex）：决定记录沿用 apply_confirmation 截断后的字段值——
+        # 未截断的请求原文会让两处表示不一致，且给 SQLite 留无界写入面
+        existing = None
+        u_note = u_quote = ""
+        for q in updated.get("questions") or []:
+            if isinstance(q, dict) and q.get("id") == body.question_id:
+                existing = (
+                    q.get("decision")
+                    if isinstance(q.get("decision"), dict) else None
+                )
+                u_note = q.get("human_note") or ""
+                u_quote = q.get("revised_quote") or ""
+        decision = compose_decision(
+            document_version=row.get("document_version") or "",
+            claim_id=claim_id,
+            claim_content_hash=vq.get("claim_content_hash") or "",
+            evidence_ids=[r.get("evidence_id") for r in vq.get("evidence_refs") or []],
+            decision_type="human_confirm" if body.choice == "confirm" else "human_dispute",
+            choice=body.choice,
+            human_note=u_note,
+            revised_quote=u_quote,
+            decided_at=datetime.now(timezone.utc).isoformat(),
+            existing=existing,
+        )
+        for q in updated.get("questions") or []:
+            if isinstance(q, dict) and q.get("id") == body.question_id:
+                q["decision"] = decision
+    # Design B：update 只带 verify，不带 items
+    store.update(review_id, verify=updated)
+    _merge_evidence_index(review_id)
+    after = store.get(review_id) or {}
+    after_snap = {
+        str(i.get("id")): i.get("status")
+        for i in (after.get("items") or [])
+        if isinstance(i, dict) and i.get("id")
+    }
+    if after_snap != status_snap:
+        logger.error("Design B violation on confirm review_id=%s", review_id)
+        raise HTTPException(status_code=500, detail="内部错误：规则档位被意外改动")
     return ConfirmResponse(ok=True, verify=pack_verify(updated, row=row))
+
+
+def confirm_core(review_id: str, body: ConfirmRequest) -> ConfirmResponse:
+    """确认核心（B7-5a 抽取）：供 /confirm 路由与 ai-finding 状态路由共用
+    ——派生问题的确认必须走同一条链（compose_decision 决定记录+Design B
+    校验+证据索引重建），否则报告「人工决定与确认」丢记录。"""
+    require_done_row(review_id)
+    with verify_service.lock_for(review_id):
+        return _confirm_under_lock(review_id, body)
 
 
 @router.post(

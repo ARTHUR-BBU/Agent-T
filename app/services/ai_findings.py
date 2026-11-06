@@ -311,55 +311,66 @@ def set_status(store: Any, review_id: str, *, finding_key: str,
     if status not in _VALID_STATUS:
         return {"status": "error", "error": f"非法状态 {status!r}"}
     with lock_for(review_id):
-        row = store.get(review_id)
-        if row is None:
-            return {"status": "error", "error": "review_not_found"}
-        # finding_key 口径与页面同源：统一在 derive_claims_view 归一化视图上
-        # 解析（claim_id 是读路径派生属性——原行没有、归一后有；不归一则 GET
-        # 下发的 ver:{claim_id} 键在这里会解析不到，codex 复批预堵）
-        from app.services.evidence import derive_claims_view
-        norm_row, _w, _cw = derive_claims_view(row)
-        finding = next(
-            (f for f in review_findings(norm_row).get("findings") or []
-             if f["finding_key"] == finding_key), None)
-        if finding is None:
-            return {"status": "error", "error": "finding_not_found"}
+        return set_status_locked(store, review_id, finding_key=finding_key,
+                                 status=status)
 
-        # spec §四.2：无原文引句且无坐标的事实类不可物化（清单条目必须有
-        # 原文依据）——如实拒绝；观点类本就不物化，无此限制
-        if status == "confirmed" and finding["fact_type"] \
-                and not (finding.get("quote") or finding.get("clause_id")):
-            return {"status": "error",
-                    "error": "该发现无原文引句与坐标，不能作为清单条目（无原文依据）"}
-        # 统一落表（codex 四轮 P2-3）：观点类的已阅/争议同样持久化——此前只在
-        # 事实类分支保存，观点争议刷新即回「已阅」。观点仍不可物化（下方守卫）
-        _save_status(review_id, finding_key, status)
 
-        items = list(row.get("items") or [])
-        existing = next((i for i in items if isinstance(i, dict)
-                         and i.get("finding_key") == finding_key
-                         and i.get("tag_source") == "ai_finding"), None)
-        item_id = (existing or {}).get("id")
+def set_status_locked(store: Any, review_id: str, *, finding_key: str,
+                      status: str) -> dict[str, Any]:
+    """状态入口实作——调用方必须已持有该 review 的锁。
 
-        if status == "confirmed" and finding["fact_type"]:
-            if existing is None:
-                new_item = materialize(
-                    finding_key=finding_key,
-                    quote=finding.get("quote") or "",
-                    evidence=finding.get("evidence"),
-                    clause_id=finding.get("clause_id") or "",
-                    note=finding.get("comment") or "",
-                    title=finding.get("title") or "")
-                items.append(new_item)
-                item_id = new_item["id"]
-            else:
-                # 复活（争议后再确认）
-                existing["status"] = "需关注"
-            store.update(review_id, items=items)
-        elif status == "disputed" and existing is not None:
-            # 反悔：物化项停用（资格判定走 status，历史留痕保留）
-            existing["status"] = "已争议撤回"
-            store.update(review_id, items=items)
+    B7-5a（codex 六轮 P1）：ai-finding 状态路由把「确认决定+状态保存+
+    检查项更新」合成**一次**持锁时段时调用本函数——确认与争议两条请求
+    交错时整体串行，不再出现「决定已争议、检查项仍有效」的中间态。"""
+    row = store.get(review_id)
+    if row is None:
+        return {"status": "error", "error": "review_not_found"}
+    # finding_key 口径与页面同源：统一在 derive_claims_view 归一化视图上
+    # 解析（claim_id 是读路径派生属性——原行没有、归一后有；不归一则 GET
+    # 下发的 ver:{claim_id} 键在这里会解析不到，codex 复批预堵）
+    from app.services.evidence import derive_claims_view
+    norm_row, _w, _cw = derive_claims_view(row)
+    finding = next(
+        (f for f in review_findings(norm_row).get("findings") or []
+         if f["finding_key"] == finding_key), None)
+    if finding is None:
+        return {"status": "error", "error": "finding_not_found"}
 
-        return {"status": "ok", "finding_status": status,
-                "item_id": item_id, "materialized": item_id is not None}
+    # spec §四.2：无原文引句且无坐标的事实类不可物化（清单条目必须有
+    # 原文依据）——如实拒绝；观点类本就不物化，无此限制
+    if status == "confirmed" and finding["fact_type"] \
+            and not (finding.get("quote") or finding.get("clause_id")):
+        return {"status": "error",
+                "error": "该发现无原文引句与坐标，不能作为清单条目（无原文依据）"}
+    # 统一落表（codex 四轮 P2-3）：观点类的已阅/争议同样持久化——此前只在
+    # 事实类分支保存，观点争议刷新即回「已阅」。观点仍不可物化（下方守卫）
+    _save_status(review_id, finding_key, status)
+
+    items = list(row.get("items") or [])
+    existing = next((i for i in items if isinstance(i, dict)
+                     and i.get("finding_key") == finding_key
+                     and i.get("tag_source") == "ai_finding"), None)
+    item_id = (existing or {}).get("id")
+
+    if status == "confirmed" and finding["fact_type"]:
+        if existing is None:
+            new_item = materialize(
+                finding_key=finding_key,
+                quote=finding.get("quote") or "",
+                evidence=finding.get("evidence"),
+                clause_id=finding.get("clause_id") or "",
+                note=finding.get("comment") or "",
+                title=finding.get("title") or "")
+            items.append(new_item)
+            item_id = new_item["id"]
+        else:
+            # 复活（争议后再确认）
+            existing["status"] = "需关注"
+        store.update(review_id, items=items)
+    elif status == "disputed" and existing is not None:
+        # 反悔：物化项停用（资格判定走 status，历史留痕保留）
+        existing["status"] = "已争议撤回"
+        store.update(review_id, items=items)
+
+    return {"status": "ok", "finding_status": status,
+            "item_id": item_id, "materialized": item_id is not None}

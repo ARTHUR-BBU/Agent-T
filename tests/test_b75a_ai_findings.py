@@ -478,6 +478,46 @@ def test_opinion_with_question_restore_viewed(tmp_path, monkeypatch):
     assert not isinstance(q.get("decision"), dict)
 
 
+def test_confirm_dispute_interleave_consistent():
+    """codex 六轮 P1：同一条发现同时收到确认与争议——「决定+状态+物化」
+    一次持锁整体串行，终态必须自洽（决定=争议 ⇒ 检查项必不在线；
+    决定=确认 ⇒ 检查项有效）。30 轮并发不给中间态留活路。"""
+    import threading
+
+    from app.api.routes_ai_findings import set_ai_finding_status
+    from app.api.schemas import AiFindingStatusRequest
+    from app.services.store import store as global_store
+    from tests.test_evidence_claims import client  # noqa: F401 复用 TestClient
+
+    for i in range(30):
+        rid = global_store.create(**_route_row())
+        row = global_store.get(rid)
+        key = afs.review_findings(row)["findings"][0]["finding_key"]
+        barrier = threading.Barrier(2)
+
+        def _op(status: str) -> None:
+            barrier.wait()
+            set_ai_finding_status(rid, AiFindingStatusRequest(
+                finding_key=key, status=status))
+
+        t1 = threading.Thread(target=_op, args=("confirmed",))
+        t2 = threading.Thread(target=_op, args=("disputed",))
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+        row = global_store.get(rid)
+        f = afs.review_findings(row)["findings"][0]
+        item = next((it for it in row["items"]
+                     if it.get("tag_source") == "ai_finding"), None)
+        if f["status"] == "confirmed":
+            assert item is not None and item["status"] == "需关注", \
+                f"第{i}轮：决定=确认但检查项失效"
+        else:
+            assert item is None or item["status"] != "需关注", \
+                f"第{i}轮：决定={f['status']} 但检查项仍有效"
+
+
 # ---------------- codex 三轮整改回归（P1-1/P1-2/P2-4/P2-5） ----------------
 
 
