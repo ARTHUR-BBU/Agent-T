@@ -153,7 +153,7 @@
 #ask-note-card、#ask-quote-card、.ask-interact（含输入框/chips/答案）三个节点，≥1024 时搬进 #ask-dialog-body，<1024 搬回 #screen-ask 原位。理由：
 - sendAsk() / renderAnswer() / followups / 错误处理全按 ID 操作——节点搬家照常工作，**逻辑零复制**（两套 DOM 两套渲染必然漂移）
 - #screen-ask 本体保留（移动端 hash 详情页靠它），其标题区（ask-title/status-line）留在原地；dialog 用自己的 head
-- openAskDetail() 保留给移动端 hash 路由；桌面入口改为 openAskDialog(item)：填 dialog 标题+状态行 → 把 openAskDetail 里段1/段2 的填充代码抽成 fillAskContext(item) 共用 → showModal()
+- openAskDetail() 保留给移动端 hash 路由；桌面入口改为 openAskDialog(item)：填 dialog 标题+状态行 → 抽取 openAskDetail 的**完整初始化**成 fillAskContext(item) 共用（含 seq 递增/段3-4 门禁/清空旧态，见七轮补明）→ showModal()
 
 交互流（桌面）：右栏点「问清楚一点 →」→ dialog 弹出（showModal() 自带焦点圈定，Esc/点遮罩=关闭）→ 点 chips 或输入 → 发送 → **答案四段式显示在输入框上方**（复用移动端 480px order:-1 的既有做法，dialog 内同样生效）→ 关闭回右栏，三卡还在。
 

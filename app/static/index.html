@@ -123,6 +123,11 @@
             <p class="export-scope-note muted" id="export-scope-note">报告只含本次读到并展示的内容；未读部分不写入结论</p>
           </div>
         </div>
+        <!-- B7-5b 桌面双栏（阳仔线框）：≥1024 左=全局结论/右=当前条目操作区；
+             <1024 本包装饰零效果（CSS 断点门控），DOM 结构与旧版一致。
+             #item-detail 静态留在原位，JS 在 ≥1024 时搬进右栏 aside -->
+        <div class="results-cols">
+        <div class="col-main">
         <!-- 事实材料：次级卡片，浅灰底；空态由 JS 填写 -->
         <section id="facts-panel" class="facts-card hidden" aria-label="事实材料"></section>
         <!-- 阶段 2.3 IA 重排：图例降级为清单正上方一行（去卡片化，tag 色块保留=
@@ -138,6 +143,8 @@
         <!-- Detail panel: 原文摘句 when a row is selected（阶段 2.3 上移到清单后，
              补盲说明由 JS 动态插在清单与本面板之间） -->
         <div id="item-detail" class="item-detail hidden" aria-live="polite">
+          <!-- B7-5b 详情头（右栏离清单远，详情必须自带身份）：selectItem 填充 -->
+          <div id="detail-head" class="detail-head hidden"></div>
           <!-- 阶段 1.1 条款锚点：命中落在哪个条款（无条款索引/未定位时隐藏） -->
           <p id="detail-clause" class="detail-clause hidden"></p>
           <p class="detail-label">说明</p>
@@ -180,6 +187,14 @@
             </details>
           </div>
         </details>
+        </div><!-- /col-main -->
+        <aside class="col-side">
+          <!-- B7-5b 右栏空态：未选条目时的灰字引导（与 item-detail 显隐取反） -->
+          <div id="side-empty" class="side-empty hidden">从左侧清单选一条，这里会显示它的说明、原文和可做的操作。</div>
+          <!-- #item-detail ≥1024 时由 JS 搬到本 aside 内（matchMedia 节点搬迁，
+               同 revPickBox/mqMobile 先例）；<1024 搬回 col-main 原位 -->
+        </aside>
+        </div><!-- /results-cols -->
       </div>
     </section>
 
@@ -236,6 +251,17 @@
       <button id="btn-precheck-switch" class="primary" type="button"></button>
       <button id="btn-precheck-keep" class="secondary" type="button">按原类型继续</button>
     </div>
+  </dialog>
+  <!-- B7-5b「问清楚」对话框化（阳仔线框 §2）：≥1024 桌面不跳页、拉把椅子
+       凑到桌边问。白卡+中性遮罩（不复用 precheck 琥珀底=等 AI 决定的语义）。
+       ask 三节点（#ask-note-card/#ask-quote-card/.ask-interact）≥1024 由 JS
+       搬进 #ask-dialog-body，<1024 搬回 #screen-ask 原位——零复制零改动 -->
+  <dialog id="ask-dialog" class="ask-dialog" aria-labelledby="ask-dialog-title">
+    <div class="ask-dialog-head">
+      <p class="detail-label" id="ask-dialog-title">问清楚一点</p>
+      <p class="ask-status-line" id="ask-dialog-status"></p>
+    </div>
+    <div id="ask-dialog-body"><!-- ask 三节点搬迁宿主 --></div>
   </dialog>
   <script src="/static/app.js"></script>
 </body>
