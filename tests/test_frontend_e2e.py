@@ -1858,6 +1858,14 @@ def test_back_and_review_switch_close_ask_dialog(desktop_home):
         "window.location.hash = '#/review/e2eq00001/item/sublet'")
     desktop_home.wait_for_timeout(300)
     assert desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
+    # codex 十一轮补强：真正发送一个问题并确认请求已挂起（held 不能空转，
+    # 否则迟到响应检查形同虚设）
+    desktop_home.fill("#ask-input", "甲合同的问题")
+    desktop_home.click("#btn-ask")
+    desktop_home.wait_for_timeout(300)
+    assert held, "追问请求应已发出且被挂起"
+    assert desktop_home.eval_on_selector("#btn-ask", "el => el.disabled"), \
+        "请求在途时发送按钮应禁用"
     # Back：hash 退回结果页 → dialog 必须关闭
     desktop_home.go_back()
     desktop_home.wait_for_timeout(300)
@@ -1885,11 +1893,11 @@ def test_back_and_review_switch_close_ask_dialog(desktop_home):
     assert not desktop_home.eval_on_selector("#ask-dialog", "el => el.open"), \
         "跨合同切换必须退出旧问答上下文"
     # 迟到旧响应也不得写入（askItem 已清，双保险拒写）
-    if held:
-        held.pop().fulfill(
-            status=200, content_type="application/json",
-            body=_json.dumps({"ok": True, "item_id": "sublet",
-                              "answer": {"问题是啥": "跨合同迟到STALE9"}},
-                             ensure_ascii=False))
+    assert held, "被挂起的旧请求此刻才放行"
+    held.pop().fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"ok": True, "item_id": "sublet",
+                          "answer": {"问题是啥": "跨合同迟到STALE9"}},
+                         ensure_ascii=False))
     desktop_home.wait_for_timeout(400)
     assert "STALE9" not in desktop_home.inner_text("body")
