@@ -1843,3 +1843,53 @@ def test_rev_excerpt_jump_flashes_excerpt_keeps_clause(home):
         "应 flash 对应摘录文本"
     clause_after = home.inner_text("#detail-clause")
     assert clause_after == clause_before, "当前条目的条款身份提示不得被改写"
+
+
+def test_back_and_review_switch_close_ask_dialog(desktop_home):
+    """codex 十轮 P1：Back／跨合同切换必须退出问答上下文（关弹窗+清旧
+    条目），迟到旧响应不得写入——杜绝甲合同问题发给乙合同。"""
+    import json as _json
+
+    _stub_quality_flow(desktop_home, _DESKTOP_MIN_QUALITY, ask_available=True)
+    held = []
+    desktop_home.route("**/api/ask", lambda route: held.append(route))
+    # 走 item 直达路由弹开 dialog（桌面=弹窗分流）
+    desktop_home.evaluate(
+        "window.location.hash = '#/review/e2eq00001/item/sublet'")
+    desktop_home.wait_for_timeout(300)
+    assert desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
+    # Back：hash 退回结果页 → dialog 必须关闭
+    desktop_home.go_back()
+    desktop_home.wait_for_timeout(300)
+    assert not desktop_home.eval_on_selector("#ask-dialog", "el => el.open"), \
+        "浏览器 Back 必须退出问答上下文"
+    # 重开 dialog 再跨合同切换（hash 到另一 rid；stub 供第二份合同）
+    desktop_home.evaluate(
+        "window.location.hash = '#/review/e2eq00001/item/sublet'")
+    desktop_home.wait_for_timeout(300)
+    assert desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
+    stub2 = _quality_review_stub(None)
+    stub2["id"] = "e2ez00002"
+    stub2["filename"] = "乙合同.txt"
+    desktop_home.route(
+        "**/api/review/e2ez00002",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps(stub2, ensure_ascii=False)))
+    desktop_home.route(
+        "**/api/review/e2ez00002/items/*/revision/state",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json", body="{}"))
+    desktop_home.evaluate("window.location.hash = '#/review/e2ez00002'")
+    desktop_home.wait_for_timeout(500)
+    assert not desktop_home.eval_on_selector("#ask-dialog", "el => el.open"), \
+        "跨合同切换必须退出旧问答上下文"
+    # 迟到旧响应也不得写入（askItem 已清，双保险拒写）
+    if held:
+        held.pop().fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({"ok": True, "item_id": "sublet",
+                              "answer": {"问题是啥": "跨合同迟到STALE9"}},
+                             ensure_ascii=False))
+    desktop_home.wait_for_timeout(400)
+    assert "STALE9" not in desktop_home.inner_text("body")

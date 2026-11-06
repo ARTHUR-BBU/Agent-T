@@ -166,6 +166,7 @@
     const err = $("upload-error");
     err.classList.add("hidden");
     hidePrecheckConfirm();
+    closeAskContext(); // codex 十轮 P1：新合同会话开始，旧问答上下文清场
     if (!fileInput.files || !fileInput.files[0]) {
       err.textContent = "请先选择合同文件。";
       err.classList.remove("hidden");
@@ -1702,6 +1703,10 @@
   // 此时刷新会让「刷新丢结果」事故从 Back 路径复发）。
   // 阶段 2.4：同 rid 内 item 段变化走本地详情页切换，不重新轮询。
   window.addEventListener("hashchange", () => {
+    // codex 十轮 P1：任何 hash 导航都视为退出当前问答上下文（桌面弹窗
+    // 不绑 hash，openAskDialog 自身不触发本事件——凡 hash 变了必是用户
+    // 在导航，旧弹窗/旧条目一律清场）
+    closeAskContext();
     const route = routeFromHash();
     if (route.rid !== state.reviewId) {
       if (route.rid) {
@@ -2371,6 +2376,18 @@
     const row = document.querySelector(
       `.item[data-item-id="${CSS.escape(String(itemId))}"]`);
     if (row) row.click();
+  }
+
+  /** B7-5b（codex 十轮 P1）：退出问答上下文统一清理——浏览器 Back/前进/
+   * 跨合同切换时，关弹窗+作废在途响应+**清除旧条目**。不清 askItem 的话
+   * isAskResponseCurrent 只比对其余字段，甲合同的旧条目可能配着乙合同的
+   * 新 reviewId 发出去。askItem 一清，迟到旧响应双保险拒写。 */
+  function closeAskContext() {
+    if (askDialog.open) askDialog.close(); // close 事件内含 seq+1 与按钮复位
+    state.askItem = null;
+    state.askReqSeq += 1;
+    const btn = $("btn-ask");
+    if (btn) btn.disabled = false;
   }
 
   // 三通道（关闭按钮/Esc/点遮罩）统一汇入 close 事件做清理
