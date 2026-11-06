@@ -148,6 +148,37 @@ class ReviewStore:
         合同这类敏感资料的访问控制要在读取路径上强制。"""
         return self._ttl > 0 and created_at < time.time() - self._ttl
 
+    def list_reviews(self, limit: int = 50) -> list[dict[str, Any]]:
+        """历史审查摘要列表（B7-6 历史侧栏；codex 十二轮 P2-4 口径）：
+
+        - TTL 过滤与单条读取同规则（`_is_expired`）——不留「列表可见、
+          点开已失效」的缝；过期行顺带落盘清理（同 get 纪律）
+        - 只回摘要字段，不回合同文本/审查结果载荷
+        - created_at 倒序；服务端限条（上限由调用方夹紧）"""
+        with closing(self._conn()) as conn, conn:
+            rows = conn.execute(
+                "SELECT id, created_at, data FROM reviews ORDER BY created_at DESC"
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for rid, created_at, data in rows:
+            if self._is_expired(created_at):
+                continue
+            try:
+                d = json.loads(data)
+            except Exception:  # noqa: BLE001
+                continue
+            out.append({
+                "id": rid,
+                "filename": d.get("filename") or "",
+                "category": d.get("category") or "",
+                "category_label": d.get("category_label") or "",
+                "status": d.get("status") or "pending",
+                "created_at": created_at,
+            })
+            if len(out) >= max(1, limit):
+                break
+        return out
+
     def get(self, review_id: str) -> dict[str, Any] | None:
         with closing(self._conn()) as conn, conn:
             row = conn.execute(

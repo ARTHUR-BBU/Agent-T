@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -52,6 +54,12 @@ logger = logging.getLogger(__name__)
 # 上传硬限制（外部审计 P1：无限制的大文件可耗尽内存/模型费用）
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
 ALLOWED_SUFFIXES = {".txt", ".md", ".text", ".pdf", ".docx", ".doc"}
+# B7-6 附录 B：粘贴文本上限（后端独立校验；超限不截短续审——合同尾部
+# 常含免责/争议条款，静默砍尾=丢条款）
+_MAX_PASTED_CHARS = 200_000
+# B7-6 对话工作台：单合同追问轮次上限（codex 十二轮：50 轮上限在调模型
+# 之前检查——超限零费用、无半截记录）
+_MAX_ASK_TURNS = 50
 
 # 后台审查并发上限（小智娘门禁 P2-1：无界线程会被脚本刷爆内存与模型费用；
 # 槽位占满直接 429，让用户稍后再试而不是排队堆积）
@@ -248,13 +256,24 @@ def _start_review(
     return rid
 
 
+@router.get("/reviews")
+def list_reviews(limit: int = 50):
+    """历史审查摘要列表（B7-6 历史侧栏；codex 十二轮 P2-4 口径）：
+
+    本部署共享档案（沿用整站认证同一防线）；TTL 过滤与单条读取同规则；
+    只回摘要字段；服务端限条（≤50）。"""
+    limit = max(1, min(limit, 50))
+    return {"reviews": store.list_reviews(limit=limit)}
+
+
 @router.post(
     "/upload",
     response_model=UploadResponse,
     dependencies=[Depends(rate_limit.upload_rate_limit)],
 )
 async def upload(
-    file: UploadFile = File(...),
+    file: UploadFile = File(None),
+    pasted_text: str = Form(""),
     category: str = Form("procurement"),
     stance: str = Form("neutral"),
     force: bool = Form(False),
@@ -268,21 +287,47 @@ async def upload(
     if not stance_service.is_allowed(category, stance):
         raise HTTPException(status_code=422, detail=f"该合同类型不支持立场：{stance}")
 
+    # ---- B7-6 附录 B：粘贴文本模式（codex 十二轮 P1-3/十三轮批示）----
+    # 互斥：文件与粘贴文本二选一；超限后端独立校验（不截短续审——
+    # 合同尾部常含免责/争议条款，静默砍尾=丢条款）
+    has_file = file is not None and bool((file.filename or "").strip())
+    has_text = bool(pasted_text.strip())
+    if has_file and has_text:
+        raise HTTPException(status_code=422, detail="文件与粘贴文本只能二选一")
+    if not has_file and not has_text:
+        raise HTTPException(status_code=400, detail="请上传文件或粘贴合同文本")
+    pasted_body: str | None = None
+    if not has_file:
+        pasted_body = pasted_text.strip()
+        if not pasted_body:
+            raise HTTPException(status_code=400, detail="粘贴内容为空")
+        if len(pasted_body) > _MAX_PASTED_CHARS:
+            raise HTTPException(
+                status_code=413,
+                detail=f"超出 {_MAX_PASTED_CHARS} 字符上限，请删减后提交",
+            )
+
     # 流式限额（外部审计批1-②）：分块读取，累计超限立即拒收——
     # 旧实现 await file.read() 先把整个文件读进内存才判长度，「10MB 以上
     # 不给审」做到了，「10MB 以上不进内存」没做到
-    filename = file.filename or "contract.txt"
-    # 扩展名检查前移（外部审计二轮 PR-C）：零成本的拒绝不该等 body 读完
-    if Path(filename).suffix.lower() not in ALLOWED_SUFFIXES:
-        raise HTTPException(
-            status_code=400,
-            detail="不支持的文件类型（支持 .txt / .md / .pdf / .docx / .doc）",
-        )
-    raw, over_limit = await _read_limited(file)
-    if over_limit:
-        raise HTTPException(status_code=413, detail="文件超过 10MB 上限，请压缩后上传")
-    if not raw:
-        raise HTTPException(status_code=400, detail="空文件")
+    if has_file:
+        filename = file.filename or "contract.txt"
+        # 扩展名检查前移（外部审计二轮 PR-C）：零成本的拒绝不该等 body 读完
+        if Path(filename).suffix.lower() not in ALLOWED_SUFFIXES:
+            raise HTTPException(
+                status_code=400,
+                detail="不支持的文件类型（支持 .txt / .md / .pdf / .docx / .doc）",
+            )
+        raw, over_limit = await _read_limited(file)
+        if over_limit:
+            raise HTTPException(status_code=413, detail="文件超过 10MB 上限，请压缩后上传")
+        if not raw:
+            raise HTTPException(status_code=400, detail="空文件")
+    else:
+        # 粘贴模式（附录 B）：文件名占位与文件模式完全同权（无二等标记）
+        from datetime import datetime as _dt
+        filename = f"粘贴文本_{_dt.now():%Y年%m月%d日}.txt"
+        raw = pasted_body.encode("utf-8") if pasted_body else b""
 
     # 单次审查 LLM 预算（阶段 0.5）：每个 upload 请求一个 Budget 对象，
     # 按引用贯穿预审与审查线程，随 GC 清理；force 重传天然新预算。
@@ -303,7 +348,11 @@ async def upload(
     # 影响）；worker 内的 node_parse 本就受 review 槽位（4）约束。
     precheck_record: dict | None = None
     contract_text: str | None = None
-    if not _parse_slots.acquire(blocking=False):
+    if pasted_body is not None:
+        # 粘贴模式免解析（附录 B §3）：纯文本已是解码文本，不占解析槽；
+        # 预审分诊/品类建议照常消费 contract_text
+        contract_text = pasted_body
+    elif not _parse_slots.acquire(blocking=False):
         # 降级必须留痕（肉饼门禁 P2-1，对齐 precheck busy 先例）：闸门满时
         # 跳过预审是合法降级，但静默丢弃会失去品类存疑/立场知情提示且零痕迹
         logger.warning("Parse slots exhausted, skipping precheck (category=%s)", category)
@@ -525,6 +574,8 @@ def get_review(review_id: str):
         verify=_pack_verify(row.get("verify"), row=row),
         # B7-5a：统一「AI 发现」清单（观察+疑点合并视图；纯读派生，不写回）
         ai_findings=ai_findings_service.review_findings(row),
+        # B7-6：共享对话流（持久化随单；无对话为 None）
+        ask_thread=row.get("ask_thread"),
         export_scope_note=row.get("export_scope_note")
         or (
             "报告只含本次读到并展示的内容；未读部分不写入结论"
@@ -687,7 +738,63 @@ def ask(body: AskRequest):
         raise HTTPException(status_code=409,
                             detail="该 AI 发现已争议撤回，暂不能追问（可恢复确认后再操作）")
 
-    # 宪法 P0-D1/D5：Ask 也进 LLM 调用账本（不能成为观测盲区）
+    # ---- B7-6 对话工作台：turn 生命周期（codex 十二/十三轮规则）----
+    # 幂等键=客户端 request_id；服务端唯一键 (review_id, request_id)；
+    # 额度检查+turn 预留锁内完成；等模型期间释放锁；归档按 turn（谁的归谁）
+    request_id = (body.request_id or "").strip() or uuid.uuid4().hex
+    with verify_service.lock_for(body.review_id):
+        fresh = store.get(body.review_id) or row
+        thread = fresh.get("ask_thread") or {"turns": []}
+        if not isinstance(thread.get("turns"), list):
+            thread = {"turns": []}
+        existing = next(
+            (t for t in thread["turns"]
+             if isinstance(t, dict) and t.get("request_id") == request_id), None)
+        turn_no: int
+        if existing is not None and existing.get("state") == "processing":
+            # 同 request_id 再到且在途：返回状态，不再调用模型
+            return AskResponse(
+                ok=True, item_id=existing.get("item_id") or body.item_id,
+                item_name=existing.get("item_name") or item.get("name", ""),
+                deduped=True, turn_no=existing.get("turn_no"))
+        if existing is not None and existing.get("state") == "success":
+            # 已成功：直接返回存档答案（首次响应丢失重发不二次调用/不二次计费）
+            return AskResponse(
+                ok=True, item_id=existing.get("item_id") or body.item_id,
+                item_name=existing.get("item_name") or item.get("name", ""),
+                answer=existing.get("answer"),
+                raw_text=existing.get("raw_text"),
+                error=existing.get("error"),
+                quote_verified=existing.get("quote_verified"),
+                deduped=True, turn_no=existing.get("turn_no"))
+        if existing is not None:
+            # 失败轮重试：原 turn 复活流转（processing→…→success），不新开
+            existing["state"] = "processing"
+            existing["created_at"] = time.time()
+            store.update(body.review_id, ask_thread=thread)
+            turn_no = int(existing.get("turn_no") or 0)
+        else:
+            # 新问题：50 轮上限在调模型之前检查（超限零费用、无半截记录）
+            turns = thread["turns"]
+            if len(turns) >= _MAX_ASK_TURNS:
+                return AskResponse(
+                    ok=False, item_id=item.get("id", body.item_id),
+                    item_name=item.get("name", ""),
+                    error=f"对话已达 {_MAX_ASK_TURNS} 轮上限，本次审查的追问到此为止")
+            turn_no = (turns[-1].get("turn_no") or 0) + 1 if turns else 1
+            turns.append({
+                "turn_no": turn_no,
+                "request_id": request_id,
+                "item_id": item.get("id") or body.item_id,
+                "item_name": item.get("name") or "",
+                "state": "processing",
+                "question": (body.question or "")[:llm_ask.MAX_QUESTION_CHARS],
+                "created_at": time.time(),
+            })
+            store.update(body.review_id, ask_thread=thread)
+
+    # ---- 模型调用（锁外；codex 十三轮：等模型期间释放锁）----
+    # 宪法 P0-D1/D5：Ask 也进 LLM 账本（不能成为观测盲区）
     # B2-3 §2.1：ask 是独立入口——每次追问生成一张自己的证（关联 review 既有值）
     with llm_call_log.record_node(
         "ask", body.review_id,
@@ -710,9 +817,11 @@ def ask(body: AskRequest):
             category=row.get("category") or "procurement",
             stance=row.get("stance") or "neutral",
         )
+    ok_flag = bool(result.get("ok"))
+    _archive_ask_turn(body.review_id, request_id, turn_no, result, ok_flag)
     _record_ask_evidence(review_id=body.review_id, row=row, item=item, body=body, result=result)
     return AskResponse(
-        ok=bool(result.get("ok")),
+        ok=ok_flag,
         item_id=item.get("id", body.item_id),
         item_name=item.get("name", ""),
         answer=result.get("answer"),
@@ -720,7 +829,37 @@ def ask(body: AskRequest):
         error=result.get("error"),
         quote_verified=result.get("quote_verified"),
         evidence=result.get("evidence"),
+        turn_no=turn_no,
     )
+
+
+def _archive_ask_turn(review_id: str, request_id: str, turn_no: int,
+                      result: dict, ok_flag: bool) -> None:
+    """按 turn 归档（codex 十二/十三轮：谁的答案归谁的 turn——页面判废
+    只管显示，持久层按 request_id 落档，绝不串写；写入失败只留日志，
+    已成功且已付费的回答不因可选路径报错）。"""
+    try:
+        with verify_service.lock_for(review_id):
+            fresh = store.get(review_id)
+            if not fresh:
+                return
+            thread = fresh.get("ask_thread") or {"turns": []}
+            turn = next((t for t in thread.get("turns") or []
+                         if isinstance(t, dict) and t.get("request_id") == request_id
+                         and t.get("turn_no") == turn_no), None)
+            if turn is None:
+                return
+            turn["state"] = "success" if ok_flag else "failed"
+            turn["answer"] = result.get("answer")
+            # 单条超长截断（计划 §三-补2：长度上限 UI 明示）
+            turn["raw_text"] = (result.get("raw_text") or "")[:8000]
+            turn["error"] = result.get("error")
+            turn["quote_verified"] = result.get("quote_verified")
+            turn["finished_at"] = time.time()
+            store.update(review_id, ask_thread=thread)
+    except Exception:  # noqa: BLE001
+        logger.exception("ask turn archive failed review_id=%s turn=%s",
+                         review_id, turn_no)
 
 
 # 领域子路由聚合（URL 不变；本文件 router 即总 router）

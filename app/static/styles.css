@@ -1362,3 +1362,142 @@ mark.kw,
   border-color: transparent;
   font-weight: 600;
 }
+
+/* ==================== B7-6 整壳（阳仔线框；tokens v0.2） ==================== */
+:root {
+  --shell-topbar-h: 56px;
+  --shell-sidebar-w: 280px;
+  --drawer-w: min(320px, 86vw);
+  --dur-move: 150ms;
+  --color-selected-bg: #F0F7FF;
+  --type-side: 400 14px/1.45 "PingFang SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --radius-pill: 999px;
+}
+
+/* 顶栏（56px 通栏；<1024 显示汉堡） */
+#shell-top {
+  height: var(--shell-topbar-h);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-divider);
+}
+.shell-logo { font: var(--type-side); font-weight: 600; }
+.shell-menu {
+  display: none;
+  border: none; background: none;
+  font-size: 20px; line-height: 1;
+  min-width: 44px; min-height: 44px;
+  cursor: pointer; color: var(--color-text-primary);
+}
+
+/* 壳：桌面双栏 grid；两根滚动条独立 */
+#shell {
+  display: grid;
+  grid-template-columns: var(--shell-sidebar-w) minmax(0, 1fr);
+  height: calc(100vh - var(--shell-topbar-h));
+}
+#shell-nav {
+  overflow-y: auto;
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-divider);
+  padding: var(--space-2) var(--space-1);
+}
+#shell-main { overflow-y: auto; }
+.ws-inner { max-width: 1280px; margin: 0 auto; padding: var(--space-2) var(--space-3) var(--space-4); }
+
+/* 左栏内容 */
+.shell-new {
+  width: 100%;
+  min-height: 44px;
+  border-radius: var(--radius-pill);
+  margin-bottom: var(--space-2);
+  cursor: pointer;
+}
+.shell-sect {
+  font: var(--type-caption);
+  color: var(--color-caption-muted);
+  margin: var(--space-2) var(--space-1) var(--space-1);
+}
+.shell-history, .shell-context { list-style: none; margin: 0; padding: 0; }
+.shell-item {
+  padding: var(--space-1) var(--space-1);
+  border-radius: var(--radius-card, 12px);
+  cursor: pointer;
+  font: var(--type-side);
+}
+.shell-item:hover { background: var(--color-aside-bg); }
+.shell-item.is-current { background: var(--color-selected-bg); }
+.shell-item-main { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shell-item-sub {
+  font: var(--type-caption);
+  color: var(--color-text-secondary);
+  display: flex; align-items: center; gap: 6px;
+}
+.shell-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.shell-dot.st-done { background: var(--color-text-tertiary, #8A8AA0); }
+.shell-dot.st-running { background: var(--color-accent, #0A84FF); }
+.shell-dot.st-error { background: var(--color-danger, #D70015); }
+
+/* <1024：侧栏 off-canvas 抽屉 */
+@media (max-width: 1023.98px) {
+  .shell-menu { display: inline-block; }
+  #shell { grid-template-columns: minmax(0, 1fr); }
+  #shell-nav {
+    position: fixed;
+    top: var(--shell-topbar-h);
+    left: 0; bottom: 0;
+    width: var(--drawer-w);
+    z-index: 60;
+    transform: translateX(-100%);
+    transition: transform var(--dur-move) ease;
+  }
+  #shell-nav.is-open { transform: translateX(0); }
+  #drawer-mask {
+    position: fixed;
+    top: var(--shell-topbar-h); left: 0; right: 0; bottom: 0;
+    background: var(--color-backdrop);
+    z-index: 50;
+  }
+}
+
+/* 空态引导 + 入口卡 */
+.ws-guide { margin-bottom: var(--space-2); }
+.ws-guide-title { font: var(--type-title); margin-bottom: var(--space-1); }
+.ws-entry-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.ws-entry {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: var(--space-2);
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-card, 12px);
+  background: var(--color-surface);
+  cursor: pointer;
+  text-align: left;
+  min-height: 44px;
+}
+.ws-entry:hover { background: var(--color-aside-bg); }
+.ws-entry-main { font: var(--type-side); font-weight: 600; }
+.ws-entry-sub { font: var(--type-caption); color: var(--color-text-secondary); }
+
+/* 对话工作台（宿主随 matchMedia 搬迁：桌面 col-side / <1024 col-main） */
+.ask-workbench { margin-top: var(--space-2); }
+.ask-thread { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-2); }
+.ask-msg {
+  border: 1px solid var(--color-divider);
+  border-radius: var(--radius-card, 12px);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-surface);
+}
+.ask-msg-user { background: var(--color-selected-bg); }
+.ask-msg-about { font: var(--type-caption); color: var(--color-text-secondary); margin-bottom: 4px; }
+.ask-msg-q { font: var(--type-side); white-space: pre-wrap; }
+.ask-msg-ans { margin-top: var(--space-1); }
+.ask-msg-ans .answer.hidden { display: none !important; }
+.ask-msg-state { font: var(--type-caption); color: var(--color-text-secondary); }
