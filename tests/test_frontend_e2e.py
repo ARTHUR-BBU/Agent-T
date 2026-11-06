@@ -1729,3 +1729,117 @@ def test_desktop_finding_jump_to_rule_item(desktop_home):
     # 跳到规则条目：右栏详情头换成「转租限制」
     desktop_home.wait_for_timeout(300)
     assert "转租限制" in desktop_home.inner_text("#detail-head")
+
+
+# ---------- B7-5b codex 九轮整改回归（六处） ----------
+
+def test_ask_badge_keeps_source_label(home):
+    """codex 九轮 P2-6：问答页状态行=档位 tag+来源徽章，不是两个重复档位。"""
+    _stub_quality_flow(home, _DESKTOP_MIN_QUALITY)
+    home.click("#item-list .item")
+    home.click("#detail-ask")  # <1024：跳问答页
+    home.wait_for_selector("#screen-ask:not(.hidden)", state="visible")
+    tags = home.query_selector_all("#ask-status-line .tag")
+    assert len(tags) == 1, "状态行只应有一个档位 tag"
+    assert "系统核查" in home.inner_text("#ask-status-line"), "来源徽章不得丢失"
+
+
+def test_desktop_dialog_has_close_button_and_answer_above_input(desktop_home):
+    """codex 九轮 P2-4/P2-5：可见关闭按钮；答案四段式在输入框上方。"""
+    import json as _json
+
+    _stub_quality_flow(desktop_home, _DESKTOP_MIN_QUALITY, ask_available=True)
+    desktop_home.route("**/api/ask", lambda route: route.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"ok": True, "item_id": "sublet",
+                          "answer": {"问题是啥": "答案标记ANS2"}},
+                         ensure_ascii=False)))
+    desktop_home.click("#item-list .item")
+    desktop_home.click("#detail-ask")
+    assert desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
+    # P2-4：关闭按钮存在且走同一清理
+    assert desktop_home.is_visible("#ask-dialog-close")
+    desktop_home.click("#ask-dialog-close")
+    assert not desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
+    # P2-5：重开发问，答案 y 坐标应小于输入框（在输入框上方）
+    desktop_home.click("#detail-ask")
+    desktop_home.fill("#ask-input", "问题")
+    desktop_home.click("#btn-ask")
+    desktop_home.wait_for_selector("#ask-answer:not(.hidden)", timeout=8000)
+    ans_y = desktop_home.eval_on_selector(
+        "#ask-answer", "el => el.getBoundingClientRect().top")
+    input_y = desktop_home.eval_on_selector(
+        "#ask-input", "el => el.getBoundingClientRect().top")
+    assert ans_y < input_y, "桌面弹窗答案应在输入框上方"
+    assert "答案标记ANS2" in desktop_home.inner_text("#ask-answer")
+
+
+def test_widen_from_ask_page_opens_dialog(home):
+    """codex 九轮 P1-1：平板问答页（900px）拉宽到桌面——问答页收回、
+    结果页+右栏详情+弹窗接管；不出现「内容藏进未打开弹窗」的空问答页。"""
+    _stub_quality_flow(home, _DESKTOP_MIN_QUALITY, ask_available=True)
+    home.click("#item-list .item")
+    home.click("#detail-ask")  # 900px：跳问答页
+    assert home.eval_on_selector(
+        "#screen-ask", "el => !el.classList.contains('hidden')")
+    home.set_viewport_size({"width": 1280, "height": 900})
+    home.wait_for_timeout(400)
+    assert home.eval_on_selector(
+        "#screen-ask", "el => el.classList.contains('hidden')"), \
+        "桌面无独立问答页：应转回结果页"
+    assert home.eval_on_selector("#ask-dialog", "el => el.open"), \
+        "当前条目应改由弹窗接管"
+    assert home.is_visible("#item-detail")
+
+
+def test_recheck_entry_refreshes_on_breakpoint_change(home):
+    """codex 九轮 P2-2：1023↔1024 双向切换，再核入口随宽度刷新。"""
+    findings = [
+        _finding(title="没把握的发现", verification="unverified",
+                 finding_key="obs:completeness:u", question_id="vq02"),
+    ]
+    _stub_desktop_findings_flow(home, findings)  # 900px 平板带
+    assert home.query_selector_all("#ai-findings-panel .verify-btn-recheck")
+    home.set_viewport_size({"width": 1280, "height": 900})
+    home.wait_for_timeout(400)
+    assert not home.query_selector_all("#ai-findings-panel .verify-btn-recheck"), \
+        "拉宽后 ↻ 图标应被条件化文字链接替换"
+    assert "再核一次（耗 1 次余量）" in home.inner_text("#ai-findings-panel")
+    home.set_viewport_size({"width": 900, "height": 900})
+    home.wait_for_timeout(400)
+    assert home.query_selector_all("#ai-findings-panel .verify-btn-recheck"), \
+        "缩回平板带 ↻ 图标应恢复"
+
+
+def test_rev_excerpt_jump_flashes_excerpt_keeps_clause(home):
+    """codex 九轮 P2-3：牵连「看原文」=flash 对应摘录；当前条目的
+    「所在条款」身份提示不被改写。"""
+    import json as _json
+
+    _stub_quality_flow(home, _DESKTOP_MIN_QUALITY)
+    home.route("**/api/review/e2eq00001/items/*/revision/state",
+               lambda route: route.fulfill(
+                   status=200, content_type="application/json",
+                   body=_json.dumps({
+                       # 摘录卡有「未选定前置闸」：必须带选定且与 impact.bound
+                       # 匹配，ok 分支才渲染摘录
+                       "selected": {"draft_id": "d1", "stance": "平衡"},
+                       "impact": {"state": "ok",
+                                  "bound": {"draft_id": "d1", "stance": "平衡"},
+                                  "excerpts": [{"index": 0, "keyword": ["转租"],
+                                                "position": 0, "clause_id": "c01",
+                                                "excerpt": "第一条 租金与转租相关约定全文摘录。"}],
+                                  "findings": [{"index": 0, "note": "说明一"}],
+                                  "hidden_findings": 0, "hidden_indexes": [],
+                                  "notice": ""}},
+                       ensure_ascii=False)))
+    home.click("#item-list .item")  # sublet：c04 → 「所在条款：第四条 房屋使用」
+    home.wait_for_selector("#rev-cards:not(.hidden)", state="visible")
+    clause_before = home.inner_text("#detail-clause")
+    home.click("#rev-cards [data-rev-jump]")
+    home.wait_for_timeout(200)
+    assert home.eval_on_selector(
+        "[data-rev-excerpt]", "el => el.classList.contains('is-flash')"), \
+        "应 flash 对应摘录文本"
+    clause_after = home.inner_text("#detail-clause")
+    assert clause_after == clause_before, "当前条目的条款身份提示不得被改写"

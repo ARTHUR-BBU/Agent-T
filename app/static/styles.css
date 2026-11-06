@@ -115,7 +115,16 @@ body {
 }
 .ask-dialog::backdrop { background: var(--color-backdrop, rgba(0, 0, 0, 0.4)); }
 .ask-dialog .card { margin-bottom: var(--space-2, 16px); }
-.ask-dialog-head { margin-bottom: var(--space-2, 16px); }
+.ask-dialog-head {
+  margin-bottom: var(--space-2, 16px);
+  position: relative;
+}
+/* codex 九轮 P2-4：可见关闭通道（close 事件统一清理） */
+.ask-dialog-close { position: absolute; right: 0; top: 0; }
+/* codex 九轮 P2-5：桌面弹窗答案也在输入框上方（镜像移动端 480px 的
+   order 排序——现有排序只在手机断点生效，弹窗内需单独声明） */
+.ask-dialog .ask-interact { display: flex; flex-direction: column; }
+.ask-dialog .ask-interact .answer { order: -1; }
 
 .screen.hidden,
 .hidden { display: none !important; }

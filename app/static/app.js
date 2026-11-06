@@ -1325,13 +1325,14 @@
     if (askIron) askIron.textContent = STANCE_IRON_LAW;
     const statusLine = $("ask-status-line");
     statusLine.innerHTML = "";
-    const tag = document.createElement("span");
-    tag.className = `tag ${statusClass(item.status)}`;
-    tag.textContent = statusLabel(item.status);
-    statusLine.appendChild(tag);
-    if (item.status === "需关注") {
-      const badge = document.createElement("span");
     statusLine.appendChild(_statusTagEl(item));
+    if (item.status === "需关注") {
+      // 来源徽章（codex 九轮 P2-6：来源标识与档位 tag 是两回事，缺了会把
+      // 来源信息丢成两个重复档位）
+      const badge = document.createElement("span");
+      badge.className = item._blind ? "source-badge blind" : "source-badge rule";
+      badge.textContent = item._blind ? "补盲" : "系统核查";
+      statusLine.appendChild(badge);
     }
 
     // 段1 说明卡：note 全文 + 条款锚点（首句截断是清单的事，这里给全文）
@@ -1693,7 +1694,7 @@
     const route = routeFromHash();
     if (route.itemId && state.reviewId === route.rid) {
       const item = findItemByKey(route.itemId);
-      if (item) openAskDetail(item);
+      if (item) openItemAsk(item);
     }
   }
 
@@ -1716,7 +1717,7 @@
     if (route.itemId) {
       const item = findItemByKey(route.itemId);
       if (item) {
-        openAskDetail(item);
+        openItemAsk(item);
       } else {
         show("results"); // 找不到条目（旧记录/数据不齐）：回结果页不装详情
       }
@@ -2083,8 +2084,9 @@
           if (e.excerpt_truncated) {
             parts.push('<p class="rev-caption">（本条款过长已按段摘录，非完整条款原文）</p>');
           }
-          parts.push('<p class="rev-text">摘录：' + escapeHtml(e.excerpt || "") + "</p>");
-          // B7-5b C3：牵连摘录「看原文」（条款坐标随行时才出；复用 flash 定位）
+          // B7-5b C3：牵连摘录「看原文」（codex 九轮 P2-3：定位对象=摘录
+          // 本身——flash 摘录文本，不碰当前条目的「所在条款」身份提示）
+          parts.push('<p class="rev-text" data-rev-excerpt>摘录：' + escapeHtml(e.excerpt || "") + "</p>");
           if (e.clause_id) {
             parts.push('<button type="button" class="link evidence-jump" data-rev-jump="' + escapeHtml(String(e.clause_id)) + '">看原文</button>');
           }
@@ -2184,10 +2186,18 @@
       if (box.dataset.revBound) return;
       box.dataset.revBound = "1";
       box.addEventListener("click", (ev) => {
-        // B7-5b C3：牵连摘录「看原文」——跳合同原文对应条款并 flash
+        // B7-5b C3：牵连摘录「看原文」（codex 九轮 P2-3）——定位=flash
+        // 对应摘录文本；绝不调用 jumpToEvidence（它会把当前条目的
+        // 「所在条款」旁注改写成牵连条款）
         const jumpBtn = ev.target.closest("[data-rev-jump]");
         if (jumpBtn) {
-          jumpToEvidence(jumpBtn, { clause_id: jumpBtn.dataset.revJump || null });
+          const finding = jumpBtn.closest(".rev-finding");
+          const ex = finding ? finding.querySelector("[data-rev-excerpt]") : null;
+          if (ex) {
+            ex.scrollIntoView({ behavior: "smooth", block: "center" });
+            ex.classList.add("is-flash");
+            setTimeout(() => ex.classList.remove("is-flash"), 1600);
+          }
           return;
         }
         const btn = ev.target.closest("[data-action]");
@@ -2364,19 +2374,49 @@
   }
 
   // 三通道（关闭按钮/Esc/点遮罩）统一汇入 close 事件做清理
+  const askDialogClose = $("ask-dialog-close");
+  if (askDialogClose) {
+    askDialogClose.addEventListener("click", () => askDialog.close());
+  }
   askDialog.addEventListener("close", cleanupAskSession);
   askDialog.addEventListener("click", (e) => {
     if (e.target === askDialog) askDialog.close(); // 点遮罩
   });
 
+  /** B7-5b（codex 九轮 P1-1）：路由级问清楚入口统一分流——桌面=弹窗
+   * （背后结果页+右栏详情），移动/平板带=hash 问答页。直达链接、
+   * hashchange、断点穿越三处都走本入口，不再各自为政。 */
+  function openItemAsk(item) {
+    if (mqDesktop.matches) {
+      show("results");
+      selectItem(item);
+      openAskDialog(item);
+    } else {
+      openAskDetail(item);
+    }
+  }
+
   mqDesktop.addEventListener("change", () => {
     // codex 七轮 P1-2：dialog 开着跨断点——先清理关闭再搬节点，禁止带开搬迁
     if (askDialog.open) askDialog.close();
     applyDesktopLayout();
+    // codex 九轮 P1-1：问答页跨断点统一处理——桌面没有独立问答页（节点
+    // 已搬进 dialog），若正显示 #screen-ask，转回结果页并按当前条目弹 dialog
+    const askScreen = $("screen-ask");
+    if (mqDesktop.matches && askScreen
+        && !askScreen.classList.contains("hidden") && state.askItem) {
+      const route = routeFromHash();
+      const item = (route.itemId ? findItemByKey(route.itemId) : null)
+        || state.askItem;
+      show("results");
+      selectItem(item);
+      openAskDialog(item);
+    }
+    // codex 九轮 P2-2：跨断点刷新 AI 发现面板（↻ 入口随宽度双向切换）
+    if (state.review) renderAiFindings(state.review);
   });
   applyDesktopLayout(); // 首次进入即按当前断点归位
 
-  loadStanceMeta();
   loadStanceMeta();
   resumeFromHash();
 })();
