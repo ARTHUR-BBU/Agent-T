@@ -83,12 +83,13 @@ def test_ui_word_table_blind_not_pending_verify_label():
 
 
 def test_ui_verify_panel_keeps_pending_label():
-    """需你确认区仍用「待核实」+ 旁注铁律。"""
+    """B7-5a 统一「AI 发现」面板：独立疑点用「需核实」+ 旁注铁律
+    （原「需你确认」面板已并入；九哥词表：补盲区不得复用「待核实/需核实」）。"""
     root = Path(__file__).resolve().parents[1]
     js = (root / "app/static/app.js").read_text(encoding="utf-8")
-    assert 'badge.textContent = "待核实"' in js
+    assert '? "需核实"' in js
     assert "主动核查只提疑点，不改变清单规则档" in js
-    assert "需你确认" in js
+    assert '"AI 发现"' in js
 
 
 # ---------- 法务五条分流 ----------

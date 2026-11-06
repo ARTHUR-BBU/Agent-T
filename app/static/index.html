@@ -119,7 +119,7 @@
           <!-- M4 审查报告导出：与页面同源的 store 数据，无二次 LLM 调用 -->
           <p class="reading-scope muted hidden" id="reading-scope" aria-label="阅读范围"></p>
           <div class="meta-actions hidden" id="meta-actions">
-            <a class="rewrite-copy report-link" id="btn-export-report" download title="含规则核查、参考评分与补盲；不含 AI 观察及追问">导出报告（Word）</a>
+            <a class="rewrite-copy report-link" id="btn-export-report" download title="含规则核查、AI 发现与确认记录、参考评分与补盲">导出报告（Word）</a>
             <p class="export-scope-note muted" id="export-scope-note">报告只含本次读到并展示的内容；未读部分不写入结论</p>
           </div>
         </div>
@@ -151,11 +151,9 @@
             <button type="button" class="link ask-link" id="detail-ask">问清楚一点 →</button>
           </div>
         </div>
-        <!-- 阶段 2.1 质量层：清单之后的虚线容器（参谋不是裁判——不计分、
-             不改档位；不可用/旧记录整卡静默隐藏）。renderResults 填充 -->
-        <section id="quality-panel" class="quality-card hidden" aria-label="AI 观察"></section>
-        <!-- A6 有界主动核验：需你确认（九哥/阳仔规格；确认后再核；不改规则档） -->
-        <section id="verify-panel" class="verify-card hidden" aria-label="需你确认"></section>
+        <!-- B7-5a 统一「AI 发现」面板：观察+核验疑点合并流水线（发现→取证核对
+             →人拍板；确认的事实类发现物化进清单、入报告）。不可用整卡静默隐藏 -->
+        <section id="ai-findings-panel" class="quality-card hidden" aria-label="AI 发现"></section>
         <!-- 阶段 3 异议层：规则异议候选（铁律 3——永不改档位；采纳只生成
              规则改进提案，走人工评审；无可用异议整卡静默隐藏）。renderResults 填充 -->
         <section id="objections-panel" class="quality-card hidden" aria-label="规则异议"></section>

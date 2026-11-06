@@ -289,7 +289,8 @@ def test_design_b_pipeline_verify_never_overwrites_rule_status():
 
 
 def test_ui_copy_locked_strings_present():
-    """前端锁定文案：需你确认 / 待核实 / 流程 / 按钮 / 旁注 / 空态。
+    """前端锁定文案（B7-5a 统一「AI 发现」面板）：徽章 / 状态词 / 流程 /
+    按钮 / 旁注。
 
     九哥词表：补盲区不得复用「待核实」（见 test_credibility_a6_triage）。
     """
@@ -297,16 +298,19 @@ def test_ui_copy_locked_strings_present():
     js = (root / "app/static/app.js").read_text(encoding="utf-8")
     css = (root / "app/static/styles.css").read_text(encoding="utf-8")
     html = (root / "app/static/index.html").read_text(encoding="utf-8")
-    assert "需你确认" in js
-    assert 'textContent = "待核实"' in js
+    assert '"AI 发现"' in js
+    # 统一状态词（FINDING_STATUS_LABEL）
+    assert "待确认" in js and "观点·无核对" in js
+    assert "已争议撤回" in js
     assert 'blindBadge.textContent = "补盲"' in js
     assert "候选，需人工确认" in js
     assert 'blindBadge.textContent = "待核实"' not in js
     assert "疑点" in js and "取证" in js and "核对" in js and "问你" in js
-    assert "补充说明" in js and "确认无误" in js and "再审本条" in js
+    # 拍板动作：确认 / 有异议（反悔撤回）/ 恢复确认；再审降级为图标级
+    assert "确认无误" in js and "有异议" in js and "恢复确认" in js
+    assert "再核一次" in js
     assert "主动核查只提疑点，不改变清单规则档" in js
-    assert "暂无需要确认的事项" in js
     assert "系统已改判" not in js
     assert "#F5F5F7" in css
-    assert "verify-badge" in css
-    assert "aria-label=\"需你确认\"" in html
+    assert "verify-status" in css
+    assert "aria-label=\"AI 发现\"" in html

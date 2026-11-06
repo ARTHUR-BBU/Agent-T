@@ -31,7 +31,9 @@ from app.api.schemas import (
 )
 from app.api.routes_objection import router as _objection_router
 from app.api.routes_verify import _merge_evidence_index, _pack_verify, router as _verify_router
+from app.api.routes_ai_findings import router as _ai_finding_router
 from app.graph.pipeline import run_review
+from app.services import ai_findings as ai_findings_service
 from app.services import category_suggest as category_suggest_service
 from app.services import llm_ask, precheck as precheck_service, report as report_service
 from app.services import verify as verify_service
@@ -521,10 +523,12 @@ def get_review(review_id: str):
         evidence_registry=EvidenceRegistryInfo(**evidence_registry),
         claim_migration_warnings=[ClaimMigrationWarningInfo(**w) for w in claim_warnings],
         verify=_pack_verify(row.get("verify"), row=row),
+        # B7-5a：统一「AI 发现」清单（观察+疑点合并视图；纯读派生，不写回）
+        ai_findings=ai_findings_service.review_findings(row),
         export_scope_note=row.get("export_scope_note")
         or (
             "报告只含本次读到并展示的内容；未读部分不写入结论"
-            "（含规则核查、参考评分与补盲；不含页面 AI 观察及追问）"
+            "（含规则核查、AI 发现与确认记录、参考评分与补盲）"
         ),
     )
 
@@ -552,6 +556,29 @@ def download_report(review_id: str):
         from app.services import impact as impact_service
         view["revision_section"] = impact_service.revision_report_section(
             store, review_id)
+        # B7-5a：观察类发现（无问题行、无主张编号）的确认/争议记录——
+        # 派生问题类走 verify 决定链自动入节，这里只补观察类缺口
+        obs_findings = ai_findings_service.review_findings(view).get("findings") or []
+        view["ai_finding_records"] = [
+            {"title": f.get("title") or "", "status": f.get("status") or ""}
+            for f in obs_findings
+            if not f.get("question_id") and f.get("status") in ("confirmed", "disputed")
+        ]
+        # B7-5a（codex 三轮 P2-5）：观点类发现正文导出（「AI 观点」小节）
+        _dim_labels = {
+            "completeness": "有没有漏写",
+            "consistency": "有没有自相矛盾",
+            "impact": "对您的影响",
+        }
+        view["ai_finding_opinions"] = [
+            {
+                "title": f.get("title") or "",
+                "comment": f.get("comment") or "",
+                "dimension_label": _dim_labels.get(
+                    f.get("dimension") or "", "观点"),
+            }
+            for f in obs_findings if f.get("fact_type") is False
+        ]
         data = report_service.build_report_docx(view, warnings)
     except ImportError:
         # python-docx 缺失时不裸抛，给出可操作的错误
@@ -655,6 +682,10 @@ def ask(body: AskRequest):
     item = next((i for i in items if i.get("id") == body.item_id), None)
     if not item:
         raise HTTPException(status_code=404, detail="清单项不存在")
+    # B7-5a 反悔闭环：停用的 AI 发现不可追问（与生成/选定/牵连同一资格判据）
+    if item.get("tag_source") == "ai_finding" and item.get("status") != "需关注":
+        raise HTTPException(status_code=409,
+                            detail="该 AI 发现已争议撤回，暂不能追问（可恢复确认后再操作）")
 
     # 宪法 P0-D1/D5：Ask 也进 LLM 调用账本（不能成为观测盲区）
     # B2-3 §2.1：ask 是独立入口——每次追问生成一张自己的证（关联 review 既有值）
@@ -695,3 +726,4 @@ def ask(body: AskRequest):
 # 领域子路由聚合（URL 不变；本文件 router 即总 router）
 router.include_router(_verify_router)
 router.include_router(_objection_router)
+router.include_router(_ai_finding_router)
