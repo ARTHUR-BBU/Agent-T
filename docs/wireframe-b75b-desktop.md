@@ -155,7 +155,12 @@
 - #screen-ask 本体保留（移动端 hash 详情页靠它），其标题区（ask-title/status-line）留在原地；dialog 用自己的 head
 - openAskDetail() 保留给移动端 hash 路由；桌面入口改为 openAskDialog(item)：填 dialog 标题+状态行 → 把 openAskDetail 里段1/段2 的填充代码抽成 fillAskContext(item) 共用 → showModal()
 
-交互流（桌面）：右栏点「问清楚一点 →」→ dialog 弹出（showModal() 自带焦点圈定，Esc/点遮罩=关闭）→ 点 chips 或输入 → 发送 → **答案四段式显示在输入框上方**（复用移动端 480px order:-1 的既有做法，dialog 内同样生效）→ 关闭回右栏，三卡还在。响应进行中关 dialog：沿用既有 askReqSeq 判废，无残留。
+交互流（桌面）：右栏点「问清楚一点 →」→ dialog 弹出（showModal() 自带焦点圈定，Esc/点遮罩=关闭）→ 点 chips 或输入 → 发送 → **答案四段式显示在输入框上方**（复用移动端 480px order:-1 的既有做法，dialog 内同样生效）→ 关闭回右栏，三卡还在。
+
+**初始化与判废补明（codex 七轮 P1×2）**：
+- openAskDialog 共用 openAskDetail 的**完整初始化**（askItem 登记/切条目 seq 递增/立场文案/状态行/段1/段2/段3-4 可用性门禁与禁用态/清空旧答案与 chips），不只搬内容——两种入口只差「show('ask')+hash vs showModal()」
+- `.ask-interact` 现从 `#screen-ask` 内查找，节点搬走后必失效——查找改 document 级（或搬迁感知宿主），两容器行为一致
+- 关闭三通道（按钮/Esc/遮罩）统一清理：`askReqSeq += 1` 作废在途响应 + 发送按钮复位（守卫逻辑本身不碰，只新增使用点）；同条目重开分配新编号；dialog 开着跨 1024 断点：先统一清理关闭再搬节点，禁止带开搬迁
 
 ### 2.3 与三卡的位置关系（职责分家）
 
@@ -184,7 +189,7 @@
 2. **它只在少数时候有价值**：再核的真正场景是「上次核对没把握」——核对结论为「尚未核对 / 摘句位置不唯一 / 原文未找到摘句」。结论已是「摘句对得上」的条目，再核大概率还是对得上，白耗余量
 3. 后端 reverify 能力**保留不删**（API 不动），只是入口收窄
 
-改法（renderAiFindings 的 actions 分支）：
+改法（renderAiFindings 的 actions 分支；**codex 七轮 P2：仅 ≥1024 生效**——本函数各尺寸共用，入口分支须断点感知，<1024 保留现状 ↻ 图标，「移动端不动」红线优先）：
 - confirmed 且「摘句对得上」：只留「有异议（撤回）」，无再核入口
 - confirmed 且核对结论 ∈ {尚未核对, 位置不唯一, 未找到摘句}：核对结论旁加文字链接「再核一次（耗 1 次余量）」→ 既有 submitVerifyRecheck
 - 争议→恢复确认的复活路径不变
