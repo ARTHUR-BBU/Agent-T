@@ -58,8 +58,11 @@ def test_paste_mode_upload_and_validation(env_store):
     r4 = client.post("/api/upload", data={"pasted_text": "   ", "category": "procurement"})
     assert r4.status_code == 400
     # 超限：200,001 字符 → 413（不截短续审）
-    r5 = client.post("/api/upload", data={
-        "pasted_text": "甲" * 200_001, "category": "procurement"})
+    # 用 multipart（前端 FormData 的真实线格式）：锁版 starlette 1.6 对
+    # urlencoded 单字段有 1MB 解析上限（400 拒解析），过不了到我们的
+    # 413 校验——CI 复现实录：urlencoded=400、multipart=413
+    r5 = client.post("/api/upload", data={"category": "procurement"},
+                     files={"pasted_text": (None, "甲" * 200_001, "text/plain")})
     assert r5.status_code == 413
 
 

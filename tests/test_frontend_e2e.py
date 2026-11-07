@@ -2271,8 +2271,8 @@ def test_old_poll_success_keeps_newer_pending_request_id(home):
     home.click("#btn-ask")
     home.wait_for_selector("#ask-thread .ask-msg-waiting", state="visible",
                            timeout=10000)
-    assert home.eval_on_selector_all(
-        "#ask-thread .ask-msg-waiting", "els=>els.length") == 2
+    # 乙发出即同步换编号（发送前落盘）——拿这个做无竞态断言（CI 慢机上
+    # 甲的轮询可能已先吃掉自己的等待气泡，数气泡会时序翻车）
     pending_now = _json.loads(
         home.evaluate("localStorage.getItem('ask-pending-v1')"))
     assert pending_now["request_id"] == sent[1], "恢复编号应已是乙"
