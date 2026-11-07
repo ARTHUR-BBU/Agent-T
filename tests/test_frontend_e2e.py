@@ -2392,7 +2392,8 @@ def test_remediation_draft_and_adoption_do_not_change_status(request, viewport_f
     assert "由用户调整的通知安排" in home.inner_text("#draft-body")
     assert "经您自行调整" in home.inner_text("#draft-entry-card")
     home.click("#btn-draft-adopt")
-    home.wait_for_function("document.querySelector('#btn-draft-adopt').disabled")
+    home.wait_for_selector("#draft-entry-card .draft-adopted", state="visible")
+    assert home.locator("#btn-draft-adopt").is_disabled()
     assert "未找到" in home.inner_text("#detail-head")
     assert "合同原文件不会被修改" in home.inner_text("#draft-entry-card")
 
