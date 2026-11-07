@@ -219,6 +219,9 @@
           <span class="ask-followups-label">不知道问什么？可以试试：</span>
           <ul id="ask-followups" class="ask-followups"></ul>
         </div>
+        <!-- B7-6（codex 十五轮 P1-3）：断线/刷新遗留的未完成提问恢复通道
+             （原 request_id 重试，不重复计费） -->
+        <p id="ask-pending" class="ask-pending hidden"></p>
         <textarea id="ask-input" rows="3" placeholder="例如：违约金风险大吗？"></textarea>
         <button id="btn-ask" class="primary" type="button">发送</button>
         <p id="ask-error" class="error hidden"></p>

@@ -1501,3 +1501,13 @@ mark.kw,
 .ask-msg-ans { margin-top: var(--space-1); }
 .ask-msg-ans .answer.hidden { display: none !important; }
 .ask-msg-state { font: var(--type-caption); color: var(--color-text-secondary); }
+
+/* B7-6（codex 十五轮 P1-3）：未完成提问恢复卡 */
+.ask-pending {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--color-selected-bg, #F0F7FF);
+  font-size: 13px;
+  color: #1f2329;
+}

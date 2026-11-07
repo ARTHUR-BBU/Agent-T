@@ -1963,3 +1963,154 @@ def test_back_and_review_switch_closes_ask_context(desktop_home):
                          ensure_ascii=False))
     desktop_home.wait_for_timeout(400)
     assert "STALE9" not in desktop_home.inner_text("body")
+
+
+# ---- codex 十五轮整改：断点退抽屉 / 提交态重算 / 断线恢复 / 切回同步 ----
+
+def test_drawer_closes_when_viewport_widens(mobile_home):
+    """codex 十五轮 P2-7：抽屉开着拉宽过断点 → 同步退抽屉（否则桌面
+    无汉堡可点、inert 罩死工作区，交互死路）。"""
+    mobile_home.click("#shell-menu")
+    mobile_home.wait_for_selector("#shell-nav.is-open", state="attached")
+    mobile_home.set_viewport_size({"width": 1280, "height": 800})
+    mobile_home.wait_for_function(
+        "!document.getElementById('shell-nav').classList.contains('is-open')")
+    assert not mobile_home.eval_on_selector(
+        "#shell-main", "el => !!el.inert"), "桌面工作区不得残留 inert"
+
+
+def test_submit_reenabled_after_paste_overlimit_switch(home):
+    """codex 十五轮 P2-8：粘贴超限禁用提交后切回文件入口 → 重算可用。"""
+    home.click("#entry-paste")
+    home.wait_for_selector("#paste-wrap", state="visible")
+    home.eval_on_selector(
+        "#paste-text",
+        "el => { el.value = 'x'.repeat(200001);"
+        " el.dispatchEvent(new Event('input', {bubbles: true})); }")
+    assert home.eval_on_selector("#btn-upload", "el => el.disabled")
+    home.click("#entry-file")
+    assert not home.eval_on_selector(
+        "#btn-upload", "el => el.disabled"), "切回文件入口须重新启用提交"
+
+
+def test_failed_ask_survives_reload_with_same_request_id(home):
+    """codex 十五轮 P1-3：断线失败 → request_id 落 localStorage；刷新后
+    恢复卡回填原问题，重发沿用原编号（服务端去重不二次计费）。"""
+    import json as _json
+    sent_request_ids: list[str] = []
+    fail_first = {"v": True}
+
+    def ask_route(route):
+        body = _json.loads(route.request.post_data or "{}")
+        sent_request_ids.append(body.get("request_id") or "")
+        if fail_first["v"]:
+            route.fulfill(status=200, content_type="application/json",
+                          body=_json.dumps({"ok": False, "item_id": "sublet",
+                                            "item_name": "转租限制",
+                                            "error": "连接中断"}, ensure_ascii=False))
+        else:
+            route.fulfill(status=200, content_type="application/json",
+                          body=_json.dumps(
+                              {"ok": True, "item_id": "sublet", "item_name": "转租限制",
+                               "answer": {"问题是啥": "恢复成功ANS"},
+                               "raw_text": None, "error": None}, ensure_ascii=False))
+
+    _stub_ask_flow(home, {})
+    home.unroute("**/api/ask")
+    home.route("**/api/ask", ask_route)
+    home.locator("#item-list .item.attention").first.click()
+    home.click("#detail-ask")
+    home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
+    home.fill("#ask-input", "断线重试的问题")
+    home.click("#btn-ask")
+    home.wait_for_selector("#ask-error:not(.hidden)", state="visible")
+    stored = home.evaluate("localStorage.getItem('ask-pending-v1')")
+    assert stored, "失败后 request_id 必须落 localStorage"
+    orig_id = _json.loads(stored)["request_id"]
+    assert _json.loads(stored)["question"] == "断线重试的问题"
+
+    # 刷新：routes 绑定随 page 存活；localStorage 留存；
+    # 清 hash 回空态（hash 还挂着会让 resumeFromHash 直达结果态）
+    home.reload()
+    home.evaluate("location.hash = ''")
+    home.wait_for_selector("#entry-file", state="visible", timeout=10000)
+    _stub_ask_flow(home, {})
+    home.unroute("**/api/ask")
+    home.route("**/api/ask", ask_route)
+    home.locator("#item-list .item.attention").first.click()
+    home.click("#detail-ask")
+    home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
+    # 恢复卡出现 → 点击回填原问题
+    home.wait_for_selector("#ask-pending:not(.hidden)", state="visible")
+    assert "断线重试的问题" in home.inner_text("#ask-pending")
+    home.click("#ask-pending button")
+    assert home.input_value("#ask-input") == "断线重试的问题"
+    # 重发：同编号；成功后 pending 清空
+    fail_first["v"] = False
+    home.click("#btn-ask")
+    home.wait_for_selector("#ask-thread .ask-msg", state="visible")
+    assert sent_request_ids[-1] == orig_id, "重发必须沿用原 request_id"
+    assert home.evaluate("localStorage.getItem('ask-pending-v1')") is None
+
+
+def test_switch_back_item_syncs_archived_answer(home):
+    """codex 十五轮 P2-4：甲在途回答期间切乙（守卫拒写），切回甲 →
+    按持久化轮次同步共享流，无需整页刷新。"""
+    stub2x = _quality_review_stub(None)
+    stub2x["ask_available"] = True
+    for it in stub2x["items"]:
+        if it["id"] == "early_termination":
+            it["status"] = "需关注"
+    import json as _json
+    held: list = []
+
+    def hold_ask(route):
+        held.append(route)  # 挂起不 fulfill = 可控延迟（在册技巧）
+
+    home.route("**/api/upload", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded",
+                          "status": "uploaded"})))
+    # 动态 stub：真实服务端在归档后 GET 才带 ask_thread——fulfill 答案的
+    # 同时落档进 stub，模拟「迟到响应已归档在服务端」
+    def review_route(r):
+        r.fulfill(status=200, content_type="application/json",
+                  body=_json.dumps(stub2x, ensure_ascii=False))
+    home.route("**/api/review/e2eq00001", review_route)
+    home.route("**/api/review/e2eq00001/items/*/revision/state", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"status": "ok", "item_id": "sublet", "drafts": [],
+                          "selected": None, "impact": None,
+                          "remaining": {"revision": 4, "impact": 3}})))
+    home.route("**/api/ask", hold_ask)
+    home.click("#entry-file")
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    home.locator("#item-list .item").first.click()  # 甲：sublet
+    home.click("#detail-ask")
+    home.fill("#ask-input", "甲的在途问题")
+    home.click("#btn-ask")
+    home.wait_for_timeout(300)
+    # 发送中切乙
+    home.locator("#item-list .item").nth(1).click()
+    home.click("#detail-ask")
+    # 甲的迟到响应归档（页面守卫拒写——此刻不该出现）
+    held.pop().fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"ok": True, "item_id": "sublet", "item_name": "转租限制",
+                          "answer": {"问题是啥": "甲的归档答案SYNC"},
+                          "raw_text": None, "error": None}, ensure_ascii=False))
+    stub2x["ask_thread"] = {"turns": [{
+        "turn_no": 1, "request_id": "sync-1", "item_id": "sublet",
+        "item_name": "转租限制", "state": "success",
+        "question": "甲的在途问题", "created_at": 1.0,
+        "answer": {"问题是啥": "甲的归档答案SYNC"}, "quote_verified": True}]}
+    home.wait_for_timeout(400)
+    assert "甲的归档答案SYNC" not in home.inner_text("#ask-thread")
+    # 切回甲：openItemAsk 触发 syncThreadFromServer（纯读，无需刷新）
+    home.locator("#item-list .item").first.click()
+    home.click("#detail-ask")
+    home.wait_for_selector("#ask-thread .ask-msg", state="visible", timeout=10000)
+    assert "甲的在途问题" in home.inner_text("#ask-thread .ask-msg-q")
+    assert "甲的归档答案SYNC" in home.inner_text("#ask-thread")

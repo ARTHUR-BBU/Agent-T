@@ -7,6 +7,7 @@ turn（谁的归谁）。零付费：llm_ask.ask_about_item 全程 monkeypatch�
 """
 from __future__ import annotations
 
+import io
 import threading
 
 import pytest
@@ -227,3 +228,186 @@ def test_ask_processing_dedupe_and_archive_isolation(env_store, monkeypatch):
     turns = db.get(rid)["ask_thread"]["turns"]
     assert len(turns) == 1 and turns[0]["state"] == "success"
     assert turns[0]["item_id"] == "penalty"
+
+
+# ---- codex 十五轮整改：绑定校验 / 前情上下文 / 重启清扫 / 报告收录 ----
+
+def test_ask_request_id_binding_mismatch_rejected(env_store, monkeypatch):
+    """codex 十五轮 P2-6：同编号换问题/换条目 → 拒绝（不产生归档错配）。"""
+    db = env_store
+    rid = _seed_askable_review(db)
+    calls = {"n": 0}
+
+    def fake_ask(**kwargs):
+        calls["n"] += 1
+        return {"ok": False, "error": "模型超时"}
+
+    monkeypatch.setattr(llm_ask, "ask_about_item", fake_ask)
+    r1 = client.post("/api/ask", json={
+        "review_id": rid, "item_id": "penalty", "question": "原始问题",
+        "request_id": "req-b1"})
+    assert r1.json()["ok"] is False
+    # 同编号不同问题：拒绝，模型零调用，原 turn 不被改写
+    r2 = client.post("/api/ask", json={
+        "review_id": rid, "item_id": "penalty", "question": "换了的问题",
+        "request_id": "req-b1"})
+    assert r2.json()["ok"] is False
+    assert "绑定" in (r2.json()["error"] or "")
+    assert calls["n"] == 1, "绑定不一致必须在调模型之前拒绝"
+    turns = db.get(rid)["ask_thread"]["turns"]
+    assert len(turns) == 1 and turns[0]["question"] == "原始问题"
+    # 同编号同问题：正常复活重试
+    r3 = client.post("/api/ask", json={
+        "review_id": rid, "item_id": "penalty", "question": "原始问题",
+        "request_id": "req-b1"})
+    assert r3.status_code == 200
+    assert calls["n"] == 2
+
+
+def test_ask_history_passed_to_model(env_store, monkeypatch):
+    """codex 十五轮 P1-2（计划 §三-补2）：前 10 轮成功问答作前情进模型。"""
+    db = env_store
+    rid = _seed_askable_review(db)
+    seen: list[dict] = []
+
+    def fake_ask(**kwargs):
+        seen.append({"history": kwargs.get("history")})
+        return _ok_result()
+
+    monkeypatch.setattr(llm_ask, "ask_about_item", fake_ask)
+    client.post("/api/ask", json={
+        "review_id": rid, "item_id": "penalty", "question": "第一问",
+        "request_id": "h-1"})
+    client.post("/api/ask", json={
+        "review_id": rid, "item_id": "penalty", "question": "第二问",
+        "request_id": "h-2"})
+    # 第二问的历史含第一问（条目名+问题+答案摘要）
+    hist = seen[1]["history"]
+    assert hist and len(hist) == 1
+    assert hist[0]["item_name"] == "违约金上限"
+    assert hist[0]["question"] == "第一问"
+    assert hist[0]["answer"]["问题是啥"] == "答案标记ANS3"
+    # 第一问的历史为空（无前情）
+    assert seen[0]["history"] == []
+
+
+def test_clip_history_block_caps():
+    """前情块三上限：10 轮、总长 6000 字符、单字段裁 300。"""
+    from app.services.llm_ask import _clip_history_block
+    assert _clip_history_block(None) == ""
+    assert _clip_history_block([]) == ""
+    # 单字段 300 裁切 + 来源标注
+    block = _clip_history_block([{
+        "item_name": "条目甲", "question": "问" * 400,
+        "answer": {"问题是啥": "答" * 400, "建议怎么改": "改" * 400}}])
+    assert "（关于：条目甲）" in block
+    assert ("问" * 301) not in block
+    assert len(block) <= 6000 + 100  # 标签行留少量余量
+    # 轮数上限：12 轮只留最近 10 轮
+    turns = [{"item_name": f"n{i}", "question": f"q{i}", "answer": {}}
+             for i in range(12)]
+    block2 = _clip_history_block(turns)
+    assert "问：q2\n" in block2 and "问：q11\n" in block2
+    assert "问：q0" not in block2 and "问：q1\n" not in block2
+    # 总预算封顶：超长轮次装不下的丢最旧
+    fat = [{"item_name": f"f{i}", "question": "长" * 300,
+            "answer": {"问题是啥": "答" * 300}} for i in range(10)]
+    block3 = _clip_history_block(fat)
+    assert len(block3) <= 6000 + 100
+
+
+def test_startup_sweep_fails_stale_processing_turns(tmp_path):
+    """codex 十五轮 P2-5：服务重启 → 遗留 processing 轮判失败可重试；
+    review 级 processing 行为不变（回归）。"""
+    p1 = str(tmp_path / "sweep.db")
+    db1 = ReviewStore(db_path=p1)
+    rid = db1.create(filename="c.txt", category="procurement")
+    db1.update(rid, status="done", ask_thread={"turns": [
+        {"turn_no": 1, "request_id": "sw-1", "item_id": "penalty",
+         "item_name": "违约金上限", "state": "processing",
+         "question": "断线时在途的问题", "created_at": 1.0},
+        {"turn_no": 2, "request_id": "sw-2", "item_id": "penalty",
+         "item_name": "违约金上限", "state": "success", "question": "已答完",
+         "created_at": 2.0},
+    ]})
+    rid2 = db1.create(filename="d.txt", category="procurement")
+    db1.update(rid2, status="processing")
+    # 新实例 = 模拟服务重启（构造函数内跑清扫）
+    db2 = ReviewStore(db_path=p1)
+    row1 = db2.get(rid)
+    assert row1 is not None
+    turns = (row1.get("ask_thread") or {}).get("turns") or []
+    assert turns[0]["state"] == "failed"
+    assert "服务中断" in (turns[0]["error"] or "")
+    assert "重试" in (turns[0]["error"] or "")
+    assert turns[0]["finished_at"] > 0
+    assert turns[1]["state"] == "success", "已完成轮不受清扫影响"
+    row2 = db2.get(rid2)
+    assert row2 is not None and row2["status"] == "error", "review 级清扫保持原行为"
+
+
+def _doc_text(data: bytes) -> str:
+    from docx import Document
+    doc = Document(io.BytesIO(data))
+    parts = [p.text for p in doc.paragraphs]
+    for tbl in doc.tables:
+        for row in tbl.rows:
+            for cell in row.cells:
+                parts.append(cell.text)
+    return "\n".join(parts)
+
+
+def test_report_contains_ask_thread_section(env_store):
+    """codex 十五轮 P1-1（计划 §三-补3）：报告收录问清楚对话记录；
+    无对话不渲染（字节契约不破）；范围说明含对话记录。"""
+    from app.services.report import build_report_docx
+    db = env_store
+    rid = _seed_askable_review(db)
+    db.update(rid, ask_thread={"turns": [
+        {"turn_no": 1, "request_id": "rp-1", "item_id": "penalty",
+         "item_name": "违约金上限", "state": "success",
+         "question": "违约金 30% 合理吗？", "created_at": 1.0,
+         "answer": {"原文在哪": "违约金为合同总价款的30%",
+                    "问题是啥": "上限过高放大违约风险",
+                    "建议怎么改": "建议约定不超过实际损失的30%",
+                    "改写稿": "违约金不超过实际损失的30%", "quote_verified": True}},
+        {"turn_no": 2, "request_id": "rp-2", "item_id": "penalty",
+         "item_name": "违约金上限", "state": "failed",
+         "question": "没答上的问题", "created_at": 2.0, "error": "模型超时"},
+    ]})
+    # 直连 build 需按报告入口同形注入（ask_thread_section 由 routes.download_report
+    # 组装——见 test_report_route_injects_ask_thread 的集成验证）
+    _thread = db.get(rid).get("ask_thread") or {}
+    row = {**db.get(rid), "ask_thread_section": _thread.get("turns") or []}
+    text = _doc_text(build_report_docx(row))
+    assert "问清楚对话记录" in text
+    assert "辅助思考过程，非法律意见" in text
+    assert "关于：违约金上限" in text
+    assert "问：违约金 30% 合理吗？" in text
+    assert "上限过高放大违约风险" in text
+    assert "建议改写稿" in text and "违约金不超过实际损失的30%" in text
+    assert "本次未答上" in text and "模型超时" in text
+    # 范围说明（新默认）含对话记录
+    assert "问清楚对话记录" in text.replace("（含", "（含")
+    # 无对话 → 章节不渲染（范围说明默认文案提及不算章节）
+    rid_empty = _mk_review(db, "empty.txt")
+    db.update(rid_empty, status="done", text="t", items=[])
+    text_empty = _doc_text(build_report_docx(db.get(rid_empty)))
+    assert "问清楚对话记录（辅助思考过程，非法律意见）" not in text_empty
+
+
+def test_report_route_injects_ask_thread(env_store):
+    """报告入口注入 ask_thread_section：导出接口的 docx 里能看到对话。"""
+    db = env_store
+    rid = _seed_askable_review(db)
+    db.update(rid, ask_thread={"turns": [
+        {"turn_no": 1, "request_id": "rr-1", "item_id": "penalty",
+         "item_name": "违约金上限", "state": "success",
+         "question": "路由注入的问题", "created_at": 1.0,
+         "answer": {"问题是啥": "路由注入可见", "quote_verified": True}},
+    ]})
+    r = client.get(f"/api/review/{rid}/report")
+    assert r.status_code == 200
+    text = _doc_text(r.content)
+    assert "问清楚对话记录" in text
+    assert "问：路由注入的问题" in text

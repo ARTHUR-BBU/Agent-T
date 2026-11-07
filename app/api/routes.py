@@ -630,6 +630,20 @@ def download_report(review_id: str):
             }
             for f in obs_findings if f.get("fact_type") is False
         ]
+        # B7-6（codex 十五轮 P1-1）：问清楚对话记录入报告——纯读库组装，
+        # 无对话返回空列表 → 章节整体不渲染（旧报告字节契约不变）
+        _thread = row.get("ask_thread") or {}
+        _t_list = _thread.get("turns") if isinstance(_thread, dict) else None
+        view["ask_thread_section"] = [
+            {
+                "item_name": t.get("item_name") or "",
+                "question": t.get("question") or "",
+                "state": t.get("state") or "",
+                "error": t.get("error"),
+                "answer": t.get("answer") if isinstance(t.get("answer"), dict) else None,
+            }
+            for t in (_t_list or []) if isinstance(t, dict)
+        ]
         data = report_service.build_report_docx(view, warnings)
     except ImportError:
         # python-docx 缺失时不裸抛，给出可操作的错误
@@ -742,6 +756,9 @@ def ask(body: AskRequest):
     # 幂等键=客户端 request_id；服务端唯一键 (review_id, request_id)；
     # 额度检查+turn 预留锁内完成；等模型期间释放锁；归档按 turn（谁的归谁）
     request_id = (body.request_id or "").strip() or uuid.uuid4().hex
+    # B7-6（codex 十五轮 P2-6）：编号与（条目,问题）绑定——同编号换问题
+    # 会造成「模型答新问题、档案存旧问题」的归档错配，直接拒绝
+    _q_norm = (body.question or "")[:llm_ask.MAX_QUESTION_CHARS]
     with verify_service.lock_for(body.review_id):
         fresh = store.get(body.review_id) or row
         thread = fresh.get("ask_thread") or {"turns": []}
@@ -750,6 +767,14 @@ def ask(body: AskRequest):
         existing = next(
             (t for t in thread["turns"]
              if isinstance(t, dict) and t.get("request_id") == request_id), None)
+        if existing is not None and (
+            existing.get("item_id") != (item.get("id") or body.item_id)
+            or existing.get("question") != _q_norm
+        ):
+            return AskResponse(
+                ok=False, item_id=item.get("id", body.item_id),
+                item_name=item.get("name", ""),
+                error="该请求编号已绑定其他提问，请修改问题后重新发送")
         turn_no: int
         if existing is not None and existing.get("state") == "processing":
             # 同 request_id 再到且在途：返回状态，不再调用模型
@@ -794,6 +819,27 @@ def ask(body: AskRequest):
             store.update(body.review_id, ask_thread=thread)
 
     # ---- 模型调用（锁外；codex 十三轮：等模型期间释放锁）----
+    # B7-6（codex 十五轮 P1-2，计划 §三-补2）：最近 10 轮成功问答作前情
+    # 附给模型（跨条目追问能看到前情）——纯读库组装，上限在 llm_ask 内裁
+    history_turns: list[dict] = []
+    try:
+        fresh_h = store.get(body.review_id) or row
+        h_thread = fresh_h.get("ask_thread") or {}
+        h_turns = h_thread.get("turns") if isinstance(h_thread, dict) else None
+        if isinstance(h_turns, list):
+            for t in h_turns:
+                if (isinstance(t, dict) and t.get("state") == "success"
+                        and t.get("request_id") != request_id
+                        and isinstance(t.get("answer"), dict)):
+                    history_turns.append({
+                        "item_name": t.get("item_name") or "",
+                        "question": t.get("question") or "",
+                        "answer": t["answer"],
+                    })
+            history_turns = history_turns[-10:]
+    except Exception:  # noqa: BLE001 — 前情是增益项，读库异常不拦主流程
+        logger.exception("读取对话前情失败 review_id=%s", body.review_id)
+        history_turns = []
     # 宪法 P0-D1/D5：Ask 也进 LLM 账本（不能成为观测盲区）
     # B2-3 §2.1：ask 是独立入口——每次追问生成一张自己的证（关联 review 既有值）
     with llm_call_log.record_node(
@@ -816,6 +862,7 @@ def ask(body: AskRequest):
             # A4：立场进追问解释（规则档位不变）
             category=row.get("category") or "procurement",
             stance=row.get("stance") or "neutral",
+            history=history_turns,
         )
     ok_flag = bool(result.get("ok"))
     _archive_ask_turn(body.review_id, request_id, turn_no, result, ok_flag)

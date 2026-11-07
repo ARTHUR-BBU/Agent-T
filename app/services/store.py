@@ -84,20 +84,32 @@ class ReviewStore:
         return self._ttl
 
     def _mark_stale_processing(self) -> None:
+        # B7-6（codex 十五轮 P2-5）：ask 轮次的 processing 也一并清——
+        # 服务重启后遗留「正在回答…」永远等不到模型线程，重试又会撞
+        # 去重空响应；启动时统一判失败，用户可明确重试（同 request_id
+        # 复活流转，不重复入账）
         with self._lock, closing(self._conn()) as conn, conn:
-            rows = conn.execute(
-                "SELECT id, data FROM reviews WHERE data LIKE '%\"status\": \"processing\"%'"
-            ).fetchall()
+            rows = conn.execute("SELECT id, data FROM reviews").fetchall()
             for rid, data in rows:
                 payload = json.loads(data)
-                if payload.get("status") != "processing":
-                    continue
-                payload["status"] = "error"
-                payload["error"] = "服务重启中断，请重新上传"
-                conn.execute(
-                    "UPDATE reviews SET data = ? WHERE id = ?",
-                    (json.dumps(payload, ensure_ascii=False), rid),
-                )
+                changed = False
+                if payload.get("status") == "processing":
+                    payload["status"] = "error"
+                    payload["error"] = "服务重启中断，请重新上传"
+                    changed = True
+                thread = payload.get("ask_thread")
+                if isinstance(thread, dict) and isinstance(thread.get("turns"), list):
+                    for t in thread["turns"]:
+                        if isinstance(t, dict) and t.get("state") == "processing":
+                            t["state"] = "failed"
+                            t["error"] = "服务中断，本次未完成，请重试"
+                            t["finished_at"] = time.time()
+                            changed = True
+                if changed:
+                    conn.execute(
+                        "UPDATE reviews SET data = ? WHERE id = ?",
+                        (json.dumps(payload, ensure_ascii=False), rid),
+                    )
 
     def _run_purge_hooks(self, conn: sqlite3.Connection,
                          expired_ids: list[str]) -> None:

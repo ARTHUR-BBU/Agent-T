@@ -1410,6 +1410,8 @@
         btn.disabled = true;
         input.disabled = true;
       }
+      // codex 十五轮 P1-3：断线/刷新遗留的未完成提问——恢复卡（原编号重试）
+      renderPendingRetry(item);
     }
 
   }
@@ -1448,6 +1450,7 @@
     // 复活流转，不重复入账）；新问题新键。服务端按 (review_id, request_id)
     // 去重——断线重发/同键并发都只一条记录一次调用
     const retry = state.lastAskFail
+      && state.lastAskFail.review_id === snapshot.reviewId
       && state.lastAskFail.item_id === snapshot.itemId
       && state.lastAskFail.question === question;
     const request_id = retry
@@ -1471,13 +1474,16 @@
       if (!res.ok) throw new Error(data.detail || "请求失败");
       if (!data.ok) {
         state.lastAskFail = {
+          review_id: snapshot.reviewId,
           item_id: snapshot.itemId, question, request_id,
         };
+        savePendingAsk(state.lastAskFail);
         err.textContent = data.error || "追问暂未开通";
         err.classList.remove("hidden");
         return;
       }
       state.lastAskFail = null;
+      clearPendingAsk();
       const verified = data.quote_verified !== false
         && !!(data.answer && data.answer.quote_verified !== false
               && data.answer["原文在哪"]
@@ -1490,8 +1496,10 @@
     } catch (e) {
       if (!isAskResponseCurrent(snapshot)) return;
       state.lastAskFail = {
+        review_id: snapshot.reviewId,
         item_id: snapshot.itemId, question, request_id,
       };
+      savePendingAsk(state.lastAskFail);
       err.textContent = e.message || String(e);
       err.classList.remove("hidden");
     } finally {
@@ -1503,6 +1511,70 @@
         btn.disabled = false;
       }
     }
+  }
+
+  /** B7-6（codex 十五轮 P1-3）：未完成提问的持久化与恢复。
+   * request_id 只活在内存变量里，刷新即换号——断线重发会二次调模型。
+   * 失败即落 localStorage（随浏览器留存），成功即清；恢复卡提供明确
+   * 重试入口，原编号原问题重发（服务端按 (review_id, request_id) 去重，
+   * 不重复计费）。 */
+  const PENDING_ASK_KEY = "ask-pending-v1";
+
+  function savePendingAsk(p) {
+    try {
+      localStorage.setItem(PENDING_ASK_KEY, JSON.stringify({
+        review_id: p.review_id, item_id: p.item_id,
+        question: p.question, request_id: p.request_id,
+        saved_at: Date.now(),
+      }));
+    } catch (e) { /* 隐私模式/配额满：降级为仅内存（旧行为） */ }
+  }
+
+  function clearPendingAsk() {
+    try { localStorage.removeItem(PENDING_ASK_KEY); } catch (e) { /* 同上 */ }
+  }
+
+  function loadPendingAsk() {
+    try {
+      const raw = localStorage.getItem(PENDING_ASK_KEY);
+      if (!raw) return null;
+      const p = JSON.parse(raw);
+      if (!p || !p.request_id || !p.question) return null;
+      return p;
+    } catch (e) { return null; }
+  }
+
+  /** 恢复卡：当前条目与遗留提问匹配时显示，点击回填原问题（发送时
+   * 走同键重试路径——lastAskFail 已在启动时从 localStorage 恢复）。 */
+  function renderPendingRetry(item) {
+    const el = $("ask-pending");
+    if (!el) return;
+    const pending = loadPendingAsk();
+    if (!pending || !state.reviewId || !item
+        || pending.review_id !== state.reviewId
+        || pending.item_id !== item.id) {
+      el.classList.add("hidden");
+      el.textContent = "";
+      return;
+    }
+    el.textContent = "";
+    const label = document.createElement("span");
+    label.textContent = "上次有一条提问没有完成：「" + pending.question + "」 ";
+    const btnRetry = document.createElement("button");
+    btnRetry.type = "button";
+    btnRetry.className = "link";
+    btnRetry.textContent = "重新发送（不会重复计费）";
+    btnRetry.addEventListener("click", () => {
+      const input = $("ask-input");
+      if (input) {
+        input.value = pending.question;
+        input.focus();
+      }
+      el.classList.add("hidden");
+    });
+    el.appendChild(label);
+    el.appendChild(btnRetry);
+    el.classList.remove("hidden");
   }
 
   /** B7-6 共享对话流：把刚渲染的 #ask-answer 归档成一条消息气泡
@@ -2442,10 +2514,35 @@
       const input = $("ask-input");
       if (input) input.focus();
     }
+    // codex 十五轮 P2-4：回到条目即按持久化轮次同步共享流——甲条回答中
+    // 切到乙条，页面守卫拒写的迟到响应已归档在服务端；切回时不重读就
+    // 只能整页刷新才见。守卫保留零改动，这里只做「以服务端为准」的补渲
+    syncThreadFromServer();
+  }
+
+  /** B7-6（codex 十五轮 P2-4）：从服务端补渲共享对话流（纯读，零费用）。
+   * seq 守卫：同步期间发生任何新交互（发问/切条目）则放弃——那些路径
+   * 自带渲染，旧快照不得回写盖住新状态。 */
+  function syncThreadFromServer() {
+    const rid = state.reviewId;
+    if (!rid) return;
+    const seqAtReq = state.askReqSeq;
+    fetch("/api/review/" + encodeURIComponent(rid))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return;
+        if (state.reviewId !== rid) return;
+        if (state.askReqSeq !== seqAtReq) return;
+        renderThreadFromData((data.ask_thread && data.ask_thread.turns) || []);
+      })
+      .catch(() => { /* 纯增益路径：失败静默（下次切条目再试） */ });
   }
 
   mqDesktop.addEventListener("change", () => {
     applyDesktopLayout();
+    // codex 十五轮 P2-7：断点切到桌面时同步退出抽屉——抽屉开着拉宽窗口，
+    // 汉堡已隐藏（桌面顶栏无此按钮），inert 却还罩着工作区，交互死路
+    if (mqDesktop.matches) shellDrawer(false);
     // codex 九轮 P2-2：跨断点刷新 AI 发现面板（↻ 入口随宽度双向切换）
     if (state.review) renderAiFindings(state.review);
   });
@@ -2575,10 +2672,19 @@
     const btn = $("btn-upload");
     if (!entryFile || !entryPaste || !settings) return;
     const reveal = () => settings.classList.remove("hidden");
+    // codex 十五轮 P2-8：提交可用性只由「当前激活的入口」决定——粘贴超限
+    // 禁用了按钮，切回文件入口必须重算，否则正常文件也提交不了
+    const updateSubmitEnabled = () => {
+      if (!btn) return;
+      const pasteActive = !pasteWrap.classList.contains("hidden");
+      const n = pasteActive ? (pasteArea && pasteArea.value || "").trim().length : 0;
+      btn.disabled = pasteActive && n > 200000;
+    };
     entryFile.onclick = () => {
       reveal();
       pasteWrap.classList.add("hidden");
       fileWrap.classList.remove("hidden");
+      updateSubmitEnabled();
       // 不自动唤起原生文件选择器：用户自己点「选择文件」（e2e 也可稳定操作）
     };
     entryPaste.onclick = () => {
@@ -2599,6 +2705,16 @@
         }
         if (btn) btn.disabled = over; // codex 十二轮 P1-3：超限禁用提交（不截短续审）
       });
+    }
+    // 启动恢复：上次遗留的未完成提问回到 lastAskFail（同键重试路径的前提）
+    const pending = loadPendingAsk();
+    if (pending && pending.review_id && pending.item_id) {
+      state.lastAskFail = {
+        review_id: pending.review_id,
+        item_id: pending.item_id,
+        question: pending.question,
+        request_id: pending.request_id,
+      };
     }
   }
 

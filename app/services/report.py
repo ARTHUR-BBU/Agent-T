@@ -78,6 +78,7 @@ def build_report_docx(row: dict[str, Any], warnings: list | None = None) -> byte
     _revision_section(doc, row)
     _decisions(doc, row, has_revision)
     _ai_opinions(doc, row)
+    _ask_thread(doc, row)
     _blind_candidates(doc, row, has_revision)
     _policy_quotes(doc, row, has_revision)
     _appendix(doc, row)
@@ -156,7 +157,7 @@ def _cover(doc: Any, row: dict[str, Any]) -> None:
     # 旧记录已存的自带说明按原样渲染——字节契约不破）
     scope = row.get("export_scope_note") or (
         "报告只含本次读到并展示的内容；未读部分不写入结论"
-        "（含规则核查、AI 发现与确认记录、参考评分与补盲）"
+        "（含规则核查、AI 发现与确认记录、问清楚对话记录、参考评分与补盲）"
     )
     p = doc.add_paragraph()
     run = p.add_run(scope)
@@ -569,6 +570,55 @@ def _ai_opinions(doc: Any, row: dict[str, Any]) -> None:
             doc.add_paragraph(_scrub(o["comment"]), style="List Bullet")
 
 
+def _ask_thread(doc: Any, row: dict[str, Any]) -> None:
+    """B7-6（codex 十五轮 P1-1，计划 §三-补3）：问清楚对话记录入报告。
+
+    每轮含所属条目 + 问答四段式摘要；标注「辅助思考过程，非法律意见」。
+    无对话不渲染整节（B7-3b 教训：旧报告字节契约不破）。
+    ask_thread_section 由报告入口注入（routes.download_report）。"""
+    turns = [
+        t for t in (row.get("ask_thread_section") or [])
+        if isinstance(t, dict) and str(t.get("question") or "").strip()
+    ]
+    if not turns:
+        return
+    doc.add_heading("问清楚对话记录（辅助思考过程，非法律意见）", level=1)
+    doc.add_paragraph(
+        "以下是您在本次审查中与 AI 的追问对话，随审查单一并保存。"
+        "对话内容是辅助思考过程，不构成法律意见；结论仍以清单核查与人工判断为准。"
+    )
+    seg_labels = (("原文依据", "原文在哪"), ("实际影响", "问题是啥"),
+                  ("建议改法", "建议怎么改"))
+    for t in turns:
+        name = t.get("item_name") or "通用追问"
+        p = doc.add_paragraph()
+        run = p.add_run(f"关于：{name}")
+        run.bold = True
+        doc.add_paragraph(f"问：{t.get('question')}", style="List Bullet")
+        state = t.get("state") or ""
+        if state == "success" and isinstance(t.get("answer"), dict):
+            ans = t["answer"]
+            for label, key in seg_labels:
+                val = str(ans.get(key) or "").strip()
+                if not val:
+                    continue
+                sp = doc.add_paragraph(style="List Bullet")
+                sr = sp.add_run(f"{label}：")
+                sr.bold = True
+                sp.add_run(_scrub(val))
+            rewrite = str(ans.get("改写稿") or "").strip()
+            if rewrite and ans.get("quote_verified"):
+                rp = doc.add_paragraph(style="List Bullet")
+                rr = rp.add_run("建议改写稿：")
+                rr.bold = True
+                rp.add_run(_scrub(rewrite))
+                doc.add_paragraph("（复制前先对照原文核一遍，确认意思没跑偏）")
+        elif state == "failed":
+            err = str(t.get("error") or "").strip()
+            doc.add_paragraph(f"答：（本次未答上{'：' + _scrub(err) if err else ''}）",
+                              style="List Bullet")
+
+
 def _blind_candidates(doc: Any, row: dict[str, Any],
                       has_revision: bool = False) -> None:
     candidates = row.get("blind_candidates") or []
@@ -625,6 +675,7 @@ def _footer(doc: Any, row: dict[str, Any]) -> None:
     run.italic = True
     scope = row.get("export_scope_note") or (
         "报告只含本次读到并展示的内容；未读部分不写入结论"
+        "（含规则核查、AI 发现与确认记录、问清楚对话记录、参考评分与补盲）"
     )
     p2 = doc.add_paragraph()
     run2 = p2.add_run(scope)
