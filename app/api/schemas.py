@@ -504,3 +504,12 @@ class RemediateAdoptResponse(BaseModel):
     item_id: str
     adopted: bool = False
     error: Optional[str] = None
+
+
+class RemediateContextResponse(BaseModel):
+    status: Literal["verified", "ambiguous", "missing"]
+    heading: str = ""
+    before: str = ""
+    match: str = ""
+    after: str = ""
+    truncated: bool = False

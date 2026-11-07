@@ -28,6 +28,7 @@ from app.api.schemas import (
     PrecheckInfo,
     QualityInfo,
     RemediateAdoptResponse,
+    RemediateContextResponse,
     RemediateEditRequest,
     RemediateRequest,
     RemediateResponse,
@@ -559,6 +560,12 @@ def get_review(review_id: str):
                      or llm_remediate.needs_specialist(entry, row.get("text") or ""))):
             guidance = llm_remediate.remediate_item(item=entry, contract_text=row.get("text") or "")
             safe_rems[iid] = {"mode": "guidance", "guidance": guidance.get("guidance")}
+        elif isinstance(old, dict) and old.get("mode") == "elsewhere":
+            # 能力标记只由支持该只读端点的服务器添加，兼容仍在运行的旧预览。
+            raw_elsewhere = old.get("elsewhere")
+            elsewhere = dict(raw_elsewhere) if isinstance(raw_elsewhere, dict) else {}
+            elsewhere["context_available"] = True
+            safe_rems[iid] = {**old, "elsewhere": elsewhere}
     return ReviewSummary(
         precheck=PrecheckInfo(**pc) if pc else None,
         id=row["id"],
@@ -1112,6 +1119,8 @@ def _execute_remediation(review_id: str, item_id: str, row: dict[str, Any], item
         remediation_budget.finish(review_id, item_id,
                                   success=result.get("mode") in ("elsewhere", "draft"))
 
+    if result.get("mode") == "elsewhere" and isinstance(result.get("elsewhere"), dict):
+        result["elsewhere"]["context_available"] = True
     return RemediateResponse(
         ok=bool(result.get("ok")),
         item_id=item_id,
@@ -1122,6 +1131,61 @@ def _execute_remediation(review_id: str, item_id: str, row: dict[str, Any], item
         draft=result.get("draft") if result.get("ok") else None,
         quote_verified=result.get("quote_verified"),
         error=result.get("error"),
+    )
+
+
+@router.get(
+    "/review/{review_id}/items/{item_id}/remediate/context/{quote_index}",
+    response_model=RemediateContextResponse,
+)
+def get_remediation_context(review_id: str, item_id: str, quote_index: int):
+    """仅返回已保存摘句周围的有限原文；多处命中时不猜测位置。"""
+    row = store.get(review_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="审查记录不存在")
+    if row.get("status") != "done":
+        raise HTTPException(status_code=409, detail="审查尚未完成")
+    item = next((i for i in row.get("items") or []
+                 if isinstance(i, dict) and i.get("id") == item_id), None)
+    from app.services import llm_remediate
+    if (not item or item.get("status") != "未找到"
+            or llm_remediate.is_negative_item(item)
+            or llm_remediate.needs_specialist(item, row.get("text") or "")):
+        raise HTTPException(status_code=404, detail="该条目没有可查看的补写查证原文")
+    rems = row.get("remediations") or {}
+    rem = rems.get(item_id) if isinstance(rems, dict) else None
+    elsewhere = rem.get("elsewhere") if isinstance(rem, dict) and rem.get("mode") == "elsewhere" else None
+    quotes = elsewhere.get("quotes") if isinstance(elsewhere, dict) else None
+    if not isinstance(quotes, list) or not 0 <= quote_index < min(len(quotes), 3):
+        raise HTTPException(status_code=404, detail="原文摘句不存在")
+    quote = quotes[quote_index]
+    if not isinstance(quote, str) or not quote.strip():
+        raise HTTPException(status_code=404, detail="原文摘句不存在")
+    from app.services.evidence import locate_quote_span
+    text = str(row.get("text") or "")
+    start, end, status = locate_quote_span(text, quote)
+    if status != "verified" or start is None or end is None:
+        return RemediateContextResponse(status="ambiguous" if status == "ambiguous" else "missing")
+    heading = ""
+    index = row.get("clause_index") or {}
+    clauses = index.get("clauses") if isinstance(index, dict) else []
+    for clause in clauses or []:
+        if not isinstance(clause, dict):
+            continue
+        left, right = clause.get("start"), clause.get("end")
+        if isinstance(left, int) and isinstance(right, int) and 0 <= left <= start < end <= right <= len(text):
+            candidate = str(clause.get("heading") or "")[:200]
+            needle = "".join(candidate.rstrip("…").split())
+            if needle and needle in "".join(text[left:min(right, left + 400)].split()):
+                heading = candidate
+            break
+    match_end = min(end, start + 1200)
+    before_start = max(0, start - 500)
+    after_end = min(len(text), end + 500)
+    return RemediateContextResponse(
+        status="verified", heading=heading, before=text[before_start:start],
+        match=text[start:match_end], after=text[end:after_end] if match_end == end else "",
+        truncated=before_start > 0 or after_end < len(text) or match_end < end,
     )
 
 

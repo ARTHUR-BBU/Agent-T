@@ -1592,6 +1592,9 @@ mark.kw,
 .draft-body { white-space: pre-wrap; margin: var(--space-2) 0; }
 .draft-blank { background: var(--color-selected-bg); }
 .draft-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.draft-source-context { margin: var(--space-1) 0; padding: var(--space-1); border-left: 3px solid var(--color-divider); }
+.draft-context-label { font: var(--type-caption); color: var(--color-text-secondary); }
+.draft-context-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 #draft-edit-input {
   display: block;
   box-sizing: border-box;

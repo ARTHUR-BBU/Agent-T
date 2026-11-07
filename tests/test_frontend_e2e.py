@@ -2409,6 +2409,54 @@ def test_unanchored_opinion_opens_discussion_without_revision(home):
     assert home.locator("#rev-cards").is_hidden()
 
 
+@pytest.mark.parametrize("context_status", ["verified", "ambiguous"])
+def test_remediation_elsewhere_shows_real_context_safely(home, context_status):
+    stub = _quality_review_stub(None)
+    stub["items"][1]["status"] = "未找到"
+    stub["remediations"] = {"early_termination": {"mode": "elsewhere", "elsewhere": {
+        "found": True, "summary": "可能有关", "quotes": ["书面通知"], "context_available": True}}}
+    home.route("**/api/upload", lambda r: r.fulfill(
+        status=200, json={"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}))
+    home.route("**/api/review/e2eq00001", lambda r: r.fulfill(status=200, json=stub))
+    home.route("**/items/*/revision/state", lambda r: r.fulfill(status=200, json={}))
+    home.route("**/remediate/context/0", lambda r: r.fulfill(status=200, json={
+        "status": context_status, "heading": "第二条", "before": "原文 <script>不是代码</script>",
+        "match": "书面通知", "after": "后续内容", "truncated": True}))
+    home.click("#entry-file")
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    home.locator("#item-list .item").nth(1).click()
+    home.click(".draft-context-link")
+    context = home.locator(".draft-source-context")
+    context.wait_for(state="visible")
+    if context_status == "verified":
+        assert "所在条款：第二条" in context.inner_text()
+        assert "<script>不是代码</script>" in context.inner_text()
+        assert context.locator("script").count() == 0
+        assert context.locator("mark").inner_text() == "书面通知"
+    else:
+        assert "多处出现" in context.inner_text()
+        assert context.locator("mark").count() == 0
+
+
+def test_malformed_legacy_remediation_quotes_do_not_break_result_page(home):
+    stub = _quality_review_stub(None)
+    stub["items"][1]["status"] = "未找到"
+    stub["remediations"] = {"early_termination": {"mode": "elsewhere", "elsewhere": {
+        "found": True, "quotes": "旧记录格式异常", "context_available": True}}}
+    home.route("**/api/upload", lambda r: r.fulfill(
+        status=200, json={"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}))
+    home.route("**/api/review/e2eq00001", lambda r: r.fulfill(status=200, json=stub))
+    home.click("#entry-file")
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    home.locator("#item-list .item").nth(1).click()
+    assert home.locator("#draft-entry-card").is_visible()
+    assert home.locator(".draft-context-link").count() == 0
+
+
 def test_delayed_remediation_never_replaces_another_item(home):
     stub = _quality_review_stub(None)
     stub["items"][1]["status"] = "未找到"

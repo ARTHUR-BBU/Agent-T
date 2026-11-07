@@ -476,6 +476,69 @@ def test_read_hides_legacy_draft_for_protected_item(tmp_path, monkeypatch):
     assert isolated.get(rid)["remediations"]["subject"]["mode"] == "draft"
 
 
+def test_remediation_context_only_returns_unique_verified_original(tmp_path, monkeypatch):
+    path = str(tmp_path / "context.sqlite")
+    monkeypatch.setenv("STORE_DB_PATH", path)
+    isolated = store_module.ReviewStore(path, ttl_seconds=60)
+    monkeypatch.setattr(routes, "store", isolated)
+    text = "第一条 合同说明。第二条 验收后支付全部货款。第三条 争议解决。"
+    quote = "验收后支付全部货款"
+    rid = isolated.create(status="done", text=text, items=[
+        {"id": "payment", "name": "付款", "status": "未找到"}],
+        clause_index={"clauses": [{"id": "c2", "heading": "第二条",
+                                   "start": text.index("第二条"), "end": text.index("第三条")}]},
+        remediations={"payment": {"mode": "elsewhere", "elsewhere": {"quotes": [quote]}}})
+    context = routes.get_remediation_context(rid, "payment", 0)
+    assert context.status == "verified"
+    assert context.heading == "第二条"
+    assert context.before + context.match + context.after == text
+    assert context.match == quote
+    from tests.test_evidence_claims import client
+    response = client.get(f"/api/review/{rid}/items/payment/remediate/context/0")
+    assert response.status_code == 200 and response.json()["match"] == quote
+    view = routes.get_review(rid)
+    assert view.remediations["payment"]["elsewhere"]["context_available"] is True
+    assert "context_available" not in isolated.get(rid)["remediations"]["payment"]["elsewhere"]
+    isolated.update(rid, clause_index={"clauses": [{"id": "c2", "heading": "虚假的标题",
+                                                     "start": 0, "end": len(text)}]})
+    assert routes.get_remediation_context(rid, "payment", 0).heading == ""
+    with pytest.raises(HTTPException) as missing:
+        routes.get_remediation_context(rid, "payment", 1)
+    assert missing.value.status_code == 404
+    isolated.update(rid, text=text + quote)
+    ambiguous = routes.get_remediation_context(rid, "payment", 0)
+    assert ambiguous.status == "ambiguous"
+    assert not (ambiguous.before or ambiguous.match or ambiguous.after)
+    isolated.update(rid, text="该合同没有该摘句")
+    assert routes.get_remediation_context(rid, "payment", 0).status == "missing"
+
+
+def test_remediation_context_rejects_protected_legacy_draft(tmp_path, monkeypatch):
+    isolated = store_module.ReviewStore(str(tmp_path / "protected-context.sqlite"), ttl_seconds=60)
+    monkeypatch.setattr(routes, "store", isolated)
+    rid = isolated.create(status="done", text="主体资格信息", items=[
+        {"id": "subject", "name": "主体", "status": "未找到"}],
+        remediations={"subject": {"mode": "elsewhere", "elsewhere": {"quotes": ["主体资格"]}}})
+    with pytest.raises(HTTPException) as forbidden:
+        routes.get_remediation_context(rid, "subject", 0)
+    assert forbidden.value.status_code == 404
+
+
+def test_remediation_context_limits_disclosed_text(tmp_path, monkeypatch):
+    isolated = store_module.ReviewStore(str(tmp_path / "bounded-context.sqlite"), ttl_seconds=60)
+    monkeypatch.setattr(routes, "store", isolated)
+    quote = "起" + "甲" * 1500 + "止"
+    text = "前" * 3000 + quote + "后" * 3000
+    rid = isolated.create(status="done", text=text, items=[
+        {"id": "payment", "name": "付款", "status": "未找到"}],
+        remediations={"payment": {"mode": "elsewhere", "elsewhere": {"quotes": [quote]}}})
+    result = routes.get_remediation_context(rid, "payment", 0)
+    assert result.status == "verified" and result.truncated
+    assert len(result.before) == 500 and len(result.match) == 1200
+    assert result.after == ""
+    assert result.match == quote[:1200]
+
+
 def test_unanchored_opinion_is_explain_only_and_labeled(tmp_path, monkeypatch):
     isolated = store_module.ReviewStore(str(tmp_path / "opinions.sqlite"), ttl_seconds=60)
     monkeypatch.setattr(routes, "store", isolated)

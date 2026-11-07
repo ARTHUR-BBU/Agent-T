@@ -3156,11 +3156,23 @@
         s.textContent = ew.summary;
         card.appendChild(s);
       }
-      (ew.quotes || []).slice(0, 3).forEach((q) => {
+      const quotes = Array.isArray(ew.quotes) ? ew.quotes : [];
+      quotes.slice(0, 3).forEach((q, index) => {
         const quote = document.createElement("p");
         quote.className = "draft-quote";
         quote.textContent = "原文摘句：" + q;
         card.appendChild(quote);
+        if (ew.context_available) {
+          const link = document.createElement("button");
+          link.type = "button";
+          link.className = "link draft-context-link";
+          link.textContent = "查看合同上下文";
+          const context = document.createElement("div");
+          context.className = "draft-source-context hidden";
+          context.tabIndex = -1;
+          link.onclick = () => showRemediationContext(item, index, link, context);
+          card.append(link, context);
+        }
       });
       const hint = document.createElement("p");
       hint.className = "draft-hint";
@@ -3253,6 +3265,50 @@
     actions.appendChild(adoptBtn);
     actions.appendChild(ignoreBtn);
     card.appendChild(actions);
+  }
+
+  async function showRemediationContext(item, index, button, context) {
+    const reviewId = state.reviewId;
+    if (!reviewId) return;
+    button.disabled = true;
+    try {
+      const url = "/api/review/" + encodeURIComponent(reviewId) + "/items/"
+        + encodeURIComponent(item.id) + "/remediate/context/" + index;
+      const res = await fetch(url);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "暂时无法读取合同上下文");
+      if (state.reviewId !== reviewId || state.selectedItemId !== item.id || !context.isConnected) return;
+      context.innerHTML = "";
+      const label = document.createElement("p");
+      label.className = "draft-context-label";
+      if (data.status !== "verified") {
+        label.textContent = data.status === "ambiguous"
+          ? "摘句在合同多处出现，无法确定具体位置，请对照合同全文核对。"
+          : "当前无法在合同中定位摘句，请对照合同全文核对。";
+        context.appendChild(label);
+      } else {
+        label.textContent = (data.heading ? "所在条款：" + data.heading + "。" : "合同原文上下文。")
+          + (data.truncated ? "仅显示局部，请结合全文核对。" : "请结合全文核对。");
+        const source = document.createElement("div");
+        source.className = "draft-context-text";
+        const before = document.createTextNode(data.before || "");
+        const match = document.createElement("mark");
+        match.textContent = data.match || "";
+        const after = document.createTextNode(data.after || "");
+        source.append(before, match, after);
+        context.append(label, source);
+      }
+      context.classList.remove("hidden");
+      context.scrollIntoView({behavior: "smooth", block: "nearest"});
+      context.focus({preventScroll: true});
+    } catch (e) {
+      if (state.reviewId === reviewId && state.selectedItemId === item.id && context.isConnected) {
+        context.textContent = e.message || "暂时无法读取合同上下文";
+        context.classList.remove("hidden");
+      }
+    } finally {
+      button.disabled = false;
+    }
   }
 
   function renderRemediationEditor(card, item, rem) {
