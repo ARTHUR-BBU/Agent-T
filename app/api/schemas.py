@@ -420,6 +420,8 @@ class ReviewSummary(BaseModel):
     # B7-5a 统一「AI 发现」清单（观察+疑点合并；旧记录/异常路径形状不变，
     # available=False 前端静默隐藏）
     ai_findings: Optional[dict[str, Any]] = None
+    # B7-6 对话工作台：共享对话流（持久化；旧记录/异常路径为 None）
+    ask_thread: Optional[dict[str, Any]] = None
     # 证据法批 2a：证据登记簿概览（纯读路径派生视图，每次响应即时重建；
     # 旧记录/异常路径为 None，前端零感知）
     evidence_registry: Optional[EvidenceRegistryInfo] = None
@@ -449,6 +451,8 @@ class AskRequest(BaseModel):
     review_id: str
     item_id: str
     question: str
+    # B7-6 对话工作台：客户端幂等键（断线重发沿用同一值；空=服务端代生成）
+    request_id: str = ""
 
 
 class AskResponse(BaseModel):
@@ -460,3 +464,6 @@ class AskResponse(BaseModel):
     error: Optional[str] = None
     quote_verified: Optional[bool] = None
     evidence: Optional[EvidenceRefInfo] = None
+    # B7-6：本轮对话序号；deduped=True=同 request_id 命中已有轮次（未再调模型）
+    turn_no: Optional[int] = None
+    deduped: bool = False

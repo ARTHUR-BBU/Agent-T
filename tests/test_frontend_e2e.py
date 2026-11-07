@@ -193,6 +193,9 @@ def desktop_home(desktop_page, base_url):
 
 
 def _upload(page, path: Path = FIXTURE, category: str = "lease", stance: str | None = None):
+    # B7-6 整壳：设置区需先点入口卡露出（文件/粘贴互斥切换）
+    page.click("#entry-file")
+    page.click("#entry-file")
     page.set_input_files("#file", str(path))
     page.select_option("#category", category)
     if stance:
@@ -222,16 +225,18 @@ def _wait_terminal(page, timeout: int = 30000) -> None:
 
 def test_home_renders_upload_screen(home):
     assert home.title() == "合同审查"
-    assert home.is_visible("#screen-upload")
-    assert not home.is_visible("#screen-results")
+    assert home.is_visible("#ws-empty")
+    assert not home.is_visible("#ws-results")
     options = home.eval_on_selector_all(
         "#category option", "els => els.map(e => [e.value, e.textContent])"
     )
     assert [v for v, _ in options] == ["procurement", "nda", "lease"]
+    home.click("#entry-file")  # B7-6：设置区由入口卡露出
     assert home.is_visible("#btn-upload")
 
 
 def test_http_warning_visible_on_http(home):
+    home.click("#entry-file")  # B7-6：露出设置区
     """外审 P1-3：HTTP 连接下红线警示常驻（e2e 服务器是 localhost http）。"""
     assert location_protocol(home) == "http:"
     assert home.is_visible("#http-warning")
@@ -243,14 +248,16 @@ def location_protocol(page):
 
 
 def test_upload_without_file_shows_error(home):
+    home.click("#entry-file")  # B7-6：露出设置区
     home.click("#btn-upload")
     home.wait_for_selector("#upload-error", state="visible")
     assert "请先选择合同文件" in home.inner_text("#upload-error")
     # 仍停留在上传页
-    assert home.is_visible("#screen-upload")
+    assert home.is_visible("#ws-empty")
 
 
 def test_stance_segmented_renders_and_resets(home):
+    home.click("#entry-file")  # B7-6：露出设置区
     """阶段 1.3①：立场 segmented 默认中性真选中，品类切换重渲+复位。"""
     home.wait_for_selector("#stance-track input[name='stance']", state="attached")
     # 采购：中性/买方 两段，默认中性选中，前馈小字露出
@@ -280,6 +287,7 @@ def test_stance_submitted_with_upload(home):
 
 
 def test_category_switch_resets_stance(home):
+    home.click("#entry-file")  # B7-6：露出设置区
     """门禁 P1 回归：confirm 弹窗点「切换品类」后立场必须重渲复位中性——
     程序赋值不触发 change 事件，残留旧立场重传会 422 死路。"""
     import json
@@ -341,6 +349,7 @@ def test_category_switch_resets_stance(home):
 
     home.route("**/api/upload", handler)
     home.route("**/api/review/e2estub000", review_route)
+    home.click("#entry-file")
     home.set_input_files("#file", str(FIXTURE))
     home.select_option("#category", "procurement")
     home.click("#stance-track label:has(input[value='buyer'])")
@@ -413,7 +422,7 @@ def test_back_to_upload_clears_hash(home):
     _upload(home)
     assert "#/review/" in home.url
     home.click("#btn-back-upload")
-    home.wait_for_selector("#screen-upload", state="visible")
+    home.wait_for_selector("#ws-empty", state="visible")
     assert "#/review/" not in home.url, "返回上传页必须清掉旧审查 hash"
 
 
@@ -517,7 +526,7 @@ def test_ask_screen_unavailable_banner(home):
     _upload(home)
     home.locator("#item-list .item.attention").first.click()
     home.click("#detail-ask")
-    home.wait_for_selector("#screen-ask", state="visible")
+    home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
     banner = home.locator("#ask-unavailable")
     assert banner.is_visible()
     assert "追问暂未开通" in banner.inner_text()
@@ -530,7 +539,7 @@ def test_ask_screen_shows_context_and_quote(home):
     home.locator("#item-list .item.attention").first.click()
     note = home.inner_text("#detail-note")
     home.click("#detail-ask")
-    home.wait_for_selector("#screen-ask", state="visible")
+    home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
     # 上下文与规则说明一致；采购金标需关注项带摘句，追问页原文应同步展示
     assert home.inner_text("#ask-context").strip() == note.strip()
     assert not home.locator("#ask-quote").evaluate("el => el.classList.contains('empty')")
@@ -539,20 +548,24 @@ def test_ask_screen_shows_context_and_quote(home):
 # ---------- 导航 ----------
 
 def test_back_navigation_ask_to_results(home):
+    """B7-6：问清楚不再是独立屏——工作台展开后结果区始终在，点条目即切换。"""
     _upload(home)
     home.locator("#item-list .item.attention").first.click()
     home.click("#detail-ask")
-    home.wait_for_selector("#screen-ask", state="visible")
-    home.click("#btn-back-results")
-    assert home.is_visible("#screen-results")
-    assert not home.is_visible("#screen-ask")
+    home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
+    assert home.is_visible("#ws-results")
+    assert home.is_visible("#ask-workbench")
+    # 点另一条：工作台还在、详情切到新条目（任何跳转不丢当前位置）
+    home.locator("#item-list .item").last.click()
+    assert home.is_visible("#ws-results")
+    assert home.is_visible("#ask-workbench")
 
 
 def test_back_navigation_results_to_upload(home):
     _upload(home)
     home.click("#btn-back-upload")
-    assert home.is_visible("#screen-upload")
-    assert not home.is_visible("#screen-results")
+    assert home.is_visible("#ws-empty")
+    assert not home.is_visible("#ws-results")
 
 
 # ---------- 前端健康度 ----------
@@ -587,9 +600,10 @@ def test_full_flow_smoke(home):
     _upload(home)
     home.locator("#item-list .item.attention").first.click()
     home.click("#detail-ask")
-    home.wait_for_selector("#screen-ask", state="visible")
-    home.click("#btn-back-results")
-    assert home.is_visible("#screen-results")
+    home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
+    assert home.is_visible("#ws-results")
+    # 左栏历史记录应出现当前审查
+    assert home.is_visible("#shell-history")
 
 
 # ---------- 阶段 2.1 质量层（route stub 注入假 done 记录——无 Key 环境测 UI） ----------
@@ -677,6 +691,8 @@ def _stub_quality_flow(page, quality, *, ask_available=False):
         lambda route: route.fulfill(
             status=200, content_type="application/json", body="{}"),
     )
+    page.click("#entry-file")
+    page.click("#entry-file")
     page.set_input_files("#file", str(FIXTURE))
     page.click("#btn-upload")
     page.wait_for_selector("#results-body", state="visible", timeout=15000)
@@ -737,6 +753,7 @@ def test_quality_panel_hidden_without_quality_key(home):
             body=_json.dumps(stub, ensure_ascii=False),
         ),
     )
+    home.click("#entry-file")
     home.set_input_files("#file", str(FIXTURE))
     home.click("#btn-upload")
     home.wait_for_selector("#results-body", state="visible", timeout=15000)
@@ -812,6 +829,7 @@ def test_scorecard_folded_with_summary_line(home):
             body=_json.dumps(stub, ensure_ascii=False),
         ),
     )
+    home.click("#entry-file")
     home.set_input_files("#file", str(FIXTURE))
     home.click("#btn-upload")
     home.wait_for_selector("#results-body", state="visible", timeout=15000)
@@ -865,6 +883,12 @@ def _stub_ask_flow(page, answer_payload, raw_text=None):
         ),
     )
     page.route(
+        "**/api/review/e2eq00001/items/*/revision/state",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json", body="{}"),
+    )
+
+    page.route(
         "**/api/ask",
         lambda route: route.fulfill(
             status=200, content_type="application/json",
@@ -885,6 +909,8 @@ def _stub_ask_flow(page, answer_payload, raw_text=None):
                               "remaining": {"revision": 4, "impact": 3}}),
         ),
     )
+    page.click("#entry-file")
+    page.click("#entry-file")
     page.set_input_files("#file", str(FIXTURE))
     page.click("#btn-upload")
     page.wait_for_selector("#results-body", state="visible", timeout=15000)
@@ -904,20 +930,23 @@ def test_ask_answer_renders_four_segment_layout(home):
     })
     home.locator("#item-list .item.attention").first.click()
     home.click("#detail-ask")
-    home.wait_for_selector("#screen-ask", state="visible")
+    home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
     home.fill("#ask-input", "这条有什么问题？")
     home.click("#btn-ask")
-    home.wait_for_selector("#ask-answer.answer:not(.hidden)", state="visible")
+    # B7-6 对话工作台：本轮问答归档成 .ask-msg 气泡（#ask-answer 槽位
+    # 渲染完即清空——断言口径跟着搬到气泡里）
+    home.wait_for_selector("#ask-thread .ask-msg", state="visible")
+    assert "这条有什么问题？" in home.inner_text("#ask-thread .ask-msg-q")
 
     labels = [
         el.inner_text().strip()
-        for el in home.query_selector_all("#ask-answer .detail-label")
+        for el in home.query_selector_all("#ask-thread .ask-msg .answer .detail-label")
     ]
     assert labels[0] == "原文依据"
     assert labels[1] == "实际影响"
     assert labels[2] == "建议改法"
     # 「不伪造风险等级」禁令：风险等级/这条在查啥不得出现在答案里
-    text = home.inner_text("#ask-answer")
+    text = home.inner_text("#ask-thread .ask-msg .answer")
     assert "高" != text.strip() and "风险等级" not in text and "单方解除权约定" not in text
     # 改写稿块与复制按钮原样保留
     assert home.is_visible("#ask-rewrite-text")
@@ -935,41 +964,36 @@ def test_ask_answer_raw_fallback_kept(home):
     _stub_ask_flow(home, {}, raw_text="模型的原始输出（结构化失败）")
     home.locator("#item-list .item.attention").first.click()
     home.click("#detail-ask")
-    home.wait_for_selector("#screen-ask", state="visible")
+    home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
     home.fill("#ask-input", "为什么？")
     home.click("#btn-ask")
-    home.wait_for_selector("#ask-answer pre", state="visible")
-    assert "原始输出" in home.inner_text("#ask-answer pre")
+    home.wait_for_selector("#ask-thread .ask-msg .answer pre", state="visible")
+    assert "原始输出" in home.inner_text("#ask-thread .ask-msg .answer pre")
 
 
 # ---------- 阶段 2.4 移动端（375×800 命中 480px 断点） ----------
 
 def test_mobile_item_tap_opens_detail_route(mobile_home):
-    """移动端点条目 = 独立详情页：hash 带 /item/、五段结构、Back 回清单。"""
+    """B7-6 整壳：移动端点条目=行内详情+对话工作台（hash 详情页随三屏
+    模型退役——移动/桌面同一套交互，这是老板拍板的有意行为变更）。"""
     _upload(mobile_home)
-    mobile_home.evaluate("window.scrollTo(0, 600)")
-    # JS 原生 click：Playwright .click() 会自动把目标滚进视野，破坏
-    # 「点击时滚动位置」的断言前提（这里恰恰要测位置保持）
+    # JS 原生 click：Playwright .click() 会自动把目标滚进视野
     mobile_home.evaluate(
         "document.querySelector('#item-list .item.attention').click()"
     )
-    # hash 路由生效
-    mobile_home.wait_for_selector("#screen-ask", state="visible")
-    assert "/item/" in mobile_home.evaluate("window.location.hash")
-    # 详情页头：条目名 + 档位 tag（双通道）
-    assert mobile_home.inner_text("#ask-title").strip() != ""
-    assert mobile_home.query_selector("#ask-status-line .tag.attention")
+    # 行内详情填充：详情头 + 档位 tag（双通道）
+    mobile_home.wait_for_selector("#item-detail:not(.hidden)", state="attached")
+    assert mobile_home.inner_text("#detail-head").strip() != ""
+    assert mobile_home.query_selector("#detail-head .tag.attention")
+    mobile_home.click("#detail-ask")  # 问清楚入口：填充工作台上下文
     # 阅读顺序：说明卡在原文卡之前
-    note_box = mobile_home.locator("#ask-note-card")
-    quote_box = mobile_home.locator("#ask-quote-card")
-    assert note_box.bounding_box()["y"] < quote_box.bounding_box()["y"]
+    # 阅读顺序改 DOM 序断言（像素坐标受滚动/搬迁影响，脆）
+    assert mobile_home.evaluate(
+        "(() => { const w = document.getElementById('ask-workbench');"
+        " const kids = Array.from(w.children).map(c => c.id);"
+        " return kids.indexOf('ask-note-card') < kids.indexOf('ask-quote-card'); })()")
     assert mobile_home.inner_text("#ask-context").strip() != ""
-    # Back 手势（真实历史栈）：回结果页 + 滚动位置恢复
-    mobile_home.go_back()
-    mobile_home.wait_for_selector("#screen-results", state="visible")
-    assert "/item/" not in mobile_home.evaluate("window.location.hash")
-    scroll_y = mobile_home.evaluate("window.scrollY")
-    assert abs(scroll_y - 600) < 120, f"清单位置应恢复（实际 {scroll_y}）"
+    assert mobile_home.inner_text("#ask-context").strip() != ""
 
 
 def test_mobile_blind_item_hides_ask_card(mobile_home):
@@ -997,15 +1021,17 @@ def test_mobile_blind_item_hides_ask_card(mobile_home):
             body=_json.dumps(stub, ensure_ascii=False),
         ),
     )
+    mobile_home.click("#entry-file")
     mobile_home.set_input_files("#file", str(FIXTURE))
     mobile_home.click("#btn-upload")
     mobile_home.wait_for_selector("#results-body", state="visible", timeout=15000)
     mobile_home.locator("#item-list .item.blind-candidate").first.click()
-    mobile_home.wait_for_selector("#screen-ask", state="visible")
-    assert "blind:" in mobile_home.evaluate("window.location.hash")
+    mobile_home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
+    # B7-6：hash 路由退役——补盲选中改由详情头断言（key 完整性走 selectItem）
+    assert mobile_home.inner_text("#detail-head").strip() != ""
     # 说明/原文卡照常；追问卡隐藏且不出现「追问暂未开通」横幅
     assert mobile_home.is_visible("#ask-note-card")
-    assert not mobile_home.is_visible("#screen-ask .ask-interact")
+    assert mobile_home.is_visible("#ask-workbench .ask-interact")
     assert not mobile_home.is_visible("#ask-unavailable")
 
 
@@ -1017,7 +1043,8 @@ def test_mobile_followup_chips_meet_touch_target(mobile_home):
          "改写稿": "", "还想问": "解除的赔偿怎么算？"},
     )
     mobile_home.locator("#item-list .item.attention").first.click()
-    mobile_home.wait_for_selector("#screen-ask", state="visible")
+    mobile_home.click("#detail-ask")  # 问清楚入口：填充工作台上下文
+    mobile_home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
     mobile_home.fill("#ask-input", "这条有什么问题？")
     mobile_home.click("#btn-ask")
     mobile_home.wait_for_selector("#ask-followups li", state="visible")
@@ -1032,7 +1059,7 @@ def test_desktop_item_click_keeps_inline_panel(home):
     home.locator("#item-list .item.attention").first.click()
     home.wait_for_selector("#item-detail", state="visible")
     assert "/item/" not in home.evaluate("window.location.hash")
-    assert not home.is_visible("#screen-ask")
+    assert home.is_visible("#ask-workbench")
 
 
 def test_precheck_keep_button_has_secondary_style(home):
@@ -1077,6 +1104,7 @@ def test_precheck_keep_button_has_secondary_style(home):
 
     home.route("**/api/upload", handler)
     home.route("**/api/review/e2estub000", review_route)
+    home.click("#entry-file")
     home.set_input_files("#file", str(FIXTURE))
     home.select_option("#category", "procurement")
     home.click("#btn-upload")
@@ -1113,25 +1141,29 @@ def test_mobile_underscore_id_item_route(mobile_home):
             body=_json.dumps(stub, ensure_ascii=False),
         ),
     )
+    mobile_home.route(
+        "**/api/review/e2eq00001/items/*/revision/state",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json", body="{}"),
+    )
+    mobile_home.click("#entry-file")
     mobile_home.set_input_files("#file", str(FIXTURE))
     mobile_home.click("#btn-upload")
     mobile_home.wait_for_selector("#results-body", state="visible", timeout=15000)
-    # ① blind:下划线 key
+    # ① blind:下划线 key（B7-6：hash 路由退役，行内选中；key 完整性仍由
+    #    selectItem 的 selKey 口径保证——详情头出现即选中成功）
     mobile_home.evaluate(
         "document.querySelector('#item-list .item.blind-candidate').click()"
     )
-    mobile_home.wait_for_selector("#screen-ask", state="visible")
-    assert "blind:governing_law" in mobile_home.evaluate("window.location.hash")
-    # ② Back 回清单，再直达 snake_case 真实清单 id
-    mobile_home.go_back()
-    mobile_home.wait_for_selector("#screen-results", state="visible")
+    mobile_home.wait_for_selector("#item-detail:not(.hidden)", state="attached")
+    assert "管辖法律" in mobile_home.inner_text("#detail-head")
+    # ② 再点 snake_case 真实清单 id：切换选中不踢回上传页
     mobile_home.evaluate(
-        "window.location.hash = window.location.hash + '/item/early_termination'"
+        "document.querySelector('#item-list .item:not(.blind-candidate)').click()"
     )
-    mobile_home.wait_for_selector("#screen-ask", state="visible")
-    assert "/item/early_termination" in mobile_home.evaluate("window.location.hash")
-    assert mobile_home.inner_text("#ask-title").strip() != ""
-    assert not mobile_home.is_visible("#screen-upload"), "不得被踢回上传页"
+    mobile_home.wait_for_selector("#item-detail:not(.hidden)", state="attached")
+    assert mobile_home.inner_text("#detail-head").strip() != ""
+    assert not mobile_home.is_visible("#ws-empty"), "不得被踢回上传页"
 
 
 # ---------- 阶段 3 异议层（规则异议候选 + 采纳为提案） ----------
@@ -1162,6 +1194,8 @@ def _stub_objections_flow(page, objections):
             body=_json.dumps(_objections_review_stub(objections), ensure_ascii=False),
         ),
     )
+    page.click("#entry-file")
+    page.click("#entry-file")
     page.set_input_files("#file", str(FIXTURE))
     page.click("#btn-upload")
     page.wait_for_selector("#results-body", state="visible", timeout=15000)
@@ -1374,6 +1408,8 @@ def _stub_rev_flow(page, *, second_attention=False):
                                  ensure_ascii=False),
             ),
         )
+    page.click("#entry-file")
+    page.click("#entry-file")
     page.set_input_files("#file", str(FIXTURE))
     page.click("#btn-upload")
     page.wait_for_selector("#results-body", state="visible", timeout=15000)
@@ -1586,6 +1622,8 @@ def _stub_desktop_findings_flow(page, findings):
         lambda route: route.fulfill(
             status=200, content_type="application/json", body="{}"),
     )
+    page.click("#entry-file")
+    page.click("#entry-file")
     page.set_input_files("#file", str(FIXTURE))
     page.click("#btn-upload")
     page.wait_for_selector("#results-body", state="visible", timeout=15000)
@@ -1630,60 +1668,85 @@ def test_tablet_band_detail_inline(home):
     assert not home.is_visible("#side-empty")
 
 
-def test_desktop_ask_dialog_flow(desktop_home):
-    """问清楚对话框：弹窗内问答、关闭后右栏详情/三卡原样都在。"""
+def test_desktop_ask_workbench_flow(desktop_home):
+    """B7-6 对话工作台（弹窗已退役）：问答归档进共享流；详情/三卡原样在。"""
     import json as _json
 
     _stub_quality_flow(desktop_home, _DESKTOP_MIN_QUALITY, ask_available=True)
     desktop_home.route("**/api/ask", lambda route: route.fulfill(
         status=200, content_type="application/json",
         body=_json.dumps({"ok": True, "item_id": "sublet",
-                          "answer": {"问题是啥": "对话框答案标记DLG9"},
+                          "answer": {"问题是啥": "工作台答案标记DLG9"},
                           "quote_verified": True}, ensure_ascii=False)))
     desktop_home.click("#item-list .item")
     desktop_home.click("#detail-ask")
-    assert desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
-    # ask 三节点搬进 dialog（零复制：交互卡在新宿主内）
-    assert desktop_home.eval_on_selector(
-        "#ask-dialog-body", "el => !!el.querySelector('.ask-interact')")
+    # 工作台常驻：交互卡可操作、详情仍在右栏
+    assert desktop_home.is_visible("#ask-workbench .ask-interact")
+    assert desktop_home.is_visible("#item-detail")
     desktop_home.fill("#ask-input", "这条怎么改？")
     desktop_home.click("#btn-ask")
-    desktop_home.wait_for_selector("#ask-answer:not(.hidden)", timeout=8000)
-    assert "对话框答案标记DLG9" in desktop_home.inner_text("#ask-answer")
-    # Esc 关闭 → 右栏详情还在（任何跳转不丢当前位置）
-    desktop_home.keyboard.press("Escape")
-    assert not desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
-    assert desktop_home.is_visible("#item-detail")
+    desktop_home.wait_for_selector("#ask-thread .ask-msg", timeout=8000)
+    # 问答归档进共享流：气泡带「关于」标签+四段式答案
+    bubble = desktop_home.inner_text("#ask-thread .ask-msg")
+    assert "关于：" in bubble
+    assert "工作台答案标记DLG9" in bubble
+    # 回答槽位已清空（下一轮用）
+    assert desktop_home.inner_text("#ask-answer") == ""
 
 
 def test_desktop_ask_close_midflight_discards_late_answer(desktop_home):
-    """codex 八轮验收：发送中关闭→重开→旧响应晚到不写入；按钮状态复位。"""
+    """B7-6 共享线程语义：发送中切到乙条目 → 甲的迟到旧响应不得写入
+    乙的上下文（seq 判废；服务端按 turn 归档给甲，互不串写）。"""
     held = []
     desktop_home.route("**/api/ask", lambda route: held.append(route))
-    _stub_quality_flow(desktop_home, _DESKTOP_MIN_QUALITY, ask_available=True)
-    desktop_home.click("#item-list .item")
+    # 双需关注 stub：甲乙都可追问（乙=early_termination 临时改档）
+    stub2x = _quality_review_stub(None)
+    stub2x["ask_available"] = True
+    for it in stub2x["items"]:
+        if it["id"] == "early_termination":
+            it["status"] = "需关注"
+    import json as _json
+    desktop_home.route(
+        "**/api/upload",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}),
+        ),
+    )
+    desktop_home.route(
+        "**/api/review/e2eq00001",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps(stub2x, ensure_ascii=False),
+        ),
+    )
+    desktop_home.route(
+        "**/api/review/e2eq00001/items/*/revision/state",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json", body="{}"),
+    )
+    desktop_home.click("#entry-file")
+    desktop_home.set_input_files("#file", str(FIXTURE))
+    desktop_home.click("#btn-upload")
+    desktop_home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    desktop_home.locator("#item-list .item").first.click()  # 甲：sublet
     desktop_home.click("#detail-ask")
     desktop_home.fill("#ask-input", "问题")
     desktop_home.click("#btn-ask")
     desktop_home.wait_for_timeout(400)
-    assert desktop_home.eval_on_selector("#btn-ask", "el => el.disabled"), \
-        "请求在途时发送按钮应禁用"
-    # 发送中 Esc 关闭：seq+1 作废 + 按钮复位
-    desktop_home.keyboard.press("Escape")
-    assert not desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
-    assert not desktop_home.eval_on_selector("#btn-ask", "el => el.disabled")
-    # 重开同条目
+    assert desktop_home.eval_on_selector("#btn-ask", "el => el.disabled"),         "请求在途时发送按钮应禁用"
+    # 发送中切到乙条目：fillAskContext 换条目 → seq+1 判废旧响应
+    desktop_home.locator("#item-list .item").nth(1).click()
     desktop_home.click("#detail-ask")
-    assert desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
-    # 旧响应晚到：seq 不匹配 → 不得写入
-    import json as _json
+    assert not desktop_home.eval_on_selector("#btn-ask", "el => el.disabled"),         "切条目后按钮应复位（旧响应已判废）"
+    # 甲的迟到旧响应：seq 不匹配 → 不得写进乙的工作台
     held.pop().fulfill(
         status=200, content_type="application/json",
         body=_json.dumps({"ok": True, "item_id": "sublet",
                           "answer": {"问题是啥": "迟到旧答案STALE7"}},
                          ensure_ascii=False))
     desktop_home.wait_for_timeout(600)
-    assert "STALE7" not in desktop_home.inner_text("#ask-dialog-body")
+    assert "STALE7" not in desktop_home.inner_text("#ask-workbench")
 
 
 def test_desktop_recheck_entry_conditional(desktop_home):
@@ -1738,58 +1801,72 @@ def test_ask_badge_keeps_source_label(home):
     _stub_quality_flow(home, _DESKTOP_MIN_QUALITY)
     home.click("#item-list .item")
     home.click("#detail-ask")  # <1024：跳问答页
-    home.wait_for_selector("#screen-ask:not(.hidden)", state="visible")
+    home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
     tags = home.query_selector_all("#ask-status-line .tag")
     assert len(tags) == 1, "状态行只应有一个档位 tag"
     assert "系统核查" in home.inner_text("#ask-status-line"), "来源徽章不得丢失"
 
 
-def test_desktop_dialog_has_close_button_and_answer_above_input(desktop_home):
-    """codex 九轮 P2-4/P2-5：可见关闭按钮；答案四段式在输入框上方。"""
+def test_desktop_workbench_thread_restores_on_refresh(desktop_home):
+    """B7-6 对话工作台：刷新后历史流从持久层恢复（含所属条目标签）。"""
     import json as _json
 
-    _stub_quality_flow(desktop_home, _DESKTOP_MIN_QUALITY, ask_available=True)
-    desktop_home.route("**/api/ask", lambda route: route.fulfill(
-        status=200, content_type="application/json",
-        body=_json.dumps({"ok": True, "item_id": "sublet",
-                          "answer": {"问题是啥": "答案标记ANS2"}},
-                         ensure_ascii=False)))
-    desktop_home.click("#item-list .item")
-    desktop_home.click("#detail-ask")
-    assert desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
-    # P2-4：关闭按钮存在且走同一清理
-    assert desktop_home.is_visible("#ask-dialog-close")
-    desktop_home.click("#ask-dialog-close")
-    assert not desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
-    # P2-5：重开发问，答案 y 坐标应小于输入框（在输入框上方）
-    desktop_home.click("#detail-ask")
-    desktop_home.fill("#ask-input", "问题")
-    desktop_home.click("#btn-ask")
-    desktop_home.wait_for_selector("#ask-answer:not(.hidden)", timeout=8000)
-    ans_y = desktop_home.eval_on_selector(
-        "#ask-answer", "el => el.getBoundingClientRect().top")
-    input_y = desktop_home.eval_on_selector(
-        "#ask-input", "el => el.getBoundingClientRect().top")
-    assert ans_y < input_y, "桌面弹窗答案应在输入框上方"
-    assert "答案标记ANS2" in desktop_home.inner_text("#ask-answer")
+    stub = _quality_review_stub(None)
+    stub["ai_findings"] = {"available": True, "findings": []}
+    stub["ask_available"] = True
+    stub["ask_thread"] = {"turns": [
+        {"turn_no": 1, "request_id": "r1", "item_id": "sublet",
+         "item_name": "转租限制", "state": "success",
+         "question": "历史问题标记HIS5",
+         "answer": {"问题是啥": "历史答案标记HIS6"}, "quote_verified": True},
+    ]}
+    desktop_home.route(
+        "**/api/upload",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}),
+        ),
+    )
+    desktop_home.route(
+        "**/api/review/e2eq00001",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json",
+            body=_json.dumps(stub, ensure_ascii=False),
+        ),
+    )
+    desktop_home.route(
+        "**/api/review/e2eq00001/items/*/revision/state",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json", body="{}"),
+    )
+    desktop_home.click("#entry-file")
+    desktop_home.set_input_files("#file", str(FIXTURE))
+    desktop_home.click("#btn-upload")
+    desktop_home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    assert "历史问题标记HIS5" in desktop_home.inner_text("#ask-thread")
+    assert "历史答案标记HIS6" in desktop_home.inner_text("#ask-thread")
+    assert "关于：转租限制" in desktop_home.inner_text("#ask-thread")
 
 
-def test_widen_from_ask_page_opens_dialog(home):
-    """codex 九轮 P1-1：平板问答页（900px）拉宽到桌面——问答页收回、
-    结果页+右栏详情+弹窗接管；不出现「内容藏进未打开弹窗」的空问答页。"""
+def test_workbench_follows_breakpoint(home):
+    """B7-6（codex 十二轮 P2-5）：对话块随断点搬迁——桌面 col-side、
+    平板带 col-main（三卡之后）；两个尺寸都可用。"""
     _stub_quality_flow(home, _DESKTOP_MIN_QUALITY, ask_available=True)
     home.click("#item-list .item")
-    home.click("#detail-ask")  # 900px：跳问答页
+    # 900px：对话块在 col-main
     assert home.eval_on_selector(
-        "#screen-ask", "el => !el.classList.contains('hidden')")
+        ".col-main", "el => !!el.querySelector('#ask-workbench')")
     home.set_viewport_size({"width": 1280, "height": 900})
     home.wait_for_timeout(400)
     assert home.eval_on_selector(
-        "#screen-ask", "el => el.classList.contains('hidden')"), \
-        "桌面无独立问答页：应转回结果页"
-    assert home.eval_on_selector("#ask-dialog", "el => el.open"), \
-        "当前条目应改由弹窗接管"
-    assert home.is_visible("#item-detail")
+        ".col-side", "el => !!el.querySelector('#ask-workbench')")
+    # 详情也在右栏；工作台在详情之下
+    assert home.eval_on_selector(
+        ".col-side", "el => !!el.querySelector('#item-detail')")
+    home.set_viewport_size({"width": 900, "height": 900})
+    home.wait_for_timeout(400)
+    assert home.eval_on_selector(
+        ".col-main", "el => !!el.querySelector('#ask-workbench')")
 
 
 def test_recheck_entry_refreshes_on_breakpoint_change(home):
@@ -1845,37 +1922,23 @@ def test_rev_excerpt_jump_flashes_excerpt_keeps_clause(home):
     assert clause_after == clause_before, "当前条目的条款身份提示不得被改写"
 
 
-def test_back_and_review_switch_close_ask_dialog(desktop_home):
-    """codex 十轮 P1：Back／跨合同切换必须退出问答上下文（关弹窗+清旧
-    条目），迟到旧响应不得写入——杜绝甲合同问题发给乙合同。"""
+def test_back_and_review_switch_closes_ask_context(desktop_home):
+    """codex 十轮 P1（B7-6 版）：Back／跨合同切换必须清问答上下文
+    （askItem 清空→迟到旧响应拒写），杜绝甲合同问题发给乙合同。"""
     import json as _json
 
     _stub_quality_flow(desktop_home, _DESKTOP_MIN_QUALITY, ask_available=True)
     held = []
     desktop_home.route("**/api/ask", lambda route: held.append(route))
-    # 走 item 直达路由弹开 dialog（桌面=弹窗分流）
-    desktop_home.evaluate(
-        "window.location.hash = '#/review/e2eq00001/item/sublet'")
-    desktop_home.wait_for_timeout(300)
-    assert desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
-    # codex 十一轮补强：真正发送一个问题并确认请求已挂起（held 不能空转，
-    # 否则迟到响应检查形同虚设）
+    # 打开工作台并真正发送一个问题（请求挂起——codex 十一轮补强）
+    desktop_home.locator("#item-list .item").first.click()
+    desktop_home.click("#detail-ask")
     desktop_home.fill("#ask-input", "甲合同的问题")
     desktop_home.click("#btn-ask")
     desktop_home.wait_for_timeout(300)
     assert held, "追问请求应已发出且被挂起"
-    assert desktop_home.eval_on_selector("#btn-ask", "el => el.disabled"), \
-        "请求在途时发送按钮应禁用"
-    # Back：hash 退回结果页 → dialog 必须关闭
-    desktop_home.go_back()
-    desktop_home.wait_for_timeout(300)
-    assert not desktop_home.eval_on_selector("#ask-dialog", "el => el.open"), \
-        "浏览器 Back 必须退出问答上下文"
-    # 重开 dialog 再跨合同切换（hash 到另一 rid；stub 供第二份合同）
-    desktop_home.evaluate(
-        "window.location.hash = '#/review/e2eq00001/item/sublet'")
-    desktop_home.wait_for_timeout(300)
-    assert desktop_home.eval_on_selector("#ask-dialog", "el => el.open")
+    assert desktop_home.eval_on_selector("#btn-ask", "el => el.disabled"),         "请求在途时发送按钮应禁用"
+    # 跨合同切换（hash 到另一 rid；stub 供第二份合同）→ 上下文必须清场
     stub2 = _quality_review_stub(None)
     stub2["id"] = "e2ez00002"
     stub2["filename"] = "乙合同.txt"
@@ -1890,9 +1953,8 @@ def test_back_and_review_switch_close_ask_dialog(desktop_home):
             status=200, content_type="application/json", body="{}"))
     desktop_home.evaluate("window.location.hash = '#/review/e2ez00002'")
     desktop_home.wait_for_timeout(500)
-    assert not desktop_home.eval_on_selector("#ask-dialog", "el => el.open"), \
-        "跨合同切换必须退出旧问答上下文"
-    # 迟到旧响应也不得写入（askItem 已清，双保险拒写）
+    assert not desktop_home.eval_on_selector("#btn-ask", "el => el.disabled"),         "跨合同切换必须复位问答会话"
+    # 迟到旧响应不得写入（askItem 已清，双保险拒写）
     assert held, "被挂起的旧请求此刻才放行"
     held.pop().fulfill(
         status=200, content_type="application/json",
@@ -1901,3 +1963,333 @@ def test_back_and_review_switch_close_ask_dialog(desktop_home):
                          ensure_ascii=False))
     desktop_home.wait_for_timeout(400)
     assert "STALE9" not in desktop_home.inner_text("body")
+
+
+# ---- codex 十五轮整改：断点退抽屉 / 提交态重算 / 断线恢复 / 切回同步 ----
+
+def test_drawer_closes_when_viewport_widens(mobile_home):
+    """codex 十五轮 P2-7：抽屉开着拉宽过断点 → 同步退抽屉（否则桌面
+    无汉堡可点、inert 罩死工作区，交互死路）。"""
+    mobile_home.click("#shell-menu")
+    mobile_home.wait_for_selector("#shell-nav.is-open", state="attached")
+    mobile_home.set_viewport_size({"width": 1280, "height": 800})
+    mobile_home.wait_for_function(
+        "!document.getElementById('shell-nav').classList.contains('is-open')")
+    assert not mobile_home.eval_on_selector(
+        "#shell-main", "el => !!el.inert"), "桌面工作区不得残留 inert"
+
+
+def test_submit_reenabled_after_paste_overlimit_switch(home):
+    """codex 十五轮 P2-8：粘贴超限禁用提交后切回文件入口 → 重算可用。"""
+    home.click("#entry-paste")
+    home.wait_for_selector("#paste-wrap", state="visible")
+    home.eval_on_selector(
+        "#paste-text",
+        "el => { el.value = 'x'.repeat(200001);"
+        " el.dispatchEvent(new Event('input', {bubbles: true})); }")
+    assert home.eval_on_selector("#btn-upload", "el => el.disabled")
+    home.click("#entry-file")
+    assert not home.eval_on_selector(
+        "#btn-upload", "el => el.disabled"), "切回文件入口须重新启用提交"
+
+
+def test_failed_ask_survives_reload_with_same_request_id(home):
+    """codex 十五轮 P1-3：断线失败 → request_id 落 localStorage；刷新后
+    恢复卡回填原问题，重发沿用原编号（服务端去重不二次计费）。"""
+    import json as _json
+    sent_request_ids: list[str] = []
+    fail_first = {"v": True}
+
+    def ask_route(route):
+        body = _json.loads(route.request.post_data or "{}")
+        sent_request_ids.append(body.get("request_id") or "")
+        if fail_first["v"]:
+            route.fulfill(status=200, content_type="application/json",
+                          body=_json.dumps({"ok": False, "item_id": "sublet",
+                                            "item_name": "转租限制",
+                                            "error": "连接中断"}, ensure_ascii=False))
+        else:
+            route.fulfill(status=200, content_type="application/json",
+                          body=_json.dumps(
+                              {"ok": True, "item_id": "sublet", "item_name": "转租限制",
+                               "answer": {"问题是啥": "恢复成功ANS"},
+                               "raw_text": None, "error": None}, ensure_ascii=False))
+
+    _stub_ask_flow(home, {})
+    home.unroute("**/api/ask")
+    home.route("**/api/ask", ask_route)
+    home.locator("#item-list .item.attention").first.click()
+    home.click("#detail-ask")
+    home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
+    home.fill("#ask-input", "断线重试的问题")
+    home.click("#btn-ask")
+    home.wait_for_selector("#ask-error:not(.hidden)", state="visible")
+    stored = home.evaluate("localStorage.getItem('ask-pending-v1')")
+    assert stored, "失败后 request_id 必须落 localStorage"
+    orig_id = _json.loads(stored)["request_id"]
+    assert _json.loads(stored)["question"] == "断线重试的问题"
+
+    # 刷新：routes 绑定随 page 存活；localStorage 留存；
+    # 清 hash 回空态（hash 还挂着会让 resumeFromHash 直达结果态）
+    home.reload()
+    home.evaluate("location.hash = ''")
+    home.wait_for_selector("#entry-file", state="visible", timeout=10000)
+    _stub_ask_flow(home, {})
+    home.unroute("**/api/ask")
+    home.route("**/api/ask", ask_route)
+    home.locator("#item-list .item.attention").first.click()
+    home.click("#detail-ask")
+    home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
+    # 恢复卡出现 → 点击回填原问题
+    home.wait_for_selector("#ask-pending:not(.hidden)", state="visible")
+    assert "断线重试的问题" in home.inner_text("#ask-pending")
+    home.click("#ask-pending button")
+    assert home.input_value("#ask-input") == "断线重试的问题"
+    # 重发：同编号；成功后 pending 清空
+    fail_first["v"] = False
+    home.click("#btn-ask")
+    home.wait_for_selector("#ask-thread .ask-msg", state="visible")
+    assert sent_request_ids[-1] == orig_id, "重发必须沿用原 request_id"
+    assert home.evaluate("localStorage.getItem('ask-pending-v1')") is None
+
+
+def test_switch_back_item_syncs_archived_answer(home):
+    """codex 十五轮 P2-4：甲在途回答期间切乙（守卫拒写），切回甲 →
+    按持久化轮次同步共享流，无需整页刷新。"""
+    stub2x = _quality_review_stub(None)
+    stub2x["ask_available"] = True
+    for it in stub2x["items"]:
+        if it["id"] == "early_termination":
+            it["status"] = "需关注"
+    import json as _json
+    held: list = []
+
+    def hold_ask(route):
+        held.append(route)  # 挂起不 fulfill = 可控延迟（在册技巧）
+
+    home.route("**/api/upload", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded",
+                          "status": "uploaded"})))
+    # 动态 stub：真实服务端在归档后 GET 才带 ask_thread——fulfill 答案的
+    # 同时落档进 stub，模拟「迟到响应已归档在服务端」
+    def review_route(r):
+        r.fulfill(status=200, content_type="application/json",
+                  body=_json.dumps(stub2x, ensure_ascii=False))
+    home.route("**/api/review/e2eq00001", review_route)
+    home.route("**/api/review/e2eq00001/items/*/revision/state", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"status": "ok", "item_id": "sublet", "drafts": [],
+                          "selected": None, "impact": None,
+                          "remaining": {"revision": 4, "impact": 3}})))
+    home.route("**/api/ask", hold_ask)
+    home.click("#entry-file")
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    home.locator("#item-list .item").first.click()  # 甲：sublet
+    home.click("#detail-ask")
+    home.fill("#ask-input", "甲的在途问题")
+    home.click("#btn-ask")
+    home.wait_for_timeout(300)
+    # 发送中切乙
+    home.locator("#item-list .item").nth(1).click()
+    home.click("#detail-ask")
+    # 甲的迟到响应归档（页面守卫拒写——此刻不该出现）
+    held.pop().fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"ok": True, "item_id": "sublet", "item_name": "转租限制",
+                          "answer": {"问题是啥": "甲的归档答案SYNC"},
+                          "raw_text": None, "error": None}, ensure_ascii=False))
+    stub2x["ask_thread"] = {"turns": [{
+        "turn_no": 1, "request_id": "sync-1", "item_id": "sublet",
+        "item_name": "转租限制", "state": "success",
+        "question": "甲的在途问题", "created_at": 1.0,
+        "answer": {"问题是啥": "甲的归档答案SYNC"}, "quote_verified": True}]}
+    home.wait_for_timeout(400)
+    assert "甲的归档答案SYNC" not in home.inner_text("#ask-thread")
+    # 切回甲：openItemAsk 触发 syncThreadFromServer（纯读，无需刷新）
+    home.locator("#item-list .item").first.click()
+    home.click("#detail-ask")
+    home.wait_for_selector("#ask-thread .ask-msg", state="visible", timeout=10000)
+    assert "甲的在途问题" in home.inner_text("#ask-thread .ask-msg-q")
+    assert "甲的归档答案SYNC" in home.inner_text("#ask-thread")
+
+
+def test_pending_saved_before_send_survives_reload(home):
+    """codex 十六轮 P1-1：请求在途（未收到回执）关标签再重开 → 恢复卡
+    接得上（身份在发送之前落盘，不靠失败回调）。"""
+    import json as _json
+    home.route("**/api/ask", lambda route: None)  # 挂起不 fulfill = 模拟在途
+    _stub_ask_flow(home, {})
+    home.unroute("**/api/ask")
+    home.route("**/api/ask", lambda route: None)
+    home.locator("#item-list .item.attention").first.click()
+    home.click("#detail-ask")
+    home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
+    home.fill("#ask-input", "在途关标签的问题")
+    home.click("#btn-ask")
+    home.wait_for_timeout(500)
+    stored = home.evaluate("localStorage.getItem('ask-pending-v1')")
+    assert stored, "发送前就必须落盘（在途无回执也要能恢复）"
+    assert _json.loads(stored)["question"] == "在途关标签的问题"
+    # 模拟重开：刷新 + 清 hash
+    home.reload()
+    home.evaluate("location.hash = ''")
+    home.wait_for_selector("#entry-file", state="visible", timeout=10000)
+    _stub_ask_flow(home, {})
+    home.locator("#item-list .item.attention").first.click()
+    home.click("#detail-ask")
+    home.wait_for_selector("#ask-pending:not(.hidden)", state="visible")
+    assert "在途关标签的问题" in home.inner_text("#ask-pending")
+
+
+def test_processing_receipt_shows_waiting_then_result(home):
+    """codex 十六轮 P1-2：processing 去重回执（ok+deduped 无答案）→
+    保留编号+对话流显示「正在回答…」，轮询到最终结果后渲染并清编号；
+    全程不得渲染「暂无」假答案。"""
+    import json as _json
+    stub = _quality_review_stub(None)
+    stub["ask_available"] = True
+    turn = {
+        "turn_no": 1, "request_id": "proc-1", "item_id": "sublet",
+        "item_name": "转租限制", "state": "success",
+        "question": "处理中的问题", "created_at": 1.0,
+        "answer": {"问题是啥": "轮询拿到答案PROC"},
+        "raw_text": None, "quote_verified": True,
+    }
+    gets = {"n": 0}
+    sent = {"request_id": None}
+
+    def ask_route(r):
+        # 客户端生成幂等键——归档轮必须回显同一个编号（服务端按
+        # (review_id, request_id) 去重，轮询按编号找 turn）
+        sent["request_id"] = (_json.loads(r.request.post_data or "{}")
+                              ).get("request_id")
+        r.fulfill(status=200, content_type="application/json",
+                  body=_json.dumps({"ok": True, "deduped": True,
+                                    "item_id": "sublet", "item_name": "转租限制",
+                                    "turn_no": 1}, ensure_ascii=False))
+
+    def review_route(r):
+        gets["n"] += 1
+        payload = dict(stub)
+        if gets["n"] > 4 and sent["request_id"]:
+            # 头几拍读档无归档轮（模拟模型还在跑）——延后两拍让「正在回答」
+            # 等待态稳定可断言，之后带上同编号归档轮
+            archived = dict(turn, request_id=sent["request_id"])
+            payload["ask_thread"] = {"turns": [archived]}
+        r.fulfill(status=200, content_type="application/json",
+                  body=_json.dumps(payload, ensure_ascii=False))
+
+    home.route("**/api/upload", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded",
+                          "status": "uploaded"})))
+    home.route("**/api/review/e2eq00001", review_route)
+    home.route("**/api/review/e2eq00001/items/*/revision/state", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"status": "ok", "item_id": "sublet", "drafts": [],
+                          "selected": None, "impact": None,
+                          "remaining": {"revision": 4, "impact": 3}})))
+    home.route("**/api/ask", ask_route)
+    home.click("#entry-file")
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    home.locator("#item-list .item.attention").first.click()
+    home.click("#detail-ask")
+    home.fill("#ask-input", "处理中的问题")
+    home.click("#btn-ask")
+    # 等待态出现（不是「暂无」假答案）
+    home.wait_for_selector("#ask-thread .ask-msg-waiting", state="visible")
+    assert "正在回答" in home.inner_text("#ask-thread .ask-msg-waiting")
+    assert home.evaluate("localStorage.getItem('ask-pending-v1')") is not None, \
+        "处理中不得清编号"
+    # 轮询到最终结果：等待态移除、真答案渲染、编号清空
+    home.wait_for_selector("#ask-thread .ask-msg .answer", state="visible",
+                           timeout=12000)
+    home.wait_for_selector("#ask-thread .ask-msg-waiting", state="detached",
+                           timeout=5000)
+    assert "轮询拿到答案PROC" in home.inner_text("#ask-thread")
+    assert home.evaluate("localStorage.getItem('ask-pending-v1')") is None
+
+
+def test_old_poll_success_keeps_newer_pending_request_id(home):
+    """codex 十七轮 P1：甲轮询成功只清自己的恢复记录——乙问题在途时，
+    甲的结果落地不得清掉乙的编号（否则关标签丢同编号重试）。"""
+    import json as _json
+    stub = _quality_review_stub(None)
+    stub["ask_available"] = True
+    sent: list[str] = []
+
+    def ask_route(r):
+        rid_req = (_json.loads(r.request.post_data or "{}")).get("request_id")
+        sent.append(rid_req)
+        # 甲乙都回处理中回执（等待态），由轮询取终局
+        r.fulfill(status=200, content_type="application/json",
+                  body=_json.dumps({"ok": True, "deduped": True,
+                                    "item_id": "sublet", "item_name": "转租限制"},
+                                   ensure_ascii=False))
+
+    def review_route(r):
+        payload = dict(stub)
+        if len(sent) >= 2 and sent[0]:
+            # 只有甲的终局归档；乙保持处理中（轮询继续但不影响断言）
+            archived = {"turn_no": 1, "request_id": sent[0],
+                        "item_id": "sublet", "item_name": "转租限制",
+                        "state": "success", "question": "甲的问题",
+                        "created_at": 1.0,
+                        "answer": {"问题是啥": "甲的结果OLDPOLL"},
+                        "raw_text": None, "quote_verified": True}
+            payload["ask_thread"] = {"turns": [archived]}
+        r.fulfill(status=200, content_type="application/json",
+                  body=_json.dumps(payload, ensure_ascii=False))
+
+    home.route("**/api/upload", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded",
+                          "status": "uploaded"})))
+    home.route("**/api/review/e2eq00001", review_route)
+    home.route("**/api/review/e2eq00001/items/*/revision/state", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"status": "ok", "item_id": "sublet", "drafts": [],
+                          "selected": None, "impact": None,
+                          "remaining": {"revision": 4, "impact": 3}})))
+    home.route("**/api/ask", ask_route)
+    home.click("#entry-file")
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    home.locator("#item-list .item.attention").first.click()
+    home.click("#detail-ask")
+    home.fill("#ask-input", "甲的问题")
+    home.click("#btn-ask")
+    home.wait_for_selector("#ask-thread .ask-msg-waiting", state="visible")
+    # 乙问题紧随发出：恢复编号已换成乙
+    home.fill("#ask-input", "乙的问题")
+    home.click("#btn-ask")
+    home.wait_for_selector("#ask-thread .ask-msg-waiting", state="visible",
+                           timeout=10000)
+    # 乙发出即同步换编号（发送前落盘）——拿这个做无竞态断言（CI 慢机上
+    # 甲的轮询可能已先吃掉自己的等待气泡，数气泡会时序翻车）
+    pending_now = _json.loads(
+        home.evaluate("localStorage.getItem('ask-pending-v1')"))
+    assert pending_now["request_id"] == sent[1], "恢复编号应已是乙"
+    # 甲轮询到成功：等待气泡剩乙一条；恢复记录必须还是乙的；
+    # 期间发过乙（seq 已进位）→ 请求守卫拦下旧轮询的现场写入
+    home.wait_for_function(
+        "document.querySelectorAll('#ask-thread .ask-msg-waiting').length === 1",
+        timeout=12000)
+    pending_after = _json.loads(
+        home.evaluate("localStorage.getItem('ask-pending-v1')") or "null")
+    assert pending_after is not None, "甲的成功不得清掉乙的恢复编号"
+    assert pending_after["request_id"] == sent[1]
+    assert "甲的结果OLDPOLL" not in home.inner_text("#ask-thread")
+    # 切走再切回：syncThreadFromServer 按持久化轮次补渲甲的答案
+    home.locator("#item-list .item").nth(1).click()
+    home.locator("#item-list .item").first.click()
+    home.click("#detail-ask")
+    home.wait_for_selector("#ask-thread .ask-msg .answer", state="visible",
+                           timeout=10000)
+    assert "甲的结果OLDPOLL" in home.inner_text("#ask-thread")

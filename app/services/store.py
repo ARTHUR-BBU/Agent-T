@@ -84,20 +84,32 @@ class ReviewStore:
         return self._ttl
 
     def _mark_stale_processing(self) -> None:
+        # B7-6（codex 十五轮 P2-5）：ask 轮次的 processing 也一并清——
+        # 服务重启后遗留「正在回答…」永远等不到模型线程，重试又会撞
+        # 去重空响应；启动时统一判失败，用户可明确重试（同 request_id
+        # 复活流转，不重复入账）
         with self._lock, closing(self._conn()) as conn, conn:
-            rows = conn.execute(
-                "SELECT id, data FROM reviews WHERE data LIKE '%\"status\": \"processing\"%'"
-            ).fetchall()
+            rows = conn.execute("SELECT id, data FROM reviews").fetchall()
             for rid, data in rows:
                 payload = json.loads(data)
-                if payload.get("status") != "processing":
-                    continue
-                payload["status"] = "error"
-                payload["error"] = "服务重启中断，请重新上传"
-                conn.execute(
-                    "UPDATE reviews SET data = ? WHERE id = ?",
-                    (json.dumps(payload, ensure_ascii=False), rid),
-                )
+                changed = False
+                if payload.get("status") == "processing":
+                    payload["status"] = "error"
+                    payload["error"] = "服务重启中断，请重新上传"
+                    changed = True
+                thread = payload.get("ask_thread")
+                if isinstance(thread, dict) and isinstance(thread.get("turns"), list):
+                    for t in thread["turns"]:
+                        if isinstance(t, dict) and t.get("state") == "processing":
+                            t["state"] = "failed"
+                            t["error"] = "服务中断，本次未完成，请重试"
+                            t["finished_at"] = time.time()
+                            changed = True
+                if changed:
+                    conn.execute(
+                        "UPDATE reviews SET data = ? WHERE id = ?",
+                        (json.dumps(payload, ensure_ascii=False), rid),
+                    )
 
     def _run_purge_hooks(self, conn: sqlite3.Connection,
                          expired_ids: list[str]) -> None:
@@ -147,6 +159,37 @@ class ReviewStore:
         什么时候上传触发 purge」——get/update 对已过期行必须直接视为不存在，
         合同这类敏感资料的访问控制要在读取路径上强制。"""
         return self._ttl > 0 and created_at < time.time() - self._ttl
+
+    def list_reviews(self, limit: int = 50) -> list[dict[str, Any]]:
+        """历史审查摘要列表（B7-6 历史侧栏；codex 十二轮 P2-4 口径）：
+
+        - TTL 过滤与单条读取同规则（`_is_expired`）——不留「列表可见、
+          点开已失效」的缝；过期行顺带落盘清理（同 get 纪律）
+        - 只回摘要字段，不回合同文本/审查结果载荷
+        - created_at 倒序；服务端限条（上限由调用方夹紧）"""
+        with closing(self._conn()) as conn, conn:
+            rows = conn.execute(
+                "SELECT id, created_at, data FROM reviews ORDER BY created_at DESC"
+            ).fetchall()
+        out: list[dict[str, Any]] = []
+        for rid, created_at, data in rows:
+            if self._is_expired(created_at):
+                continue
+            try:
+                d = json.loads(data)
+            except Exception:  # noqa: BLE001
+                continue
+            out.append({
+                "id": rid,
+                "filename": d.get("filename") or "",
+                "category": d.get("category") or "",
+                "category_label": d.get("category_label") or "",
+                "status": d.get("status") or "pending",
+                "created_at": created_at,
+            })
+            if len(out) >= max(1, limit):
+                break
+        return out
 
     def get(self, review_id: str) -> dict[str, Any] | None:
         with closing(self._conn()) as conn, conn:

@@ -354,6 +354,7 @@ def ask_about_item(
     clause_context: str = "",
     category: str = "procurement",
     stance: str = "neutral",
+    history: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Ask LLM about a 需关注 checklist item. Never stamps 没问题; must cite quote."""
     q = _normalize_question(question)
@@ -386,7 +387,7 @@ def ask_about_item(
         }
 
     system = _build_system_prompt(policies, category=category, stance=stance)
-    user = _build_user_prompt(q, item, contract_text, clause_context=clause_context, category=category, stance=stance)
+    user = _build_user_prompt(q, item, contract_text, clause_context=clause_context, category=category, stance=stance, history=history)
 
     try:
         if deepseek:
@@ -479,6 +480,50 @@ def _build_system_prompt(
 PROMPT_VERSION = source_version(_build_system_prompt)
 
 
+_HISTORY_MAX_TURNS = 10
+_HISTORY_BUDGET_CHARS = 6000
+_HISTORY_TURN_CLIP = 300
+
+
+def _clip_history_block(history: Optional[list[dict[str, Any]]]) -> str:
+    """B7-6（codex 十五轮 P1-2，计划 §三-补2）：最近 N 轮对话摘要区。
+
+    N=10、总长封顶 6000 字符（防 token 膨胀）；每轮单字段裁 300 字，
+    每轮前置来源标注「（关于：××条目）」——跨条目追问时模型能看到前情
+    且知道说的是哪条。预算从最新轮往回装，装不下丢最旧的。
+    """
+    turns = [t for t in (history or []) if isinstance(t, dict)]
+    if not turns:
+        return ""
+    turns = turns[-_HISTORY_MAX_TURNS:]
+
+    def _clip(v: Any) -> str:
+        s = str(v or "").strip()
+        return s[:_HISTORY_TURN_CLIP]
+
+    lines: list[str] = []
+    used = 0
+    for t in reversed(turns):  # 从最新往回装
+        raw_ans = t.get("answer")
+        ans: dict[str, Any] = dict(raw_ans) if isinstance(raw_ans, dict) else {}
+        parts = []
+        for k in ("问题是啥", "建议怎么改"):
+            piece = str(ans.get(k) or "").strip()[:_HISTORY_TURN_CLIP]
+            if piece:
+                parts.append(piece)
+        summary = "；".join(parts) or "（本轮无结构化摘要）"
+        line = (f"（关于：{_clip(t.get('item_name'))}）问：{_clip(t.get('question'))}\n"
+                f"答：{summary}")
+        if used + len(line) > _HISTORY_BUDGET_CHARS:
+            break
+        lines.append(line)
+        used += len(line)
+    if not lines:
+        return ""
+    lines.reverse()  # 恢复时间正序（旧→新）
+    return "此前对话记录（供参考的前情，最近在前）：\n" + "\n".join(lines) + "\n\n"
+
+
 def _build_user_prompt(
     question: str,
     item: dict[str, Any],
@@ -487,6 +532,7 @@ def _build_user_prompt(
     *,
     category: str = "procurement",
     stance: str = "neutral",
+    history: Optional[list[dict[str, Any]]] = None,
 ) -> str:
     # 与评分卡同向的头尾采样（小智娘门禁 P3-7：旧版纯头部 12000 截断不一致）
     from app.services.scorecard import clip_contract_text
@@ -509,6 +555,7 @@ def _build_user_prompt(
 {body}
 """
     stance_line = stance_service.prompt_stance_line(category, stance)
+    history_block = _clip_history_block(history)
     return f"""{stance_line}
 
 清单项：{item.get('name')}（id={item.get('id')}）
@@ -516,7 +563,7 @@ def _build_user_prompt(
 规则备注：{item.get('note')}
 规则摘录：{item.get('quote')}
 
-用户问题：{question}
+{history_block}用户问题：{question}
 
 {context_block}"""
 

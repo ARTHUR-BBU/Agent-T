@@ -21,16 +21,33 @@
   // A4 九哥定稿（上传/结果/追问共用；铁律旁注常驻可见）
   const STANCE_IRON_LAW = "立场只影响解释，不改变清单通过/需关注等规则档";
   const STANCE_EXPLAIN_GUIDE = "按当前立场说明谁受益、谁担责";
-  const screens = {
-    upload: $("screen-upload"),
-    results: $("screen-results"),
-    ask: $("screen-ask"),
-  };
+
+  /** B7-6 整壳：三屏模型退役，工作区三态（ws-empty/ws-running/ws-results）。
+   * show() 保留为兼容壳：旧调用点 show("upload"/"results") 语义不变，
+   * show("ask") 退役（对话工作台不是屏，挂在右栏详情之下）。 */
+  function setWs(name) {
+    const main = $("shell-main");
+    if (main) main.dataset.ws = name;
+    const states = { empty: "ws-empty", running: "ws-running", results: "ws-results" };
+    Object.entries(states).forEach(([k, id]) => {
+      const el = $(id);
+      if (el) el.classList.toggle("hidden", k !== name);
+    });
+    syncShellChrome();
+  }
 
   function show(name) {
-    Object.entries(screens).forEach(([k, el]) => {
-      el.classList.toggle("hidden", k !== name);
-    });
+    if (name === "ask") return; // 对话工作台不是屏
+    setWs(name === "upload" ? "empty" : name);
+  }
+
+  /** 左栏下区显隐：有打开的审查才渲染「本份合同」导航区 */
+  function syncShellChrome() {
+    const has = state.reviewId != null;
+    const sect = $("shell-context-sect");
+    const list = $("shell-context");
+    if (sect) sect.classList.toggle("hidden", !has);
+    if (list) list.classList.toggle("hidden", !has);
   }
 
   function statusClass(status) {
@@ -167,16 +184,33 @@
     err.classList.add("hidden");
     hidePrecheckConfirm();
     closeAskContext(); // codex 十轮 P1：新合同会话开始，旧问答上下文清场
-    if (!fileInput.files || !fileInput.files[0]) {
-      err.textContent = "请先选择合同文件。";
-      err.classList.remove("hidden");
-      return;
+    const pasteMode = !$("paste-wrap").classList.contains("hidden");
+    const fd = new FormData();
+    if (pasteMode) {
+      // B7-6 附录 B：粘贴模式（前端预检；后端独立校验双保险）
+      const text = ($("paste-text").value || "").trim();
+      if (!text) {
+        err.textContent = "粘贴内容为空。";
+        err.classList.remove("hidden");
+        return;
+      }
+      if (text.length > 200000) {
+        err.textContent = "超出 20 万字符上限，请删减后提交。";
+        err.classList.remove("hidden");
+        return;
+      }
+      fd.append("pasted_text", text);
+    } else {
+      if (!fileInput.files || !fileInput.files[0]) {
+        err.textContent = "请先选择合同文件。";
+        err.classList.remove("hidden");
+        return;
+      }
+      fd.append("file", fileInput.files[0]);
     }
     const btn = $("btn-upload");
     btn.disabled = true;
     $("stance-seg").disabled = true; // 上传进行中立场锁定（阳仔线框）
-    const fd = new FormData();
-    fd.append("file", fileInput.files[0]);
     fd.append("category", categoryOverride || $("category").value);
     // 阶段 1.3：立场随请求上报（默认 neutral）
     fd.append("stance", selectedStance());
@@ -195,7 +229,7 @@
       state.selectedItemId = null;
       state.stageIdx = 0;
       setReviewHash(data.review_id);
-      show("results");
+      setWs("running");
       $("results-loading").classList.remove("hidden");
       $("results-body").classList.add("hidden");
       $("results-error").classList.add("hidden");
@@ -301,6 +335,8 @@
           loading.classList.add("hidden");
           renderResults(data, { partial: data.completion !== "fully_complete" });
           body.classList.remove("hidden");
+          setWs("results");
+          renderShellHistory(); // B7-6 历史侧栏随新记录刷新
         }
         await new Promise((r) => setTimeout(r, 2000));
         continue;
@@ -579,6 +615,12 @@
 
     renderAiFindings(data);
     renderObjections(data);
+    // B7-6 对话工作台：历史流恢复（刷新/换机不丢）+ 左栏下区导航刷新；
+    // 工作台在结果态常驻（未选条目也可看历史——codex 十二轮 P2-5）
+    renderThreadFromData(((data.ask_thread || {}).turns) || []);
+    renderShellContext();
+    const wb = $("ask-workbench");
+    if (wb) wb.classList.remove("hidden");
   }
 
   /** 阶段 2.1 质量层：清单之后的「AI 观察」虚线容器。
@@ -1201,12 +1243,8 @@
   }
 
   function selectItem(item) {
-    // 阶段 2.4：移动端点条目 = 独立详情页（hash 路由）；桌面保持行内面板，
-    // 路径与 DOM 逐字节不变
-    if (mqMobile.matches) {
-      navigateItem(item);
-      return;
-    }
+    // B7-6：整壳统一——所有尺寸都是行内详情（移动端 hash 详情页随三屏
+    // 模型退役；对话工作台入口亦走此路径）
     const selKey = item._blind ? `blind:${item.id}` : item.id;
     state.selectedItemId = selKey;
     document.querySelectorAll(".item").forEach((el) => {
@@ -1272,8 +1310,7 @@
     // Blind candidates need human confirm; do not offer rule-style ask as if stamped
     if (item.status === "需关注" && !item._blind) {
       actions.classList.remove("hidden");
-      $("detail-ask").onclick = () =>
-        (mqDesktop.matches ? openAskDialog(item) : openAskDetail(item));
+      $("detail-ask").onclick = () => openItemAsk(item);
     } else {
       actions.classList.add("hidden");
       $("detail-ask").onclick = null;
@@ -1294,20 +1331,8 @@
   /** 阶段 2.4：移动端点条目 = 独立详情页。hash 是唯一事实源——写 hash 后由
    * hashchange 统一驱动视图（Back 手势/返回键免费获得）；同 hash 重复点击
    * 不触发事件（已在页上，符合直觉）。 */
-  function navigateItem(item) {
-    state.resultsScrollY = window.scrollY;
-    const key = item._blind ? "blind:" + item.id : item.id;
-    try {
-      window.location.hash = "#/review/" + state.reviewId + "/item/" + key;
-    } catch (e) {
-      openAskDetail(item); // 隐私模式等 hash 不可写场景：直接渲染不路由
-    }
-  }
-
-  /** 阶段 2.4 详情/追问屏（#screen-ask 升级兼任，桌面桌面入口与移动 hash
-   * 直达共用）。阅读顺序=说明→原文→(答案)→追问输入（roadmap 裁决 1/2）。
-   * 三类条目分流追问卡（阳仔 3.3）：仅「需关注且非补盲」出追问卡——
-   * 补盲渲染成「追问暂未开通」是把「待人工确认」误读成「未开通」。 */
+  /** 阶段 2.4 详情/追问屏已随 B7-6 三屏模型退役（hash 详情页/弹窗均废，
+   * 统一为对话工作台 openItemAsk）。fillAskContext 全量初始化保留： */
   /** B7-5b（codex 八轮 P1-1 补明）：两种入口共用**完整初始化**——抽取范围
    * 是 openAskDetail 的全部前置工作（登记/seq 判废/立场文案/状态行/段1/
    * 段2/段3-4 可用性门禁与禁用态/清空旧答案与 chips），不只段1/段2。
@@ -1385,28 +1410,15 @@
         btn.disabled = true;
         input.disabled = true;
       }
+      // codex 十五轮 P1-3：断线/刷新遗留的未完成提问——恢复卡（原编号重试）
+      renderPendingRetry(item);
     }
 
   }
 
-  function openAskDetail(item) {
-    fillAskContext(item);
-    const selKey = item._blind ? "blind:" + item.id : item.id;
-    state.selectedItemId = selKey;
-    document.querySelectorAll(".item").forEach((el) => {
-      el.classList.toggle("selected", el.dataset.itemId === selKey);
-    });
-
-    show("ask");
-    // B7-3a 三卡（移动端 hash 屏与桌面「问清楚一点」共用本函数）：
-    // show 之后再挂载，revPickBox 才能按当前可见屏选对容器
-    if (revEligible(item) && state.reviewId) {
-      loadRevCards(state.reviewId, item);
-    } else {
-      $("rev-cards-ask").classList.add("hidden");
-    }
-    window.scrollTo(0, 0);
-  }
+  /** B7-6：问清楚入口统一走对话工作台（openItemAsk）。openAskDetail 的
+   * hash 问答屏随三屏模型退役；fillAskContext 全量初始化由 openItemAsk
+   * 复用（selectItem 内含高亮+详情填充）。 */
 
   async function sendAsk() {
     const err = $("ask-error");
@@ -1434,6 +1446,25 @@
       itemId: state.askItem.id,
       reqId: ++state.askReqSeq,
     };
+    // B7-6 幂等键（codex 十三轮）：失败重试沿用同一 request_id（原 turn
+    // 复活流转，不重复入账）；新问题新键。服务端按 (review_id, request_id)
+    // 去重——断线重发/同键并发都只一条记录一次调用
+    const retry = state.lastAskFail
+      && state.lastAskFail.review_id === snapshot.reviewId
+      && state.lastAskFail.item_id === snapshot.itemId
+      && state.lastAskFail.question === question;
+    const request_id = retry
+      ? state.lastAskFail.request_id
+      : ((window.crypto && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : "req-" + Date.now().toString(36) + Math.random().toString(36).slice(2));
+    // codex 十六轮 P1-1：请求身份在发送之前就落盘——请求在途关标签再重开，
+    // 恢复卡才能接上（失败后才存会漏掉「发出但没等到回执」的窗口）
+    state.lastAskFail = {
+      review_id: snapshot.reviewId,
+      item_id: snapshot.itemId, question, request_id,
+    };
+    savePendingAsk(state.lastAskFail);
     try {
       const res = await fetch("/api/ask", {
         method: "POST",
@@ -1442,6 +1473,7 @@
           review_id: snapshot.reviewId,
           item_id: snapshot.itemId,
           question,
+          request_id,
         }),
       });
       const data = await res.json();
@@ -1452,19 +1484,33 @@
         err.classList.remove("hidden");
         return;
       }
+      // codex 十六轮 P1-2：「仍在处理」不是「已回答」——processing 去重
+      // 回执没有答案，不得清编号、不得渲染「暂无」。保留恢复编号，对话流
+      // 显示等待态，轮询读最终结果（成功清编号 / 失败保留可原号重试）
+      if (data.deduped && !data.answer) {
+        const waitEl = appendWaitingBubble(question, state.askItem);
+        threadScrollBottom();
+        pollAskTurn(snapshot.reviewId, request_id, snapshot, waitEl, 0);
+        return;
+      }
+      state.lastAskFail = null;
+      clearPendingAsk();
       const verified = data.quote_verified !== false
         && !!(data.answer && data.answer.quote_verified !== false
               && data.answer["原文在哪"]
               && data.answer["原文在哪"] !== "未定位到原文");
       renderAnswer(data.answer || {}, data.raw_text, { quoteVerified: verified });
       ans.classList.remove("hidden");
-      // 阶段 2.4：移动详情页答案在输入之上，发问成功后滚到答案（即时滚动，
-      // 长文里 smooth 反而晕；桌面答案在输入下方，保持原行为不跳）
-      if (mqMobile.matches) {
-        ans.scrollIntoView({ block: "start" });
-      }
+      // B7-6 对话工作台：本轮问答归档进共享流（关于：××条目）
+      appendThreadBubble(question, ans, state.askItem);
+      threadScrollBottom();
     } catch (e) {
       if (!isAskResponseCurrent(snapshot)) return;
+      state.lastAskFail = {
+        review_id: snapshot.reviewId,
+        item_id: snapshot.itemId, question, request_id,
+      };
+      savePendingAsk(state.lastAskFail);
       err.textContent = e.message || String(e);
       err.classList.remove("hidden");
     } finally {
@@ -1476,6 +1522,235 @@
         btn.disabled = false;
       }
     }
+  }
+
+  /** B7-6（codex 十五轮 P1-3）：未完成提问的持久化与恢复。
+   * request_id 只活在内存变量里，刷新即换号——断线重发会二次调模型。
+   * 失败即落 localStorage（随浏览器留存），成功即清；恢复卡提供明确
+   * 重试入口，原编号原问题重发（服务端按 (review_id, request_id) 去重，
+   * 不重复计费）。 */
+  const PENDING_ASK_KEY = "ask-pending-v1";
+
+  function savePendingAsk(p) {
+    try {
+      localStorage.setItem(PENDING_ASK_KEY, JSON.stringify({
+        review_id: p.review_id, item_id: p.item_id,
+        question: p.question, request_id: p.request_id,
+        saved_at: Date.now(),
+      }));
+    } catch (e) { /* 隐私模式/配额满：降级为仅内存（旧行为） */ }
+  }
+
+  function clearPendingAsk() {
+    try { localStorage.removeItem(PENDING_ASK_KEY); } catch (e) { /* 同上 */ }
+  }
+
+  function loadPendingAsk() {
+    try {
+      const raw = localStorage.getItem(PENDING_ASK_KEY);
+      if (!raw) return null;
+      const p = JSON.parse(raw);
+      if (!p || !p.request_id || !p.question) return null;
+      return p;
+    } catch (e) { return null; }
+  }
+
+  /** 恢复卡：当前条目与遗留提问匹配时显示，点击回填原问题（发送时
+   * 走同键重试路径——lastAskFail 已在启动时从 localStorage 恢复）。 */
+  function renderPendingRetry(item) {
+    const el = $("ask-pending");
+    if (!el) return;
+    const pending = loadPendingAsk();
+    if (!pending || !state.reviewId || !item
+        || pending.review_id !== state.reviewId
+        || pending.item_id !== item.id) {
+      el.classList.add("hidden");
+      el.textContent = "";
+      return;
+    }
+    el.textContent = "";
+    const label = document.createElement("span");
+    label.textContent = "上次有一条提问没有完成：「" + pending.question + "」 ";
+    const btnRetry = document.createElement("button");
+    btnRetry.type = "button";
+    btnRetry.className = "link";
+    btnRetry.textContent = "重新发送（不会重复计费）";
+    btnRetry.addEventListener("click", () => {
+      const input = $("ask-input");
+      if (input) {
+        input.value = pending.question;
+        input.focus();
+      }
+      el.classList.add("hidden");
+    });
+    el.appendChild(label);
+    el.appendChild(btnRetry);
+    el.classList.remove("hidden");
+  }
+
+  /** B7-6 共享对话流：把刚渲染的 #ask-answer 归档成一条消息气泡
+   * （关于：××条目 + 问题 + 四段式答案克隆），原槽位清空供下一轮。
+   * renderAnswer 按 ID 写入，故历史轮用内容克隆而非节点搬移。 */
+  function appendThreadBubble(question, answerEl, item) {
+    const thread = $("ask-thread");
+    if (!thread || !answerEl) return;
+    const msg = document.createElement("div");
+    msg.className = "ask-msg ask-msg-user";
+    const about = document.createElement("p");
+    about.className = "ask-msg-about";
+    about.textContent = "关于：" + ((item && item.name) || "");
+    const q = document.createElement("p");
+    q.className = "ask-msg-q";
+    q.textContent = question;
+    const ansWrap = document.createElement("div");
+    ansWrap.className = "ask-msg-ans";
+    const ansClone = document.createElement("div");
+    ansClone.className = "answer";
+    ansClone.innerHTML = answerEl.innerHTML;
+    ansWrap.appendChild(ansClone);
+    msg.appendChild(about);
+    msg.appendChild(q);
+    msg.appendChild(ansWrap);
+    thread.appendChild(msg);
+    answerEl.innerHTML = "";
+    answerEl.classList.add("hidden");
+  }
+
+  /** B7-6（codex 十六轮 P1-2）：处理中等待气泡——processing 去重回执
+   * 没有答案，对话流如实显示等待态（拿到最终结果后整条移除）。 */
+  function appendWaitingBubble(question, item) {
+    const thread = $("ask-thread");
+    if (!thread) return null;
+    const msg = document.createElement("div");
+    msg.className = "ask-msg ask-msg-waiting";
+    const about = document.createElement("p");
+    about.className = "ask-msg-about";
+    about.textContent = "关于：" + ((item && item.name) || "");
+    const q = document.createElement("p");
+    q.className = "ask-msg-q";
+    q.textContent = question;
+    const st = document.createElement("p");
+    st.className = "ask-msg-state";
+    st.textContent = "正在回答…";
+    msg.appendChild(about);
+    msg.appendChild(q);
+    msg.appendChild(st);
+    thread.appendChild(msg);
+    return msg;
+  }
+
+  /** B7-6（codex 十六轮 P1-1/2）：处理中轮询——2 秒一次、上限 2 分钟。
+   * success：清编号+渲染气泡（仅当仍在同一审查同一条目；离开过就交给
+   * syncThreadFromServer 补渲，旧快照不回写）；failed：保留编号可原号
+   * 重试；超时：如实告知并指向恢复卡。 */
+  function pollAskTurn(reviewId, requestId, snapshot, waitEl, attempt, question) {
+    if (attempt > 60) {
+      if (waitEl && waitEl.parentNode) waitEl.remove();
+      const err = $("ask-error");
+      if (err && isAskResponseCurrent(snapshot)) {
+        err.textContent = "等了很久还没拿到结果，请点恢复卡重新发送（原编号重试，不会重复计费）";
+        err.classList.remove("hidden");
+      }
+      return;
+    }
+    fetch("/api/review/" + encodeURIComponent(reviewId))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("read"))))
+      .then((data) => {
+        const turns = (data && data.ask_thread && data.ask_thread.turns) || [];
+        const turn = turns.find((t) => t && t.request_id === requestId);
+        if (!turn || turn.state === "processing") {
+          setTimeout(() => pollAskTurn(
+            reviewId, requestId, snapshot, waitEl, attempt + 1, question), 2000);
+          return;
+        }
+        if (waitEl && waitEl.parentNode) waitEl.remove();
+        if (turn.state === "success") {
+          // codex 十七轮 P1：只清理属于自己的待办——核对合同+请求编号。
+          // 旧轮询（甲）拿到结果时，恢复记录可能已是新问题（乙）的编号，
+          // 无条件清空会让乙在途时丢掉同编号重试能力
+          const pending = loadPendingAsk();
+          if (pending && pending.review_id === reviewId
+              && pending.request_id === requestId) {
+            clearPendingAsk();
+          }
+          if (state.lastAskFail && state.lastAskFail.review_id === reviewId
+              && state.lastAskFail.request_id === requestId) {
+            state.lastAskFail = null;
+          }
+          // 界面写入复用请求守卫（镜像 isAskResponseCurrent）：期间发过
+          // 新问题（seq 已进位）则不现场写——syncThreadFromServer 在下次
+          // 进入工作台时按持久化轮次补渲，旧轮询不抢新请求的界面
+          if (isAskResponseCurrent(snapshot)) {
+            const verified = turn.quote_verified !== false
+              && !!(turn.answer && turn.answer.quote_verified !== false
+                    && turn.answer["原文在哪"]
+                    && turn.answer["原文在哪"] !== "未定位到原文");
+            const box = document.createElement("div");
+            renderAnswer(turn.answer || {}, turn.raw_text || "",
+              { quoteVerified: verified }, box);
+            appendThreadBubble(turn.question || question || "",
+              box, state.askItem);
+            threadScrollBottom();
+          }
+        } else {
+          const err = $("ask-error");
+          if (err && isAskResponseCurrent(snapshot)) {
+            err.textContent = turn.error || "这次没有答上来，可原编号重试";
+            err.classList.remove("hidden");
+          }
+        }
+      })
+      .catch(() => {
+        // 读档失败不放弃：继续轮询（服务端归档是事实源）
+        setTimeout(() => pollAskTurn(
+          reviewId, requestId, snapshot, waitEl, attempt + 1, question), 2000);
+      });
+  }
+
+  /** B7-6 共享对话流：从持久化 turns 渲染全部历史（刷新恢复/未选条目
+   * 也可查看——codex 十二轮 P2-5：选中只门禁发送，不门禁查看） */
+  function renderThreadFromData(turns) {
+    const thread = $("ask-thread");
+    if (!thread) return;
+    thread.innerHTML = "";
+    (turns || []).forEach((t) => {
+      const msg = document.createElement("div");
+      msg.className = "ask-msg ask-msg-user";
+      const about = document.createElement("p");
+      about.className = "ask-msg-about";
+      about.textContent = "关于：" + (t.item_name || "");
+      const q = document.createElement("p");
+      q.className = "ask-msg-q";
+      q.textContent = t.question || "";
+      const ansWrap = document.createElement("div");
+      ansWrap.className = "ask-msg-ans";
+      if (t.state === "success" && t.answer) {
+        const ansDiv = document.createElement("div");
+        ansDiv.className = "answer";
+        renderAnswer(t.answer, t.raw_text || "",
+          { quoteVerified: t.quote_verified !== false }, ansDiv);
+        ansWrap.appendChild(ansDiv);
+      } else if (t.state === "processing") {
+        const st = document.createElement("p");
+        st.className = "ask-msg-state";
+        st.textContent = "正在回答…";
+        ansWrap.appendChild(st);
+      } else if (t.state === "failed") {
+        const st = document.createElement("p");
+        st.className = "ask-msg-state";
+        st.textContent = "这次没有答上来" + (t.error ? "（" + t.error + "）" : "");
+        ansWrap.appendChild(st);
+      }
+      msg.appendChild(about);
+      msg.appendChild(q);
+      msg.appendChild(ansWrap);
+      thread.appendChild(msg);
+    });
+  }
+
+  function threadScrollBottom() {
+    const thread = $("ask-thread");
+    if (thread) thread.scrollTop = thread.scrollHeight;
   }
 
   /** 阶段 2.3 摘要行：取 note 第一句（。！？\n 切分），去句末标点，≤60 字；
@@ -1524,8 +1799,8 @@
    * 段③ 建议改法 ←「建议怎么改」+ 改写稿块（原样保留）
    * 段④ 待确认的事 ← 当前键无内容源，缺段静默隐藏
    * raw_text <pre> 兜底保留（结构化失败不装正常）。 */
-  function renderAnswer(answer, raw, opts) {
-    const box = $("ask-answer");
+  function renderAnswer(answer, raw, opts, targetEl) {
+    const box = targetEl || $("ask-answer");
     const where = (answer && answer["原文在哪"]) || "";
     const impact = (answer && answer["问题是啥"]) || "";
     const rewrite = (answer && answer["建议怎么改"]) || "";
@@ -1691,21 +1966,14 @@
     $("results-error").classList.add("hidden");
     $("item-detail").classList.add("hidden");
     await pollReview();
-    // 阶段 2.4：直达链接带 item 段（#/review/{rid}/item/{key}）→ 渲染后回选
-    const route = routeFromHash();
-    if (route.itemId && state.reviewId === route.rid) {
-      const item = findItemByKey(route.itemId);
-      if (item) openItemAsk(item);
-    }
   }
 
   // 浏览器 Back/Forward 与界面同步（小智娘门禁 P2-4：hash 已退界面还在，
   // 此时刷新会让「刷新丢结果」事故从 Back 路径复发）。
-  // 阶段 2.4：同 rid 内 item 段变化走本地详情页切换，不重新轮询。
+  // B7-6：item 段路由随三屏模型退役——hash 只有 #/review/{rid} 一种形态。
   window.addEventListener("hashchange", () => {
-    // codex 十轮 P1：任何 hash 导航都视为退出当前问答上下文（桌面弹窗
-    // 不绑 hash，openAskDialog 自身不触发本事件——凡 hash 变了必是用户
-    // 在导航，旧弹窗/旧条目一律清场）
+    // codex 十轮 P1：任何 hash 导航都视为退出当前问答上下文（对话工作台
+    // 自身不触发 hash 事件——凡 hash 变了必是用户在导航，旧问答一律清场）
     closeAskContext();
     const route = routeFromHash();
     if (route.rid !== state.reviewId) {
@@ -1719,38 +1987,10 @@
       }
       return;
     }
-    if (route.itemId) {
-      const item = findItemByKey(route.itemId);
-      if (item) {
-        openItemAsk(item);
-      } else {
-        show("results"); // 找不到条目（旧记录/数据不齐）：回结果页不装详情
-      }
-    } else {
-      show("results");
-      window.scrollTo(0, state.resultsScrollY || 0);
-    }
+    show("results");
+    // codex 十二轮 P2-5：滚动位置存取迁移到工作区滚动容器
+    $("shell-main").scrollTop = state.resultsScrollY || 0;
   });
-
-  // 断点穿越（旋转/拉伸窗口）：以当前 hash 重新推导视图，不产生分裂状态
-  const onBreakpointChange = () => {
-    const route = routeFromHash();
-    if (route.rid !== state.reviewId) return;
-    if (route.itemId) {
-      if (mqMobile.matches) {
-        const item = findItemByKey(route.itemId);
-        if (item) openAskDetail(item);
-      } else {
-        // 移动详情 → 桌面：回结果页行内面板（桌面没有独立详情页）
-        const item = findItemByKey(route.itemId);
-        show("results");
-        if (item) selectItem(item);
-      }
-    }
-  };
-  if (typeof mqMobile.addEventListener === "function") {
-    mqMobile.addEventListener("change", onBreakpointChange);
-  }
 
   $("btn-upload").addEventListener("click", () => upload());
   $("btn-precheck-switch").addEventListener("click", () => {
@@ -1772,23 +2012,25 @@
   });
   $("btn-ask").addEventListener("click", sendAsk);
   $("btn-back-upload").addEventListener("click", () => {
+    closeAskContext();
     clearReviewHash();
     state.reviewId = null;
     show("upload");
+    renderShellHistory();
   });
-  $("btn-back-results").addEventListener("click", () => {
-    // 阶段 2.4：详情页上返回 = 退 hash（Back 语义一致，滚动自动恢复）；
-    // 无 item 段（桌面入口）维持原行为
-    if (routeFromHash().itemId) {
-      try {
-        window.location.hash = "#/review/" + state.reviewId;
-      } catch (e) {
-        show("results");
-      }
-    } else {
-      show("results");
-    }
-  });
+  // B7-6：详情返回按钮随 hash 详情页退役——按钮仍在结果头（回空态引导），
+  // 行为与「重新上传」一致
+  const backResults = $("btn-back-results");
+  if (backResults) {
+    // 节点随 #screen-ask 退役（B7-6）：绑定留空守卫，防旧引用崩
+    backResults.addEventListener("click", () => {
+      closeAskContext();
+      clearReviewHash();
+      state.reviewId = null;
+      show("upload");
+      renderShellHistory();
+    });
+  }
 
   // ===== 阶段 1.3 立场 segmented（阳仔线框①）=====
   // 数据源：/api/categories 的 stances 元数据（YAML 单一来源）；
@@ -1941,9 +2183,9 @@
   }
 
   function revPickBox() {
-    const askScreen = $("screen-ask");
-    const wantAsk = !!(askScreen && !askScreen.classList.contains("hidden"));
-    return $(wantAsk ? "rev-cards-ask" : "rev-cards");
+    // B7-6：三屏退役，三卡固定挂右栏详情内的 #rev-cards（对话工作台/详情
+    // 同容器滚动），不再有移动端第二挂载点
+    return $("rev-cards");
   }
 
   function revFmtTime(ts) {
@@ -2282,7 +2524,7 @@
    * DOM 与旧版逐字节一致。判废机制一行不碰——关闭弹窗只是 seq 计数器的
    * 新增使用点（守卫判定逻辑原样）。 */
   const mqDesktop = window.matchMedia("(min-width: 1024px)");
-  const askDialog = $("ask-dialog");
+  const askWorkbench = $("ask-workbench");
 
   function _statusTagEl(item) {
     const tag = document.createElement("span");
@@ -2301,7 +2543,7 @@
   }
 
   function cleanupAskSession() {
-    // codex 七轮 P1-2：关弹窗=作废在途响应+按钮复位——晚到旧响应被
+    // codex 七轮 P1-2：作废在途响应+按钮复位——晚到旧响应被
     // isAskResponseCurrent 的 seq 比对拒写；守卫逻辑本身零改动
     state.askReqSeq += 1;
     const btn = $("btn-ask");
@@ -2309,9 +2551,10 @@
   }
 
   function applyDesktopLayout() {
-    // #item-detail：≥1024 进右栏 aside；<1024 按启动时锚点搬回原位
-    const detail = $("item-detail");
+    // 搬迁清单（codex 十二轮 P2-5：detail+对话块两节点都显式搬，
+    // 「原样搬迁」不覆盖新增节点）
     const aside = document.querySelector(".col-side");
+    const detail = $("item-detail");
     if (detail && aside) {
       if (mqDesktop.matches) {
         if (detail.parentNode !== aside) aside.appendChild(detail);
@@ -2320,24 +2563,11 @@
         detailAnchor.parent.insertBefore(detail, detailAnchor.next);
       }
     }
-    // ask 三节点：≥1024 搬进 dialog 宿主；<1024 逆 DOM 序还原
-    // （参照兄弟要先归位，否则 insertBefore 抛 HierarchyRequestError）
-    const askHost = $("ask-dialog-body");
-    if (askHost) {
-      const askNodes = [$("ask-note-card"), $("ask-quote-card"),
-                        document.querySelector(".ask-interact")];
+    if (askWorkbench && aside) {
       if (mqDesktop.matches) {
-        askNodes.forEach((n) => {
-          if (n && n.parentNode !== askHost) askHost.appendChild(n);
-        });
-      } else {
-        askNodes.slice().reverse().forEach((n) => {
-          if (!n) return;
-          const a = askNodeAnchors.get(n);
-          if (a && a.parent && n.parentNode !== a.parent) {
-            a.parent.insertBefore(n, a.next);
-          }
-        });
+        if (askWorkbench.parentNode !== aside) aside.appendChild(askWorkbench);
+      } else if (wbAnchor.parent && askWorkbench.parentNode !== wbAnchor.parent) {
+        wbAnchor.parent.insertBefore(askWorkbench, wbAnchor.next);
       }
     }
     syncSideEmpty();
@@ -2348,28 +2578,11 @@
     const d = $("item-detail");
     return { parent: d.parentNode, next: d.nextSibling };
   })();
-  const askNodeAnchors = new Map();
-  [$("ask-note-card"), $("ask-quote-card"),
-   document.querySelector(".ask-interact")].forEach((n) => {
-    if (n) askNodeAnchors.set(n, { parent: n.parentNode, next: n.nextSibling });
-  });
-
-  function openAskDialog(item) {
-    fillAskContext(item);
-    $("ask-dialog-title").textContent = item.name || "问清楚一点";
-    // 弹窗自带 head：状态行镜像（#ask-status-line 原件留在移动屏）
-    const dlgStatus = $("ask-dialog-status");
-    const srcStatus = $("ask-status-line");
-    if (dlgStatus) {
-      dlgStatus.innerHTML = "";
-      if (srcStatus) {
-        Array.from(srcStatus.childNodes).forEach((c) => {
-          dlgStatus.appendChild(c.cloneNode(true));
-        });
-      }
-    }
-    askDialog.showModal(); // 自带焦点圈定；Esc=cancel→close
-  }
+  const wbAnchor = (() => {
+    const w = askWorkbench;
+    return w ? { parent: w.parentNode, next: w.nextSibling }
+             : { parent: null, next: null };
+  })();
 
   function jumpToItem(itemId) {
     // C3 跨源跳转：复用行点击=高亮+右栏填充（任何跳转不丢当前位置）
@@ -2378,61 +2591,268 @@
     if (row) row.click();
   }
 
-  /** B7-5b（codex 十轮 P1）：退出问答上下文统一清理——浏览器 Back/前进/
-   * 跨合同切换时，关弹窗+作废在途响应+**清除旧条目**。不清 askItem 的话
-   * isAskResponseCurrent 只比对其余字段，甲合同的旧条目可能配着乙合同的
-   * 新 reviewId 发出去。askItem 一清，迟到旧响应双保险拒写。 */
+  function scrollToEl(el) {
+    if (el) el.scrollIntoView({ block: "start" }); // 零动画纪律：不用 smooth
+  }
+
+  /** codex 十轮 P1：退出问答上下文统一清理——清 seq+旧条目+按钮复位
+   * （弹窗已随 B7-6 退役；askItem 一清，迟到旧响应双保险拒写） */
   function closeAskContext() {
-    if (askDialog.open) askDialog.close(); // close 事件内含 seq+1 与按钮复位
     state.askItem = null;
     state.askReqSeq += 1;
     const btn = $("btn-ask");
     if (btn) btn.disabled = false;
   }
 
-  // 三通道（关闭按钮/Esc/点遮罩）统一汇入 close 事件做清理
-  const askDialogClose = $("ask-dialog-close");
-  if (askDialogClose) {
-    askDialogClose.addEventListener("click", () => askDialog.close());
-  }
-  askDialog.addEventListener("close", cleanupAskSession);
-  askDialog.addEventListener("click", (e) => {
-    if (e.target === askDialog) askDialog.close(); // 点遮罩
-  });
-
-  /** B7-5b（codex 九轮 P1-1）：路由级问清楚入口统一分流——桌面=弹窗
-   * （背后结果页+右栏详情），移动/平板带=hash 问答页。直达链接、
-   * hashchange、断点穿越三处都走本入口，不再各自为政。 */
+  /** B7-6 对话工作台：问清楚入口统一——选中+全量初始化+滚动聚焦。
+   * 原 openAskDetail（hash 问答屏）与 openAskDialog（弹窗）均随三屏模型退役。 */
   function openItemAsk(item) {
-    if (mqDesktop.matches) {
-      show("results");
-      selectItem(item);
-      openAskDialog(item);
-    } else {
-      openAskDetail(item);
+    selectItem(item);
+    fillAskContext(item);
+    if (askWorkbench) {
+      askWorkbench.classList.remove("hidden");
+      syncSideEmpty();
+      askWorkbench.scrollIntoView({ block: "center" });
+      const input = $("ask-input");
+      if (input) input.focus();
     }
+    // codex 十五轮 P2-4：回到条目即按持久化轮次同步共享流——甲条回答中
+    // 切到乙条，页面守卫拒写的迟到响应已归档在服务端；切回时不重读就
+    // 只能整页刷新才见。守卫保留零改动，这里只做「以服务端为准」的补渲
+    syncThreadFromServer();
+  }
+
+  /** B7-6（codex 十五轮 P2-4）：从服务端补渲共享对话流（纯读，零费用）。
+   * seq 守卫：同步期间发生任何新交互（发问/切条目）则放弃——那些路径
+   * 自带渲染，旧快照不得回写盖住新状态。 */
+  function syncThreadFromServer() {
+    const rid = state.reviewId;
+    if (!rid) return;
+    const seqAtReq = state.askReqSeq;
+    fetch("/api/review/" + encodeURIComponent(rid))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return;
+        if (state.reviewId !== rid) return;
+        if (state.askReqSeq !== seqAtReq) return;
+        renderThreadFromData((data.ask_thread && data.ask_thread.turns) || []);
+      })
+      .catch(() => { /* 纯增益路径：失败静默（下次切条目再试） */ });
   }
 
   mqDesktop.addEventListener("change", () => {
-    // codex 七轮 P1-2：dialog 开着跨断点——先清理关闭再搬节点，禁止带开搬迁
-    if (askDialog.open) askDialog.close();
     applyDesktopLayout();
-    // codex 九轮 P1-1：问答页跨断点统一处理——桌面没有独立问答页（节点
-    // 已搬进 dialog），若正显示 #screen-ask，转回结果页并按当前条目弹 dialog
-    const askScreen = $("screen-ask");
-    if (mqDesktop.matches && askScreen
-        && !askScreen.classList.contains("hidden") && state.askItem) {
-      const route = routeFromHash();
-      const item = (route.itemId ? findItemByKey(route.itemId) : null)
-        || state.askItem;
-      show("results");
-      selectItem(item);
-      openAskDialog(item);
-    }
+    // codex 十五轮 P2-7：断点切到桌面时同步退出抽屉——抽屉开着拉宽窗口，
+    // 汉堡已隐藏（桌面顶栏无此按钮），inert 却还罩着工作区，交互死路
+    if (mqDesktop.matches) shellDrawer(false);
     // codex 九轮 P2-2：跨断点刷新 AI 发现面板（↻ 入口随宽度双向切换）
     if (state.review) renderAiFindings(state.review);
   });
   applyDesktopLayout(); // 首次进入即按当前断点归位
+
+  // ---- B7-6 左栏：历史记录 / 当前合同导航 / 抽屉 / 空态入口 ----
+
+  function shellDrawer(open) {
+    const nav = $("shell-nav");
+    const mask = $("drawer-mask");
+    const btn = $("shell-menu");
+    if (!nav) return;
+    nav.classList.toggle("is-open", open);
+    if (mask) mask.classList.toggle("hidden", !open);
+    if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+    const main = $("shell-main");
+    if (main) {
+      // codex 十二轮 P2-6：inert 只罩右工作区——顶栏保持可点（汉堡关闭通道）
+      try { main.inert = open; } catch (e) { /* 老浏览器无 inert：降级不阻断 */ }
+    }
+    document.body.style.overflow = open ? "hidden" : "";
+    if (open) {
+      const first = nav.querySelector(".shell-item, .shell-new");
+      if (first) first.focus();
+    } else if (btn) {
+      btn.focus();
+    }
+  }
+
+  function renderShellHistory() {
+    const ul = $("shell-history");
+    if (!ul) return;
+    fetch("/api/reviews?limit=50")
+      .then((r) => (r.ok ? r.json() : { reviews: [] }))
+      .then((data) => {
+        ul.innerHTML = "";
+        const list = data.reviews || [];
+        if (!list.length) {
+          const li = document.createElement("li");
+          li.className = "shell-item";
+          li.style.cursor = "default";
+          li.textContent = "还没有审查记录，点上方按钮开始第一份";
+          ul.appendChild(li);
+          return;
+        }
+        list.forEach((rv) => {
+          const li = document.createElement("li");
+          li.className = "shell-item" + (rv.id === state.reviewId ? " is-current" : "");
+          li.dataset.rid = rv.id;
+          const mainL = document.createElement("p");
+          mainL.className = "shell-item-main";
+          mainL.textContent = rv.filename || "(未命名)";
+          const sub = document.createElement("p");
+          sub.className = "shell-item-sub";
+          const dot = document.createElement("span");
+          dot.className = "shell-dot st-" + (rv.status === "done" ? "done"
+            : rv.status === "error" ? "error" : "running");
+          sub.appendChild(dot);
+          sub.appendChild(document.createTextNode(
+            (rv.category_label || rv.category || "") + " · " +
+            (rv.status === "done" ? "已完成" : rv.status === "error" ? "失败" : "审查中")));
+          li.appendChild(mainL);
+          li.appendChild(sub);
+          li.onclick = () => {
+            shellDrawer(false);
+            if (rv.id === state.reviewId) return;
+            setReviewHash(rv.id); // hashchange 驱动 resumeFromHash 加载
+          };
+          ul.appendChild(li);
+        });
+      })
+      .catch(() => { /* 历史列表加载失败静默（侧栏降级为无历史，主流程不受影响） */ });
+  }
+
+  /** 左栏下区：当前合同导航（锚点跳转，不复制内容；codex 十二轮 P2-5：
+   * 对话历史不依赖选中态——未选条目也可经「对话」锚点查看全部历史） */
+  function renderShellContext() {
+    const ul = $("shell-context");
+    if (!ul) return;
+    ul.innerHTML = "";
+    const data = state.review;
+    if (!data) return;
+    const entries = [
+      { label: "概览", act: () => scrollToEl($("results-meta")) },
+      { label: "清单", act: () => scrollToEl($("item-list")) },
+    ];
+    (data.items || []).filter((i) => i.status === "需关注").forEach((i) => {
+      entries.push({ label: i.name || i.id, act: () => jumpToItem(i.id) });
+    });
+    const af = data.ai_findings;
+    const pending = (af && af.available && Array.isArray(af.findings))
+      ? af.findings.filter((f) => f.status === "pending").length : 0;
+    entries.push({
+      label: "AI 发现" + (pending ? `（${pending} 待确认）` : ""),
+      act: () => scrollToEl($("ai-findings-panel")),
+    });
+    const turns = ((data.ask_thread || {}).turns) || [];
+    entries.push({
+      label: "对话" + (turns.length ? `（${turns.length}）` : ""),
+      act: () => {
+        if (askWorkbench) {
+          askWorkbench.classList.remove("hidden");
+          scrollToEl(askWorkbench);
+        }
+      },
+    });
+    entries.push({ label: "评分", act: () => scrollToEl($("score-card")) });
+    entries.forEach((it) => {
+      const li = document.createElement("li");
+      li.className = "shell-item";
+      li.textContent = it.label;
+      li.onclick = () => { it.act(); shellDrawer(false); };
+      ul.appendChild(li);
+    });
+  }
+
+  // ---- B7-6 空态入口卡：文件/粘贴互斥切换 + 粘贴字数与超限禁提交 ----
+
+  function bindShellEntries() {
+    const entryFile = $("entry-file");
+    const entryPaste = $("entry-paste");
+    const settings = $("ws-settings");
+    const pasteWrap = $("paste-wrap");
+    const fileWrap = $("file-wrap");
+    const pasteArea = $("paste-text");
+    const pasteErr = $("paste-error");
+    const btn = $("btn-upload");
+    if (!entryFile || !entryPaste || !settings) return;
+    const reveal = () => settings.classList.remove("hidden");
+    // codex 十五轮 P2-8：提交可用性只由「当前激活的入口」决定——粘贴超限
+    // 禁用了按钮，切回文件入口必须重算，否则正常文件也提交不了
+    const updateSubmitEnabled = () => {
+      if (!btn) return;
+      const pasteActive = !pasteWrap.classList.contains("hidden");
+      const n = pasteActive ? (pasteArea && pasteArea.value || "").trim().length : 0;
+      btn.disabled = pasteActive && n > 200000;
+    };
+    entryFile.onclick = () => {
+      reveal();
+      pasteWrap.classList.add("hidden");
+      fileWrap.classList.remove("hidden");
+      updateSubmitEnabled();
+      // 不自动唤起原生文件选择器：用户自己点「选择文件」（e2e 也可稳定操作）
+    };
+    entryPaste.onclick = () => {
+      reveal();
+      fileWrap.classList.add("hidden");
+      pasteWrap.classList.remove("hidden");
+      if (pasteArea) pasteArea.focus();
+    };
+    if (pasteArea) {
+      pasteArea.addEventListener("input", () => {
+        const n = (pasteArea.value || "").trim().length;
+        const cnt = $("paste-count");
+        if (cnt) cnt.textContent = n + " 字符";
+        const over = n > 200000;
+        if (pasteErr) {
+          pasteErr.textContent = over ? "超出 20 万字符上限，请删减后提交。" : "";
+          pasteErr.classList.toggle("hidden", !over);
+        }
+        if (btn) btn.disabled = over; // codex 十二轮 P1-3：超限禁用提交（不截短续审）
+      });
+    }
+    // 启动恢复：上次遗留的未完成提问回到 lastAskFail（同键重试路径的前提）
+    const pending = loadPendingAsk();
+    if (pending && pending.review_id && pending.item_id) {
+      state.lastAskFail = {
+        review_id: pending.review_id,
+        item_id: pending.item_id,
+        question: pending.question,
+        request_id: pending.request_id,
+      };
+    }
+  }
+
+  // ---- 抽屉四通道（遮罩/汉堡/Esc/导航项后自动关）+ 各入口绑定 + 首渲 ----
+  const menuBtn = $("shell-menu");
+  if (menuBtn) {
+    menuBtn.addEventListener("click", () => {
+      const nav = $("shell-nav");
+      shellDrawer(!(nav && nav.classList.contains("is-open")));
+    });
+  }
+  const drawerMask = $("drawer-mask");
+  if (drawerMask) drawerMask.addEventListener("click", () => shellDrawer(false));
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    const nav = $("shell-nav");
+    if (nav && nav.classList.contains("is-open")) shellDrawer(false);
+  });
+  const newBtn = $("btn-new-review");
+  if (newBtn) {
+    newBtn.addEventListener("click", () => {
+      shellDrawer(false);
+      closeAskContext();
+      clearReviewHash();
+      state.reviewId = null;
+      state.selectedItemId = null;
+      hidePrecheckConfirm();
+      show("upload");
+      renderShellHistory();
+    });
+  }
+  bindShellEntries();
+  renderShellHistory();
+  renderShellContext();
+
+  applyDesktopLayout();
 
   loadStanceMeta();
   resumeFromHash();
