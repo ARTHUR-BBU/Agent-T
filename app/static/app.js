@@ -1647,8 +1647,7 @@
     if (attempt > 60) {
       if (waitEl && waitEl.parentNode) waitEl.remove();
       const err = $("ask-error");
-      if (err && state.askItem && state.askItem.id === snapshot.itemId
-          && state.reviewId === reviewId) {
+      if (err && isAskResponseCurrent(snapshot)) {
         err.textContent = "等了很久还没拿到结果，请点恢复卡重新发送（原编号重试，不会重复计费）";
         err.classList.remove("hidden");
       }
@@ -1666,10 +1665,22 @@
         }
         if (waitEl && waitEl.parentNode) waitEl.remove();
         if (turn.state === "success") {
-          state.lastAskFail = null;
-          clearPendingAsk();
-          if (state.reviewId === reviewId && state.askItem
-              && state.askItem.id === snapshot.itemId) {
+          // codex 十七轮 P1：只清理属于自己的待办——核对合同+请求编号。
+          // 旧轮询（甲）拿到结果时，恢复记录可能已是新问题（乙）的编号，
+          // 无条件清空会让乙在途时丢掉同编号重试能力
+          const pending = loadPendingAsk();
+          if (pending && pending.review_id === reviewId
+              && pending.request_id === requestId) {
+            clearPendingAsk();
+          }
+          if (state.lastAskFail && state.lastAskFail.review_id === reviewId
+              && state.lastAskFail.request_id === requestId) {
+            state.lastAskFail = null;
+          }
+          // 界面写入复用请求守卫（镜像 isAskResponseCurrent）：期间发过
+          // 新问题（seq 已进位）则不现场写——syncThreadFromServer 在下次
+          // 进入工作台时按持久化轮次补渲，旧轮询不抢新请求的界面
+          if (isAskResponseCurrent(snapshot)) {
             const verified = turn.quote_verified !== false
               && !!(turn.answer && turn.answer.quote_verified !== false
                     && turn.answer["原文在哪"]
@@ -1681,11 +1692,9 @@
               box, state.askItem);
             threadScrollBottom();
           }
-          // 已离开本条目：syncThreadFromServer 在切回时按持久化轮次补渲
         } else {
           const err = $("ask-error");
-          if (err && state.askItem && state.askItem.id === snapshot.itemId
-              && state.reviewId === reviewId) {
+          if (err && isAskResponseCurrent(snapshot)) {
             err.textContent = turn.error || "这次没有答上来，可原编号重试";
             err.classList.remove("hidden");
           }

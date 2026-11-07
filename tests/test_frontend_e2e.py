@@ -2213,3 +2213,83 @@ def test_processing_receipt_shows_waiting_then_result(home):
                            timeout=5000)
     assert "轮询拿到答案PROC" in home.inner_text("#ask-thread")
     assert home.evaluate("localStorage.getItem('ask-pending-v1')") is None
+
+
+def test_old_poll_success_keeps_newer_pending_request_id(home):
+    """codex 十七轮 P1：甲轮询成功只清自己的恢复记录——乙问题在途时，
+    甲的结果落地不得清掉乙的编号（否则关标签丢同编号重试）。"""
+    import json as _json
+    stub = _quality_review_stub(None)
+    stub["ask_available"] = True
+    sent: list[str] = []
+
+    def ask_route(r):
+        rid_req = (_json.loads(r.request.post_data or "{}")).get("request_id")
+        sent.append(rid_req)
+        # 甲乙都回处理中回执（等待态），由轮询取终局
+        r.fulfill(status=200, content_type="application/json",
+                  body=_json.dumps({"ok": True, "deduped": True,
+                                    "item_id": "sublet", "item_name": "转租限制"},
+                                   ensure_ascii=False))
+
+    def review_route(r):
+        payload = dict(stub)
+        if len(sent) >= 2 and sent[0]:
+            # 只有甲的终局归档；乙保持处理中（轮询继续但不影响断言）
+            archived = {"turn_no": 1, "request_id": sent[0],
+                        "item_id": "sublet", "item_name": "转租限制",
+                        "state": "success", "question": "甲的问题",
+                        "created_at": 1.0,
+                        "answer": {"问题是啥": "甲的结果OLDPOLL"},
+                        "raw_text": None, "quote_verified": True}
+            payload["ask_thread"] = {"turns": [archived]}
+        r.fulfill(status=200, content_type="application/json",
+                  body=_json.dumps(payload, ensure_ascii=False))
+
+    home.route("**/api/upload", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded",
+                          "status": "uploaded"})))
+    home.route("**/api/review/e2eq00001", review_route)
+    home.route("**/api/review/e2eq00001/items/*/revision/state", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"status": "ok", "item_id": "sublet", "drafts": [],
+                          "selected": None, "impact": None,
+                          "remaining": {"revision": 4, "impact": 3}})))
+    home.route("**/api/ask", ask_route)
+    home.click("#entry-file")
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    home.locator("#item-list .item.attention").first.click()
+    home.click("#detail-ask")
+    home.fill("#ask-input", "甲的问题")
+    home.click("#btn-ask")
+    home.wait_for_selector("#ask-thread .ask-msg-waiting", state="visible")
+    # 乙问题紧随发出：恢复编号已换成乙
+    home.fill("#ask-input", "乙的问题")
+    home.click("#btn-ask")
+    home.wait_for_selector("#ask-thread .ask-msg-waiting", state="visible",
+                           timeout=10000)
+    assert home.eval_on_selector_all(
+        "#ask-thread .ask-msg-waiting", "els=>els.length") == 2
+    pending_now = _json.loads(
+        home.evaluate("localStorage.getItem('ask-pending-v1')"))
+    assert pending_now["request_id"] == sent[1], "恢复编号应已是乙"
+    # 甲轮询到成功：等待气泡剩乙一条；恢复记录必须还是乙的；
+    # 期间发过乙（seq 已进位）→ 请求守卫拦下旧轮询的现场写入
+    home.wait_for_function(
+        "document.querySelectorAll('#ask-thread .ask-msg-waiting').length === 1",
+        timeout=12000)
+    pending_after = _json.loads(
+        home.evaluate("localStorage.getItem('ask-pending-v1')") or "null")
+    assert pending_after is not None, "甲的成功不得清掉乙的恢复编号"
+    assert pending_after["request_id"] == sent[1]
+    assert "甲的结果OLDPOLL" not in home.inner_text("#ask-thread")
+    # 切走再切回：syncThreadFromServer 按持久化轮次补渲甲的答案
+    home.locator("#item-list .item").nth(1).click()
+    home.locator("#item-list .item").first.click()
+    home.click("#detail-ask")
+    home.wait_for_selector("#ask-thread .ask-msg .answer", state="visible",
+                           timeout=10000)
+    assert "甲的结果OLDPOLL" in home.inner_text("#ask-thread")
