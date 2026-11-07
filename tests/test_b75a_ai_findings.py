@@ -158,6 +158,15 @@ def test_rule_link_annotation():
     assert fs[1]["rule_link"] == ""
     assert fs[1]["rule_item_id"] is None
 
+
+def test_unfound_rule_can_link_to_related_finding():
+    row = {"id": "unfound-link", "items": [
+        {"id": "payment", "name": "付款条件", "status": "未找到"}],
+        "quality": {"observations": [
+            {"dimension": "completeness", "title": "付款条件需要核对"}]},
+        "verify": {"questions": []}}
+    assert afs.review_findings(row)["findings"][0]["rule_item_id"] == "payment"
+
 # ---------------- 物化 / 反悔闭环 ----------------
 
 
@@ -205,6 +214,27 @@ def test_confirm_materializes_item_idempotent(env_store):
     row = s.get(rid)
     assert len([i for i in row["items"]
                 if i.get("tag_source") == "ai_finding"]) == 1
+
+
+def test_opinion_requires_real_anchor_before_materialization(env_store):
+    s, rid = env_store
+    obs = {"dimension": "impact", "title": "观点", "comment": "请核对",
+           "quote": "不存在的引句", "clause_id": ""}
+    s.update(rid, text="第二条 双方书面通知。", quality={"observations": [obs]},
+             verify={"questions": []}, items=[])
+    key = _merged_key(s, rid)
+    assert not afs.review_findings(s.get(rid))["findings"][0]["anchor_verified"]
+    assert afs.set_status(s, rid, finding_key=key, status="confirmed")["status"] == "error"
+    assert s.get(rid)["items"] == []
+    obs["quote"] = "双方书面通知"
+    s.update(rid, quality={"observations": [obs]})
+    key = _merged_key(s, rid)
+    assert afs.review_findings(s.get(rid))["findings"][0]["anchor_verified"]
+    assert afs.set_status(s, rid, finding_key=key, status="confirmed")["materialized"]
+    afs.set_status(s, rid, finding_key=key, status="disputed")
+    assert s.get(rid)["items"][0]["status"] == "已争议撤回"
+    afs.set_status(s, rid, finding_key=key, status="confirmed")
+    assert s.get(rid)["items"][0]["status"] == "需关注"
 
 
 def test_dispute_revert_disables_and_reconfirm_revives(env_store):

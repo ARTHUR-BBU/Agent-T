@@ -54,7 +54,7 @@ def test_caps_table_matches_ruling_evidence() -> None:
     assert llm_client.NODE_MAX_OUTPUT_TOKENS == {
         "precheck": 3000, "model_review": 13000, "quality": 25000,
         "objection": 10000, "ask": 8000,
-        "revision": 16000, "impact": 8000,
+        "revision": 16000, "impact": 8000, "remediate": 6000,
     }
     assert llm_client.DEFAULT_MAX_OUTPUT_TOKENS == 16000
 
@@ -63,6 +63,7 @@ def test_revision_and_impact_caps_applied() -> None:
     """新节点阀门真实生效（M7 前清登记，B7-1 施工前就位）。"""
     assert _capture_payload("revision")["max_tokens"] == 16000
     assert _capture_payload("impact")["max_tokens"] == 8000
+    assert _capture_payload("remediate")["max_tokens"] == 6000
 
 
 # ---- 畸形 200 响应必须落账（GLM 审计+codex 裁定 2026-10-23）----

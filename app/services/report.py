@@ -79,6 +79,7 @@ def build_report_docx(row: dict[str, Any], warnings: list | None = None) -> byte
     _decisions(doc, row, has_revision)
     _ai_opinions(doc, row)
     _ask_thread(doc, row)
+    _remediations(doc, row)
     _blind_candidates(doc, row, has_revision)
     _policy_quotes(doc, row, has_revision)
     _appendix(doc, row)
@@ -173,6 +174,13 @@ def _default_scope_note(row: dict[str, Any]) -> str:
         for t in (row.get("ask_thread_section") or [])
     ):
         base += "、问清楚对话记录"
+    if row.get("remediation_records"):
+        base += "、补充参考及选用记录"
+    if any(
+        isinstance(o, dict) and (o.get("title") or o.get("comment"))
+        for o in (row.get("ai_finding_opinions") or [])
+    ):
+        base += "；其中观点部分为 AI 分析，仅供参考"
     return base + "、参考评分与补盲）"
 
 
@@ -571,8 +579,8 @@ def _ai_opinions(doc: Any, row: dict[str, Any]) -> None:
         return
     doc.add_heading("AI 观点（仅供参考）", level=1)
     doc.add_paragraph(
-        "以下为 AI 的观点性观察（无原文引句可核对、不构成清单条目，"
-        "不可生成修改建议），请结合实际自行判断："
+        "以下为 AI 的观点性观察，仅供参考；有原文锚点的观点经用户确认后"
+        "可列入清单，请结合原文和实际情况自行判断："
     )
     for o in ops:
         p = doc.add_paragraph(style="List Bullet")
@@ -580,6 +588,67 @@ def _ai_opinions(doc: Any, row: dict[str, Any]) -> None:
                   f"{o.get('title') or ''}").bold = True
         if o.get("comment"):
             doc.add_paragraph(_scrub(o["comment"]), style="List Bullet")
+
+
+def _remediations(doc: Any, row: dict[str, Any]) -> None:
+    """B7-6c（老钱复议 2.3）：补写建议留痕——草稿全文+选用状态进报告。
+
+    铁律口径：选用只是人的表态，不是核查；全程不出现「已补齐/已解决/
+    合规」字样。无记录不渲染整节（字节契约不破）。"""
+    rems = row.get("remediation_records") or []
+    entries = [
+        {"item_name": r.get("item_name") or "", **r}
+        for r in rems if isinstance(r, dict) and (
+            r.get("mode") == "draft" or r.get("mode") == "elsewhere"
+            or r.get("mode") == "guidance")
+    ]
+    if not entries:
+        return
+    doc.add_heading("补充参考记录（示范文本，系统未验证）", level=1)
+    doc.add_paragraph(
+        "以下为「未找到」条目的补写参考留痕。AI 生成的示范文本仅供参考，"
+        "不构成法律意见；采用前请专业人士复核。选用标记只是您的表态，"
+        "本系统未验证实际修改；建议重新提交审查以确认。"
+    )
+    mode_names = {"draft": "补充草稿", "elsewhere": "可能相关的合同内容（请核对）",
+                  "guidance": "行动指引（该类内容不宜由 AI 出示范文本）"}
+    for e in entries:
+        p = doc.add_paragraph()
+        run = p.add_run(f"{e.get('item_name') or '未找到条目'}｜"
+                        f"{mode_names.get(e.get('mode') or '', e.get('mode') or '')}")
+        run.bold = True
+        if e.get("mode") == "guidance":
+            doc.add_paragraph(_scrub(e.get("guidance")) or "（无）", style="List Bullet")
+            continue
+        ew = e.get("elsewhere") or {}
+        if e.get("mode") == "elsewhere" and ew.get("found"):
+            doc.add_paragraph(f"AI 说明：{_scrub(ew.get('summary')) or '（无）'}",
+                              style="List Bullet")
+            for q in (ew.get("quotes") or [])[:3]:
+                doc.add_paragraph(f"原文摘句：{q}", style="List Bullet")
+        dr = e.get("draft") or {}
+        if e.get("mode") == "draft":
+            original = e.get("initial_draft") or {}
+            if e.get("user_edited") and isinstance(original, dict) and original.get("clause_draft"):
+                doc.add_paragraph("AI 最初示范文本：", style="List Bullet")
+                doc.add_paragraph(_scrub(original["clause_draft"]))
+            for previous in e.get("past_adoptions") or []:
+                if isinstance(previous, dict) and previous.get("clause_draft"):
+                    doc.add_paragraph("此前选用文本（后经用户调整，系统未验证）：", style="List Bullet")
+                    doc.add_paragraph(_sanitize(str(previous["clause_draft"])))
+            if dr.get("clause_draft"):
+                doc.add_paragraph("用户调整后的文本：" if e.get("user_edited") else "草稿正文：",
+                                  style="List Bullet")
+                doc.add_paragraph(_sanitize(str(dr["clause_draft"])) if e.get("user_edited")
+                                  else _scrub(dr["clause_draft"]))
+            if dr.get("placement"):
+                doc.add_paragraph(f"常见位置参考：{_scrub(dr['placement'])}",
+                                  style="List Bullet")
+            if dr.get("blanks"):
+                doc.add_paragraph("留空待填：" + "、".join(dr["blanks"]),
+                                  style="List Bullet")
+        adopted = "用户已选用（系统未验证）" if e.get("adopted") else "未选用"
+        doc.add_paragraph(f"选用状态：{adopted}", style="List Bullet")
 
 
 def _ask_thread(doc: Any, row: dict[str, Any]) -> None:
@@ -604,7 +673,9 @@ def _ask_thread(doc: Any, row: dict[str, Any]) -> None:
     for t in turns:
         name = t.get("item_name") or "通用追问"
         p = doc.add_paragraph()
-        run = p.add_run(f"关于：{name}")
+        suffix = "（AI 观点）" if t.get("source") == "opinion" else (
+            " · 补写" if t.get("source") == "remediate" else "")
+        run = p.add_run(f"关于：{name}{suffix}")
         run.bold = True
         doc.add_paragraph(f"问：{t.get('question')}", style="List Bullet")
         state = t.get("state") or ""

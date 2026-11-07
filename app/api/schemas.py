@@ -422,6 +422,8 @@ class ReviewSummary(BaseModel):
     ai_findings: Optional[dict[str, Any]] = None
     # B7-6 对话工作台：共享对话流（持久化；旧记录/异常路径为 None）
     ask_thread: Optional[dict[str, Any]] = None
+    # B7-6c：补写建议随单存取（item_id → {mode, elsewhere, draft, adopted,...}）
+    remediations: Optional[dict[str, Any]] = None
     # 证据法批 2a：证据登记簿概览（纯读路径派生视图，每次响应即时重建；
     # 旧记录/异常路径为 None，前端零感知）
     evidence_registry: Optional[EvidenceRegistryInfo] = None
@@ -467,3 +469,38 @@ class AskResponse(BaseModel):
     # B7-6：本轮对话序号；deduped=True=同 request_id 命中已有轮次（未再调模型）
     turn_no: Optional[int] = None
     deduped: bool = False
+
+
+# ---- B7-6c「看看怎么补」（老钱裁定：示范文本，中性，不改档位） ----
+
+class RemediateRequest(BaseModel):
+    """无请求体也合法（预留扩展位）；条目从路径参数解析。"""
+    pass
+
+
+class RemediateEditRequest(BaseModel):
+    clause_draft: str = Field(min_length=1, max_length=6000)
+    expected_draft: str = Field(max_length=6000)
+
+
+class RemediateResponse(BaseModel):
+    ok: bool
+    item_id: str
+    item_name: str
+    # guidance=负清单类目（零模型，行动指引）；elsewhere=写在别处；
+    # draft=确缺失已出草稿；error=失败（error 字段给原因）
+    mode: Literal["guidance", "elsewhere", "draft", "error"] = "error"
+    guidance: Optional[str] = None
+    elsewhere: Optional[dict[str, Any]] = None
+    draft: Optional[dict[str, Any]] = None
+    quote_verified: Optional[bool] = None
+    adopted: bool = False
+    user_edited: bool = False
+    error: Optional[str] = None
+
+
+class RemediateAdoptResponse(BaseModel):
+    ok: bool
+    item_id: str
+    adopted: bool = False
+    error: Optional[str] = None

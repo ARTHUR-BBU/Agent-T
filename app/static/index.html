@@ -183,6 +183,11 @@
           <p id="detail-note" class="detail-note"></p>
           <p class="detail-label">原文 <button type="button" class="link evidence-jump hidden" id="detail-evidence-jump">看原文</button></p>
           <div id="detail-quote" class="detail-quote" tabindex="-1"></div>
+          <div id="detail-ai-links" class="hidden" aria-label="相关 AI 发现"></div>
+          <!-- B7-6c「看看怎么补」（老钱裁定：中性卡不碰琥珀；状态机
+               idle→checking→guidance/elsewhere/draft/error 随 selected 重渲） -->
+          <section id="draft-entry-card" class="draft-entry hidden"
+                   data-state="idle" aria-label="补充参考"></section>
           <!-- B7-3a「改得有用」三卡：改写建议/选定/牵连检查（GET state 只读
                恢复；触发类按钮显式点按；建议不回写判定层）。renderRevCards 填充 -->
           <section id="rev-cards" class="rev-cards hidden" aria-label="修改建议"></section>
@@ -194,25 +199,50 @@
          col-main 三卡之后（matchMedia 搬迁清单扩为 detail+workbench）。
          原 #screen-ask 节点平移至此；四段式/chips/seq 判废全保留 -->
     <section id="ask-workbench" class="ask-workbench hidden" aria-label="对话工作台">
-      <p id="ask-title" class="hidden"></p>
+      <!-- B7-6d 线框 §1.2①：工作台头常驻——标题随选中条目走（选中即同步） -->
+      <div id="wb-head" class="wb-head hidden">
+        <span class="wb-head-caption">正在讨论：</span><span id="ask-title"></span>
+      </div>
       <p class="ask-status-line" id="ask-status-line"></p>
-      <!-- B7-6 共享对话流：一份合同一条 thread；持久化随单、刷新恢复 -->
-      <div id="ask-thread" class="ask-thread"></div>
-      <div class="card" id="ask-note-card">
-        <p class="detail-label">说明</p>
-        <p id="ask-context" class="ask-context"></p>
-        <p id="ask-clause" class="detail-clause hidden"></p>
-      </div>
-      <!-- 段2 原文卡（钉顶=页头下第一个内容位之后，不做 sticky） -->
-      <div class="card quote-card" id="ask-quote-card">
-        <p class="quote-title">原文</p>
-        <div id="ask-quote" class="quote-body"></div>
-      </div>
+      <p id="wb-placeholder" class="muted wb-placeholder hidden">先从清单选一条来讨论。</p>
+      <!-- B7-6d 线框 §1.2③（codex 拍板规则②）：说明与原文只放本疑点内容，默认收起；
+           切换条目时回到收起（新疑点的说明不摊开） -->
+      <details id="wb-context-details" class="wb-context">
+        <summary id="wb-context-summary">相关说明与原文 ▸</summary>
+        <div class="card" id="ask-note-card">
+          <p class="detail-label">说明</p>
+          <p id="ask-context" class="ask-context"></p>
+          <p id="ask-clause" class="detail-clause hidden"></p>
+        </div>
+        <!-- 段2 原文卡（钉顶=页头下第一个内容位之后，不做 sticky） -->
+        <div class="card quote-card" id="ask-quote-card">
+          <p class="quote-title">原文</p>
+          <div id="ask-quote" class="quote-body"></div>
+        </div>
+      </details>
+      <!-- B7-6 共享对话流：一份合同一条 thread；持久化随单、刷新恢复；
+           B7-6d 线框 §1.2④：历史区默认收起，发送/收答自动展开一次；
+           0 轮整区隐藏；范围（本疑点/本合同全部）纯视图过滤，后台一份记录 -->
+      <details id="wb-history" class="wb-context wb-history hidden">
+        <summary id="wb-history-summary"><span id="wb-thread-count">历史对话（0轮）</span> ⌄</summary>
+        <div id="wb-scope-bar" class="wb-scope-bar">
+          <span class="wb-scope-label">查看范围：</span>
+          <span class="wb-scope-btns">
+            <button type="button" class="link wb-scope-btn" data-scope="item" id="wb-scope-item" aria-pressed="true">本疑点</button>
+            <span class="wb-scope-sep">·</span>
+            <button type="button" class="link wb-scope-btn" data-scope="all" id="wb-scope-all" aria-pressed="false">本合同全部</button>
+          </span>
+        </div>
+        <div id="ask-thread" class="ask-thread"></div>
+      </details>
       <!-- B7-3a 移动端三卡挂载（与桌面 #rev-cards 同渲染函数，单列堆叠） -->
       <section id="rev-cards-ask" class="rev-cards hidden" aria-label="修改建议"></section>
       <!-- 段3/4 追问输入卡：480px 内答案（order:-1）提到输入之上 -->
       <div class="card ask-interact">
         <p id="ask-unavailable" class="muted hidden">追问暂未开通</p>
+        <!-- B7-6d 线框 §1.1⑤：当前问答全断点统一在输入上方（原 480px
+             order:-1 先例推广）；四段式 renderAnswer 整体重写本容器 -->
+        <div id="ask-answer" class="answer hidden"></div>
         <!-- 阶段 2.2 四段式：「还想问」建议不进答案正文，做成输入框上方
              可点 chips（点击回填输入框，九哥裁定） -->
         <div id="ask-followups-wrap" class="ask-followups-wrap hidden">
@@ -225,9 +255,6 @@
         <textarea id="ask-input" rows="3" placeholder="例如：违约金风险大吗？"></textarea>
         <button id="btn-ask" class="primary" type="button">发送</button>
         <p id="ask-error" class="error hidden"></p>
-        <!-- 阶段 2.2 四段式：renderAnswer 整体重写本容器（原文依据/实际影响/
-             建议改法/待确认的事；缺段静默隐藏；raw_text 退化兜底保留） -->
-        <div id="ask-answer" class="answer hidden"></div>
       </div>
     </section>
         <!-- B7-5a 统一「AI 发现」面板：观察+核验疑点合并流水线（发现→取证核对
