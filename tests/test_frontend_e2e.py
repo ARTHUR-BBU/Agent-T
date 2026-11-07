@@ -540,6 +540,9 @@ def test_ask_screen_shows_context_and_quote(home):
     note = home.inner_text("#detail-note")
     home.click("#detail-ask")
     home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
+    # B7-6d：说明/原文默认收起——先展开再断言（内容仍在，只是折叠）
+    home.click("#wb-context-summary")
+    home.wait_for_selector("#ask-note-card", state="visible")
     # 上下文与规则说明一致；采购金标需关注项带摘句，追问页原文应同步展示
     assert home.inner_text("#ask-context").strip() == note.strip()
     assert not home.locator("#ask-quote").evaluate("el => el.classList.contains('empty')")
@@ -986,13 +989,14 @@ def test_mobile_item_tap_opens_detail_route(mobile_home):
     assert mobile_home.inner_text("#detail-head").strip() != ""
     assert mobile_home.query_selector("#detail-head .tag.attention")
     mobile_home.click("#detail-ask")  # 问清楚入口：填充工作台上下文
-    # 阅读顺序：说明卡在原文卡之前
-    # 阅读顺序改 DOM 序断言（像素坐标受滚动/搬迁影响，脆）
+    # 阅读顺序：说明卡在原文卡之前（B7-6d 起两卡收进折叠块，改在块内断言）
     assert mobile_home.evaluate(
-        "(() => { const w = document.getElementById('ask-workbench');"
-        " const kids = Array.from(w.children).map(c => c.id);"
+        "(() => { const w = document.getElementById('wb-context-details');"
+        " const kids = Array.from(w.querySelectorAll('.card')).map(c => c.id);"
         " return kids.indexOf('ask-note-card') < kids.indexOf('ask-quote-card'); })()")
-    assert mobile_home.inner_text("#ask-context").strip() != ""
+    # B7-6d：说明/原文默认收起——展开后内容可读
+    mobile_home.click("#wb-context-summary")
+    mobile_home.wait_for_selector("#ask-note-card", state="visible")
     assert mobile_home.inner_text("#ask-context").strip() != ""
 
 
@@ -1026,12 +1030,15 @@ def test_mobile_blind_item_hides_ask_card(mobile_home):
     mobile_home.click("#btn-upload")
     mobile_home.wait_for_selector("#results-body", state="visible", timeout=15000)
     mobile_home.locator("#item-list .item.blind-candidate").first.click()
-    mobile_home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
+    mobile_home.wait_for_selector("#ask-workbench .ask-interact", state="hidden")
     # B7-6：hash 路由退役——补盲选中改由详情头断言（key 完整性走 selectItem）
     assert mobile_home.inner_text("#detail-head").strip() != ""
-    # 说明/原文卡照常；追问卡隐藏且不出现「追问暂未开通」横幅
+    # 说明/原文卡照常（B7-6d 默认收起，展开后可读）；追问卡隐藏且不
+    # 出现「追问暂未开通」横幅
+    mobile_home.click("#wb-context-summary")
+    mobile_home.wait_for_selector("#ask-note-card", state="visible")
     assert mobile_home.is_visible("#ask-note-card")
-    assert mobile_home.is_visible("#ask-workbench .ask-interact")
+    assert not mobile_home.is_visible("#ask-workbench .ask-interact")
     assert not mobile_home.is_visible("#ask-unavailable")
 
 
@@ -1792,6 +1799,7 @@ def test_desktop_finding_jump_to_rule_item(desktop_home):
     # 跳到规则条目：右栏详情头换成「转租限制」
     desktop_home.wait_for_timeout(300)
     assert "转租限制" in desktop_home.inner_text("#detail-head")
+    assert "相关 AI 发现：与违约金约定相关" in desktop_home.inner_text("#detail-ai-links")
 
 
 # ---------- B7-5b codex 九轮整改回归（六处） ----------
@@ -1843,6 +1851,9 @@ def test_desktop_workbench_thread_restores_on_refresh(desktop_home):
     desktop_home.set_input_files("#file", str(FIXTURE))
     desktop_home.click("#btn-upload")
     desktop_home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    # B7-6d：历史区默认收起——展开后断言内容（刷新恢复的内容仍在）
+    desktop_home.click("#wb-history-summary")
+    desktop_home.wait_for_selector("#ask-thread .ask-msg", state="visible")
     assert "历史问题标记HIS5" in desktop_home.inner_text("#ask-thread")
     assert "历史答案标记HIS6" in desktop_home.inner_text("#ask-thread")
     assert "关于：转租限制" in desktop_home.inner_text("#ask-thread")
@@ -2293,3 +2304,240 @@ def test_old_poll_success_keeps_newer_pending_request_id(home):
     home.wait_for_selector("#ask-thread .ask-msg .answer", state="visible",
                            timeout=10000)
     assert "甲的结果OLDPOLL" in home.inner_text("#ask-thread")
+
+
+def test_workbench_syncs_on_selection_with_draft_preserved(home):
+    """B7-6d 规则①④：选中即同步（无需再点问清楚）+ 切换疑点草稿保留。"""
+    stub2x = _quality_review_stub(None)
+    stub2x["ask_available"] = True
+    for it in stub2x["items"]:
+        if it["id"] == "early_termination":
+            it["status"] = "需关注"
+    import json as _json
+    home.route("**/api/upload", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded",
+                          "status": "uploaded"})))
+    home.route("**/api/review/e2eq00001", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps(stub2x, ensure_ascii=False)))
+    home.route("**/api/review/e2eq00001/items/*/revision/state", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"status": "ok", "item_id": "sublet", "drafts": [],
+                          "selected": None, "impact": None,
+                          "remaining": {"revision": 4, "impact": 3}})))
+    home.click("#entry-file")
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    # 点甲（需关注）：工作台即同步——无需点「问清楚」
+    home.locator("#item-list .item").first.click()
+    home.wait_for_selector("#ask-workbench:not(.hidden)", state="attached")
+    assert "转租限制" in home.inner_text("#ask-title")
+    # 甲写草稿 → 切乙：输入框切到乙（草稿各自留存）
+    home.fill("#ask-input", "甲的未发送草稿")
+    home.locator("#item-list .item").nth(1).click()
+    assert "提前解约" in home.inner_text("#ask-title")
+    assert home.input_value("#ask-input") == "", "乙无草稿应为空"
+    # 切回甲：草稿原样回来
+    home.locator("#item-list .item").first.click()
+    assert "转租限制" in home.inner_text("#ask-title")
+    assert home.input_value("#ask-input") == "甲的未发送草稿"
+
+
+def test_workbench_follows_non_askable_selection(home):
+    """切到不可追问条目时不得仍显示、发送到上一条。"""
+    _stub_quality_flow(home, None, ask_available=True)
+    home.locator("#item-list .item").first.click()
+    home.fill("#ask-input", "第一条的草稿")
+    home.locator("#item-list .item").nth(1).click()
+    assert "提前解约" in home.inner_text("#ask-title")
+    assert home.locator(".ask-interact").is_hidden()
+    home.locator("#item-list .item").first.click()
+    assert home.input_value("#ask-input") == "第一条的草稿"
+
+
+@pytest.mark.parametrize("viewport_fixture", ["home", "mobile_home"])
+def test_remediation_draft_and_adoption_do_not_change_status(request, viewport_fixture):
+    """未找到→补充参考→选用，输入开放且规则档位不变。"""
+    home = request.getfixturevalue(viewport_fixture)
+    stub = _quality_review_stub(None)
+    stub["ask_available"] = True
+    stub["items"][1]["status"] = "未找到"
+    home.route("**/api/upload", lambda r: r.fulfill(
+        status=200, json={"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}))
+    home.route("**/api/review/e2eq00001", lambda r: r.fulfill(status=200, json=stub))
+    home.route("**/api/review/e2eq00001/items/*/revision/state", lambda r: r.fulfill(status=200, json={}))
+    home.route("**/items/early_termination/remediate", lambda r: r.fulfill(status=200, json={
+        "ok": True, "mode": "draft", "item_id": "early_termination",
+        "adopted": False, "user_edited": r.request.method == "PUT",
+        "draft": {"clause_draft": ("由用户调整的通知安排" if r.request.method == "PUT"
+                                   else "通知期限为____（待填写：期限）"), "blanks": []}}))
+    home.route("**/items/early_termination/remediate/adopt", lambda r: r.fulfill(
+        status=200, json={"ok": True, "adopted": True}))
+    home.click("#entry-file")
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    home.locator("#item-list .item").nth(1).click()
+    assert home.locator(".ask-interact").is_hidden()
+    home.click("#draft-entry-btn")
+    home.wait_for_selector("#btn-draft-adopt", state="visible")
+    assert "待填写：期限" in home.inner_text("#draft-body")
+    assert home.locator(".ask-interact").is_visible()
+    home.get_by_text("调整文本", exact=True).click()
+    home.fill("#draft-edit-input", "由用户调整的通知安排")
+    home.get_by_text("保存调整", exact=True).click()
+    home.wait_for_selector("#draft-body", state="visible")
+    assert "由用户调整的通知安排" in home.inner_text("#draft-body")
+    assert "经您自行调整" in home.inner_text("#draft-entry-card")
+    home.click("#btn-draft-adopt")
+    home.wait_for_selector("#draft-entry-card .draft-adopted", state="visible")
+    assert home.locator("#btn-draft-adopt").is_disabled()
+    assert "未找到" in home.inner_text("#detail-head")
+    assert "合同原文件不会被修改" in home.inner_text("#draft-entry-card")
+
+
+def test_unanchored_opinion_opens_discussion_without_revision(home):
+    quality = {"available": True, "observations": [
+        {"dimension": "impact", "title": "可能遗漏", "comment": "请核对", "quote": ""}]}
+    _stub_quality_flow(home, quality, ask_available=True)
+    card = home.locator("#ai-findings-panel .quality-item").first
+    assert card.get_by_text("确认并列入清单").count() == 0
+    card.get_by_text("讨论这个观点").click()
+    assert "可能遗漏" in home.inner_text("#ask-title")
+    assert home.locator(".ask-interact").is_visible()
+    assert home.locator("#rev-cards").is_hidden()
+
+
+@pytest.mark.parametrize("context_status", ["verified", "ambiguous"])
+def test_remediation_elsewhere_shows_real_context_safely(home, context_status):
+    stub = _quality_review_stub(None)
+    stub["items"][1]["status"] = "未找到"
+    stub["remediations"] = {"early_termination": {"mode": "elsewhere", "elsewhere": {
+        "found": True, "summary": "可能有关", "quotes": ["书面通知"], "context_available": True}}}
+    home.route("**/api/upload", lambda r: r.fulfill(
+        status=200, json={"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}))
+    home.route("**/api/review/e2eq00001", lambda r: r.fulfill(status=200, json=stub))
+    home.route("**/items/*/revision/state", lambda r: r.fulfill(status=200, json={}))
+    home.route("**/remediate/context/0", lambda r: r.fulfill(status=200, json={
+        "status": context_status, "heading": "第二条", "before": "原文 <script>不是代码</script>",
+        "match": "书面通知", "after": "后续内容", "truncated": True}))
+    home.click("#entry-file")
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    home.locator("#item-list .item").nth(1).click()
+    home.click(".draft-context-link")
+    context = home.locator(".draft-source-context")
+    context.wait_for(state="visible")
+    if context_status == "verified":
+        assert "所在条款：第二条" in context.inner_text()
+        assert "<script>不是代码</script>" in context.inner_text()
+        assert context.locator("script").count() == 0
+        assert context.locator("mark").inner_text() == "书面通知"
+    else:
+        assert "多处出现" in context.inner_text()
+        assert context.locator("mark").count() == 0
+
+
+def test_malformed_legacy_remediation_quotes_do_not_break_result_page(home):
+    stub = _quality_review_stub(None)
+    stub["items"][1]["status"] = "未找到"
+    stub["remediations"] = {"early_termination": {"mode": "elsewhere", "elsewhere": {
+        "found": True, "quotes": "旧记录格式异常", "context_available": True}}}
+    home.route("**/api/upload", lambda r: r.fulfill(
+        status=200, json={"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}))
+    home.route("**/api/review/e2eq00001", lambda r: r.fulfill(status=200, json=stub))
+    home.click("#entry-file")
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    home.locator("#item-list .item").nth(1).click()
+    assert home.locator("#draft-entry-card").is_visible()
+    assert home.locator(".draft-context-link").count() == 0
+
+
+def test_delayed_remediation_never_replaces_another_item(home):
+    stub = _quality_review_stub(None)
+    stub["items"][1]["status"] = "未找到"
+    home.route("**/api/upload", lambda r: r.fulfill(
+        status=200, json={"review_id": "e2eq00001", "message": "uploaded", "status": "uploaded"}))
+    home.route("**/api/review/e2eq00001", lambda r: r.fulfill(status=200, json=stub))
+    home.route("**/items/*/revision/state", lambda r: r.fulfill(status=200, json={}))
+    home.click("#entry-file")
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    home.evaluate("""() => {
+      const original = window.fetch;
+      window.fetch = (...args) => String(args[0]).endsWith('/remediate')
+        ? new Promise(resolve => { window.finishRemediate = () => resolve(new Response(
+          JSON.stringify({ok:true, mode:'draft', draft:{clause_draft:'延迟草稿'}}),
+          {status:200, headers:{'Content-Type':'application/json'}})); })
+        : original(...args);
+    }""")
+    home.locator("#item-list .item").nth(1).click()
+    home.click("#draft-entry-btn")
+    home.locator("#item-list .item").first.click()
+    home.evaluate("window.finishRemediate()")
+    home.wait_for_timeout(100)
+    assert home.locator("#draft-entry-card").is_hidden()
+    assert "转租限制" in home.inner_text("#ask-title")
+    home.locator("#item-list .item").nth(1).click()
+    assert "延迟草稿" in home.inner_text("#draft-body")
+
+
+def test_thread_scope_filters_between_item_and_all(home):
+    """B7-6d 规则③：历史默认本疑点，可切本合同全部；每轮关于标签保留。"""
+    stub2x = _quality_review_stub(None)
+    stub2x["ask_available"] = True
+    for it in stub2x["items"]:
+        if it["id"] == "early_termination":
+            it["status"] = "需关注"
+    stub2x["ask_thread"] = {"turns": [
+        {"turn_no": 1, "request_id": "s1", "item_id": "sublet",
+         "item_name": "转租限制", "state": "success",
+         "question": "甲的历史问题", "created_at": 1.0,
+         "answer": {"问题是啥": "甲答"}, "quote_verified": True},
+        {"turn_no": 2, "request_id": "s2", "item_id": "early_termination",
+         "item_name": "提前解约", "state": "success",
+         "question": "乙的历史问题", "created_at": 2.0,
+         "answer": {"问题是啥": "乙答"}, "quote_verified": True},
+    ]}
+    import json as _json
+    home.route("**/api/upload", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded",
+                          "status": "uploaded"})))
+    home.route("**/api/review/e2eq00001", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps(stub2x, ensure_ascii=False)))
+    home.route("**/api/review/e2eq00001/items/*/revision/state", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"status": "ok", "item_id": "sublet", "drafts": [],
+                          "selected": None, "impact": None,
+                          "remaining": {"revision": 4, "impact": 3}})))
+    home.click("#entry-file")
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    home.locator("#item-list .item").first.click()
+    home.click("#wb-history-summary")  # B7-6d：历史默认收起，展开后断言
+    home.wait_for_selector("#ask-thread .ask-msg", state="visible", timeout=10000)
+    # 默认本疑点：只见甲的轮次
+    assert "甲的历史问题" in home.inner_text("#ask-thread")
+    assert "乙的历史问题" not in home.inner_text("#ask-thread")
+    assert "历史对话（1轮）" in home.inner_text("#wb-thread-count")
+    # 切全部：两条都在，关于标签保留
+    home.click("#wb-scope-all")
+    home.wait_for_function(
+        "document.querySelectorAll('#ask-thread .ask-msg').length === 2")
+    assert "乙的历史问题" in home.inner_text("#ask-thread")
+    assert "关于：提前解约" in home.inner_text("#ask-thread")
+    assert "全部" in home.inner_text("#wb-thread-count")
+    # 切回本疑点
+    home.click("#wb-scope-item")
+    home.wait_for_function(
+        "document.querySelectorAll('#ask-thread .ask-msg').length === 1")
+    assert "乙的历史问题" not in home.inner_text("#ask-thread")

@@ -6,6 +6,10 @@
     selectedItemId: null,
     resultsScrollY: 0,
     askReqSeq: 0,
+    // B7-6d：未发送草稿按条目留存 + 历史查看范围（本疑点/本合同全部）
+    askDrafts: {},
+    threadScope: "item",
+    threadExpanded: false,
   };
 
   /** 追问竞态守卫（可信度 P1 F04）：仅当仍是同一审查/条目且为本轮最新请求时应用结果。 */
@@ -617,7 +621,8 @@
     renderObjections(data);
     // B7-6 对话工作台：历史流恢复（刷新/换机不丢）+ 左栏下区导航刷新；
     // 工作台在结果态常驻（未选条目也可看历史——codex 十二轮 P2-5）
-    renderThreadFromData(((data.ask_thread || {}).turns) || []);
+    renderThreadFromData(threadTurnsForScope(
+      ((data.ask_thread || {}).turns) || []));
     renderShellContext();
     const wb = $("ask-workbench");
     if (wb) wb.classList.remove("hidden");
@@ -724,7 +729,7 @@
     head.appendChild(badge);
     const disc = document.createElement("span");
     disc.className = "quality-disclaimer";
-    disc.textContent = "AI 发现 → 自动取证核对 → 由您拍板；确认的事实类发现会列入清单、可生成修改建议并写入报告。";
+    disc.textContent = "以下包含 AI 的分析观点，仅供参考；有原文锚点的发现经您确认后才列入清单。";
     head.appendChild(disc);
     panel.appendChild(head);
 
@@ -805,7 +810,7 @@
           const go = document.createElement("button");
           go.type = "button";
           go.className = "link finding-jump";
-          go.textContent = "看这条规则";
+          go.textContent = "清单相关条目 ↗";
           go.onclick = () => jumpToItem(f.rule_item_id);
           rl.appendChild(go);
         }
@@ -850,7 +855,7 @@
           const go = document.createElement("button");
           go.type = "button";
           go.className = "link finding-jump";
-          go.textContent = "看清单中的这条";
+          go.textContent = "清单中的这条 ↗";
           go.onclick = () => jumpToItem(f.item_id);
           mat.appendChild(go);
         }
@@ -859,6 +864,27 @@
 
       const actions = document.createElement("div");
       actions.className = "verify-actions";
+
+      if (!f.fact_type && f.status !== "disputed") {
+        const askOpinion = document.createElement("button");
+        askOpinion.type = "button";
+        askOpinion.className = "link";
+        askOpinion.textContent = "讨论这个观点";
+        askOpinion.onclick = () => openItemAsk({
+          id: "opinion:" + f.finding_key, name: f.title || "AI 观点",
+          status: "AI 观点", tag_source: "ai_opinion", note: f.comment || "",
+          quote: f.quote || "", clause_ids: f.clause_id ? [f.clause_id] : [], hits: [],
+        });
+        actions.appendChild(askOpinion);
+        if (!f.materialized && f.anchor_verified) {
+          const confirmOpinion = document.createElement("button");
+          confirmOpinion.type = "button";
+          confirmOpinion.className = "verify-btn-primary";
+          confirmOpinion.textContent = "确认并列入清单";
+          confirmOpinion.onclick = () => submitFindingStatus(data.id, f.finding_key, "confirmed");
+          actions.appendChild(confirmOpinion);
+        }
+      }
 
       if (f.status === "pending" && f.fact_type) {
         const btnOk = document.createElement("button");
@@ -915,9 +941,9 @@
         btnRevive.type = "button";
         btnRevive.className = "verify-btn-secondary";
         // 事实类恢复确认（复活检查项）；观点类恢复已阅（不物化）
-        btnRevive.textContent = f.fact_type ? "恢复确认" : "恢复已阅";
+        btnRevive.textContent = (f.fact_type || f.materialized) ? "恢复确认" : "恢复已阅";
         btnRevive.onclick = () => submitFindingStatus(
-          data.id, f.finding_key, f.fact_type ? "confirmed" : "viewed");
+          data.id, f.finding_key, (f.fact_type || f.materialized) ? "confirmed" : "viewed");
         actions.appendChild(btnRevive);
       } else if (!f.fact_type) {
         // 观点类：默认已阅，仅提供异议入口（观点不物化、不可改写）
@@ -1269,6 +1295,25 @@
     }
 
     noteEl.textContent = item.note || "（无说明）";
+    const relatedEl = $("detail-ai-links");
+    if (relatedEl) {
+      relatedEl.innerHTML = "";
+      const findings = state.review && state.review.ai_findings && state.review.ai_findings.findings;
+      const related = Array.isArray(findings) ? findings.filter((f) => f.rule_item_id === item.id) : [];
+      relatedEl.classList.toggle("hidden", related.length === 0);
+      related.forEach((finding) => {
+        const link = document.createElement("button");
+        link.type = "button";
+        link.className = "link";
+        link.textContent = "相关 AI 发现：" + (finding.title || "查看") + " ↗";
+        link.onclick = () => {
+          const target = Array.from(document.querySelectorAll(".quality-item[data-finding-key]"))
+            .find((el) => el.dataset.findingKey === finding.finding_key);
+          if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+        };
+        relatedEl.appendChild(link);
+      });
+    }
     const jumpBtn = $("detail-evidence-jump");
     if (item.quote) {
       quoteEl.classList.remove("empty");
@@ -1298,11 +1343,11 @@
       const hb = document.createElement("span");
       hb.className = item._blind
         ? "source-badge blind"
-        : (item.tag_source === "ai_finding"
+        : (item.tag_source === "ai_finding" || item.tag_source === "ai_opinion"
           ? "source-badge quality" : "source-badge rule");
       hb.textContent = item._blind
         ? "补盲"
-        : (item.tag_source === "ai_finding" ? "AI 发现" : "系统核查");
+        : (item.tag_source === "ai_finding" ? "AI 发现" : item.tag_source === "ai_opinion" ? "AI 观点" : "系统核查");
       head.appendChild(hb);
       head.classList.remove("hidden");
     }
@@ -1311,10 +1356,22 @@
     if (item.status === "需关注" && !item._blind) {
       actions.classList.remove("hidden");
       $("detail-ask").onclick = () => openItemAsk(item);
+      // B7-6d（codex 拍板规则①）：选中即同步——标题/输入目标/发送对象
+      // 跟选中走，无需再点一次「问清楚」。工作台常驻露出（不抢焦点不
+      // 滚动，openItemAsk 才聚焦）；草稿按条目留存，切换不丢
     } else {
       actions.classList.add("hidden");
       $("detail-ask").onclick = null;
     }
+    // 即使新条目不可追问，也要更新目标并取消旧条目的界面响应。
+    const wb = $("ask-workbench");
+    if (wb) wb.classList.remove("hidden");
+    fillAskContext(item);
+    renderThreadFromData(threadTurnsForScope(
+      (state.review && state.review.ask_thread
+        && state.review.ask_thread.turns) || []));
+
+    renderDraftEntry(item);
 
     // B7-3a 三卡：符合条件的检查项挂载（GET state 只读恢复，零消耗）
     if (revEligible(item) && state.reviewId) {
@@ -1341,8 +1398,28 @@
     // 切换条目即作废进行中的追问响应（可信度 P1 F04）
     if (!state.askItem || state.askItem.id !== item.id) {
       state.askReqSeq += 1;
+      // B7-6d（codex 拍板规则④）：切换疑点时未发送草稿按条目留存——
+      // 换条目不丢稿，切回原条目草稿原样回来
+      if (state.askItem && state.askItem.id) {
+        const prevInput = $("ask-input");
+        if (prevInput && prevInput.value.trim()) {
+          state.askDrafts[state.askItem.id] = prevInput.value;
+        }
+      }
+      // B7-6d 线框 §1.3：切换条目 → 折叠回收到默认态、范围回到本疑点
+      // （新疑点的说明不摊开，避免旧展开状态盖住新内容第一眼）
+      const fold = $("wb-context-details");
+      if (fold) fold.removeAttribute("open");
+      if (state.threadScope !== "item") {
+        state.threadScope = "item";
+      }
     }
     state.askItem = item;
+    // B7-6d 线框 §1.2①：工作台头常驻（标题+正在讨论前缀），占位退场
+    const head = $("wb-head");
+    if (head) head.classList.remove("hidden");
+    const ph = $("wb-placeholder");
+    if (ph) ph.classList.add("hidden");
     // 页头：条目名 + 档位/来源双通道（tag 文字+底色；徽章描边）
     $("ask-title").textContent = item.name || "问清楚一点";
     const askGuide = $("ask-stance-guide");
@@ -1384,7 +1461,9 @@
     }
 
     // 段3/4 追问卡显隐分流 + 可用性门禁（现状逻辑收编）
-    const askable = item.status === "需关注" && !item._blind;
+    const rem = _remediationFor(item.id);
+    const askable = !item._blind && (item.status === "需关注" || item.tag_source === "ai_opinion"
+      || (item.status === "未找到" && rem && rem.mode === "draft"));
     const interactCard = document.querySelector(".ask-interact");
     const available = !!(state.review && state.review.ask_available);
     const banner = $("ask-unavailable");
@@ -1394,7 +1473,8 @@
       interactCard.classList.add("hidden");
     } else {
       interactCard.classList.remove("hidden");
-      $("ask-input").value = "";
+      // B7-6d：草稿按条目恢复（换条目不丢稿，切回原稿原样回来）
+      $("ask-input").value = state.askDrafts[item.id] || "";
       $("ask-error").classList.add("hidden");
       $("ask-answer").classList.add("hidden");
       $("ask-answer").innerHTML = "";
@@ -1596,9 +1676,15 @@
     if (!thread || !answerEl) return;
     const msg = document.createElement("div");
     msg.className = "ask-msg ask-msg-user";
+    // 线框 §4 e2e 锚点：实时轮次同样带归属
+    msg.dataset.turnItem = (item && item.id) || "";
     const about = document.createElement("p");
     about.className = "ask-msg-about";
-    about.textContent = "关于：" + ((item && item.name) || "");
+    // B7-6c：补写轮来源标记
+    let aboutText = "关于：" + ((item && item.name) || "");
+    if (item && item.status === "未找到") aboutText += " · 补写";
+    if (item && item.tag_source === "ai_opinion") aboutText += "（AI 观点）";
+    about.textContent = aboutText;
     const q = document.createElement("p");
     q.className = "ask-msg-q";
     q.textContent = question;
@@ -1612,6 +1698,8 @@
     msg.appendChild(q);
     msg.appendChild(ansWrap);
     thread.appendChild(msg);
+    expandThreadHistory();
+    renderThreadScopeBar(); // B7-6d：实时轮次也计入「历史对话（N轮）」
     answerEl.innerHTML = "";
     answerEl.classList.add("hidden");
   }
@@ -1623,9 +1711,14 @@
     if (!thread) return null;
     const msg = document.createElement("div");
     msg.className = "ask-msg ask-msg-waiting";
+    msg.dataset.turnItem = (item && item.id) || "";
+    expandThreadHistory();
     const about = document.createElement("p");
     about.className = "ask-msg-about";
-    about.textContent = "关于：" + ((item && item.name) || "");
+    let aboutText = "关于：" + ((item && item.name) || "");
+    if (item && item.status === "未找到") aboutText += " · 补写";
+    if (item && item.tag_source === "ai_opinion") aboutText += "（AI 观点）";
+    about.textContent = aboutText;
     const q = document.createElement("p");
     q.className = "ask-msg-q";
     q.textContent = question;
@@ -1656,6 +1749,7 @@
     fetch("/api/review/" + encodeURIComponent(reviewId))
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error("read"))))
       .then((data) => {
+        if (data && state.reviewId === reviewId) state.review = data;
         const turns = (data && data.ask_thread && data.ask_thread.turns) || [];
         const turn = turns.find((t) => t && t.request_id === requestId);
         if (!turn || turn.state === "processing") {
@@ -1709,16 +1803,107 @@
 
   /** B7-6 共享对话流：从持久化 turns 渲染全部历史（刷新恢复/未选条目
    * 也可查看——codex 十二轮 P2-5：选中只门禁发送，不门禁查看） */
+  /** B7-6d（codex 拍板规则③）：历史双范围——默认「本疑点」，可切「本合同
+   * 全部」；每轮「关于哪条」标签保留（渲染层过滤，后台仍一份记录）。 */
+  function threadTurnsForScope(turns) {
+    const list = (turns || []).filter(Boolean);
+    if (state.threadScope === "item" && state.askItem) {
+      return list.filter((t) => t.item_id === state.askItem.id);
+    }
+    return list;
+  }
+
+  function renderThreadScopeBar() {
+    const bar = $("wb-scope-bar");
+    const fold = $("wb-history");
+    const turns = (state.review && state.review.ask_thread
+      && state.review.ask_thread.turns) || [];
+    const mine = state.askItem
+      ? turns.filter((t) => t && t.item_id === state.askItem.id).length
+      : 0;
+    // 线框 §1.2④：0 轮整区隐藏（不显示「历史对话（0轮）」空壳）；
+    // 但实时气泡（等待中/刚回答）也算轮次存在——服务端快照滞后时
+    // 不能把刚落地的对话藏掉
+    const thread = $("ask-thread");
+    const hasLocal = !!(thread && thread.children.length);
+    if (turns.length > 0 || hasLocal) state.threadExpanded = true;
+    if (fold) {
+      fold.classList.toggle(
+        "hidden", turns.length === 0 && !hasLocal && !state.threadExpanded);
+    }
+    const cnt = $("wb-thread-count");
+    if (cnt) {
+      cnt.textContent = state.threadScope === "item"
+        ? `历史对话（${mine}轮）`
+        : `历史对话（全部 ${turns.length}轮）`;
+    }
+    if (bar) {
+      bar.querySelectorAll("button").forEach((b) => {
+        const active = b.dataset.scope === state.threadScope;
+        b.classList.toggle("wb-scope-active", active);
+        b.setAttribute("aria-pressed", active ? "true" : "false");
+      });
+    }
+  }
+
+  /** 线框 §1.2④：发送新问题/收到新回答时自动展开历史区一次
+   * （用户需要看到回答落进哪一格——纯收起等于把对话藏起来）。
+   * 发送即展开：此刻服务端已有在途轮次，「0 轮隐藏」不再适用。 */
+  function expandThreadHistory() {
+    state.threadExpanded = true;
+    const fold = $("wb-history");
+    if (fold) {
+      fold.classList.remove("hidden");
+      fold.open = true;
+    }
+  }
+
+  function setThreadScope(scope) {
+    if (state.threadScope === scope) return;
+    state.threadScope = scope;
+    renderThreadFromData(threadTurnsForScope(
+      (state.review && state.review.ask_thread
+        && state.review.ask_thread.turns) || []));
+    renderThreadScopeBar();
+  }
+
   function renderThreadFromData(turns) {
     const thread = $("ask-thread");
     if (!thread) return;
     thread.innerHTML = "";
+    renderThreadScopeBar();
+    if (!turns || !turns.length) {
+      // 线框 §1.2④：本疑点无轮次时给一行空态（不占折叠体外空间）
+      const empty = document.createElement("p");
+      empty.className = "ask-thread-empty";
+      empty.textContent = state.threadScope === "item" && state.askItem
+        ? "这个疑点还没有对话记录。"
+        : "还没有对话记录。";
+      thread.appendChild(empty);
+      return;
+    }
+    let lastItemKey = null;
     (turns || []).forEach((t) => {
+      // 线框 §1.2④：本合同全部视图下，相邻轮次条目变化处渲染切换分隔线
+      if (state.threadScope === "all" && state.askItem
+          && lastItemKey !== null && t.item_id !== lastItemKey) {
+        const divider = document.createElement("p");
+        divider.className = "ask-thread-divider";
+        divider.textContent = "切换到：" + (t.item_name || "其他条目");
+        thread.appendChild(divider);
+      }
+      lastItemKey = t.item_id;
       const msg = document.createElement("div");
       msg.className = "ask-msg ask-msg-user";
+      // 线框 §4 e2e 锚点：轮次带归属（data-turn-item），归档谁的归谁的
+      msg.dataset.turnItem = t.item_id || "";
       const about = document.createElement("p");
       about.className = "ask-msg-about";
-      about.textContent = "关于：" + (t.item_name || "");
+      // B7-6c：补写轮带来源标记「· 补写」；观点类带「（AI 观点）」（老钱 1.4）
+      let aboutText = "关于：" + (t.item_name || "");
+      if (t.source === "remediate") aboutText += " · 补写";
+      if (t.source === "opinion") aboutText += "（AI 观点）";
+      about.textContent = aboutText;
       const q = document.createElement("p");
       q.className = "ask-msg-q";
       q.textContent = t.question || "";
@@ -1867,7 +2052,7 @@
     renderFollowups(followups);
   }
 
-  async function copyRewrite(btn, text) {
+  async function copyRewrite(btn, text, original = "复制改写稿") {
     let copied = false;
     try {
       await navigator.clipboard.writeText(text);
@@ -1887,7 +2072,6 @@
       }
       document.body.removeChild(ta);
     }
-    const original = "复制改写稿";
     btn.textContent = copied ? "已复制 · 请核对后使用" : "复制失败，请手动选择复制";
     btn.classList.add("copied");
     setTimeout(() => {
@@ -2516,7 +2700,7 @@
   /** 三卡挂载门禁：仅「需关注且非补盲且有原文摘句」的检查项出三卡
    * （与追问卡同一族；补盲待人工确认，不让它混进建议流）。 */
   function revEligible(item) {
-    return item.status === "需关注" && !item._blind && !!item.quote;
+    return item.status === "需关注" && !item._blind && item.tag_source !== "ai_opinion" && !!item.quote;
   }
 
   /** B7-5b 桌面双栏 + 「问清楚」对话框（阳仔线框；codex 七/八轮补明）。
@@ -2616,6 +2800,8 @@
       const input = $("ask-input");
       if (input) input.focus();
     }
+    // 线框 §1.2④：显式打开工作台 = 要看对话——历史区自动展开
+    expandThreadHistory();
     // codex 十五轮 P2-4：回到条目即按持久化轮次同步共享流——甲条回答中
     // 切到乙条，页面守卫拒写的迟到响应已归档在服务端；切回时不重读就
     // 只能整页刷新才见。守卫保留零改动，这里只做「以服务端为准」的补渲
@@ -2635,7 +2821,9 @@
         if (!data) return;
         if (state.reviewId !== rid) return;
         if (state.askReqSeq !== seqAtReq) return;
-        renderThreadFromData((data.ask_thread && data.ask_thread.turns) || []);
+        state.review = data; // 轮数/过滤的真相源随最新读档刷新
+        renderThreadFromData(threadTurnsForScope(
+          (data.ask_thread && data.ask_thread.turns) || []));
       })
       .catch(() => { /* 纯增益路径：失败静默（下次切条目再试） */ });
   }
@@ -2830,6 +3018,402 @@
   }
   const drawerMask = $("drawer-mask");
   if (drawerMask) drawerMask.addEventListener("click", () => shellDrawer(false));
+
+  // ===== B7-6c「看看怎么补」（老钱裁定：示范文本/中性/不改档位） =====
+  // 线框 §2.2 状态机：idle→checking→guidance/elsewhere/draft/error；
+  // 结果随单持久（remediations），选中未找到条目即按存档渲染。
+
+  function _remediationFor(itemId) {
+    const rems = state.review && state.review.remediations;
+    const rem = rems ? rems[itemId] : null;
+    return rem && typeof rem === "object" ? rem : null;
+  }
+
+  function renderDraftEntry(item) {
+    const card = $("draft-entry-card");
+    if (!card) return;
+    if (!item || item.status !== "未找到" || item._blind) {
+      card.classList.add("hidden");
+      card.innerHTML = "";
+      return;
+    }
+    card.classList.remove("hidden");
+    const stored = _remediationFor(item.id);
+    if (stored && stored.mode && stored.mode !== "error") {
+      renderRemediationResult(card, item, stored);
+      return;
+    }
+    if (card.dataset.item === item.id
+        && (card.dataset.state === "checking"
+            || card.dataset.state === "draft"
+            || card.dataset.state === "elsewhere"
+            || card.dataset.state === "guidance")) {
+      return; // 会话内已渲染的状态不被重渲覆盖（刷新后由存档接管）
+    }
+    card.dataset.item = item.id;
+    card.dataset.state = "idle";
+    card.innerHTML = "";
+    const cap = document.createElement("p");
+    cap.className = "draft-caption";
+    cap.textContent = "系统未找到对应内容。AI 可分段检查并提供补充参考，请您对照整份合同核实。单份合同最多预留 36 次模型调用额度；长合同可能等待较久。";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "link";
+    btn.id = "draft-entry-btn";
+    btn.textContent = "看看怎么补 →";
+    btn.onclick = () => startRemediate(item);
+    card.appendChild(cap);
+    card.appendChild(btn);
+  }
+
+  function startRemediate(item) {
+    const card = $("draft-entry-card");
+    if (!card || !state.reviewId) return;
+    card.dataset.item = item.id;
+    card.dataset.state = "checking";
+    card.innerHTML = "";
+    const cap = document.createElement("p");
+    cap.className = "draft-caption";
+    cap.textContent = "正在结合整份合同检查：相关内容是否写在别处、是否已有替代安排……";
+    card.appendChild(cap);
+    const reviewId = state.reviewId;
+    const isCurrent = () => state.reviewId === reviewId
+      && state.selectedItemId === item.id;
+    const base = "/api/review/" + encodeURIComponent(reviewId)
+      + "/items/" + encodeURIComponent(item.id) + "/remediate";
+    fetch(base, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.ok === false) {
+          if (isCurrent()) renderRemediationError(item, data.error || data.detail || ("请求失败（" + res.status + "）"));
+          return;
+        }
+        if (state.reviewId !== reviewId || !state.review) return;
+        // 本地同步存档（服务端已持久，刷新后走存档渲染）
+        if (!state.review.remediations) state.review.remediations = {};
+        state.review.remediations[item.id] = {
+          mode: data.mode, elsewhere: data.elsewhere || {},
+          draft: data.draft || {}, guidance: data.guidance || null,
+          quote_verified: data.quote_verified, adopted: !!data.adopted,
+          user_edited: !!data.user_edited,
+        };
+        if (isCurrent()) {
+          renderRemediationResult(card, item, state.review.remediations[item.id]);
+          fillAskContext(item);
+        }
+      })
+      .catch((e) => { if (isCurrent()) renderRemediationError(item, e.message || String(e)); });
+  }
+
+  function renderRemediationError(item, message) {
+    const card = $("draft-entry-card");
+    if (!card) return;
+    card.dataset.item = item.id;
+    card.dataset.state = "error";
+    card.innerHTML = "";
+    const err = document.createElement("p");
+    err.className = "error";
+    err.id = "draft-error";
+    err.textContent = message;
+    const retry = document.createElement("button");
+    retry.type = "button";
+    retry.className = "link";
+    retry.textContent = "重试";
+    retry.onclick = () => startRemediate(item);
+    card.appendChild(err);
+    card.appendChild(retry);
+  }
+
+  function renderRemediationResult(card, item, rem) {
+    card.dataset.item = item.id;
+    card.dataset.state = rem.mode || "error";
+    card.innerHTML = "";
+
+    if (rem.mode === "guidance") {
+      const cap = document.createElement("p");
+      cap.className = "draft-caption";
+      cap.textContent = "行动指引（该类内容不宜由 AI 出示范文本）：";
+      card.appendChild(cap);
+      const body = document.createElement("p");
+      body.className = "draft-guidance";
+      body.textContent = rem.guidance || "";
+      card.appendChild(body);
+      return;
+    }
+
+    if (rem.mode === "elsewhere") {
+      const ew = rem.elsewhere || {};
+      const cap = document.createElement("p");
+      cap.className = "draft-caption";
+      cap.textContent = "以下原文可能与此项有关，请结合全文核对：";
+      card.appendChild(cap);
+      if (ew.summary) {
+        const s = document.createElement("p");
+        s.textContent = ew.summary;
+        card.appendChild(s);
+      }
+      const quotes = Array.isArray(ew.quotes) ? ew.quotes : [];
+      quotes.slice(0, 3).forEach((q, index) => {
+        const quote = document.createElement("p");
+        quote.className = "draft-quote";
+        quote.textContent = "原文摘句：" + q;
+        card.appendChild(quote);
+        if (ew.context_available) {
+          const link = document.createElement("button");
+          link.type = "button";
+          link.className = "link draft-context-link";
+          link.textContent = "查看合同上下文";
+          const context = document.createElement("div");
+          context.className = "draft-source-context hidden";
+          context.tabIndex = -1;
+          link.onclick = () => showRemediationContext(item, index, link, context);
+          card.append(link, context);
+        }
+      });
+      const hint = document.createElement("p");
+      hint.className = "draft-hint";
+      hint.textContent = "如果您仍觉得缺——可回到清单对该条目的说明再核对，或咨询专业人士。";
+      card.appendChild(hint);
+      return;
+    }
+
+    if (rem.mode !== "draft") return;
+    const dr = rem.draft || {};
+    const head = document.createElement("p");
+    head.className = "draft-caption";
+    head.textContent = "补充草稿 · 关于：" + (item.name || "");
+    card.appendChild(head);
+    // 老钱 2.5：草稿头部固定声明
+    const legal = document.createElement("p");
+    legal.className = "draft-legal";
+    legal.textContent = (rem.user_edited ? "基于 AI 示范文本，经您自行调整。" : "AI 生成的示范文本。")
+      + "仅供参考，不构成法律意见。采用前请专业人士复核，并与您的实际交易情况核对。";
+    card.appendChild(legal);
+    if (rem.adopted) {
+      const ad = document.createElement("p");
+      ad.className = "draft-adopted";
+      ad.textContent = "已标记选用；合同原文件不会被修改。补入后建议重新提交审查确认。";
+      card.appendChild(ad);
+    }
+    const body = document.createElement("div");
+    body.id = "draft-body";
+    body.className = "draft-body";
+    // 留空占位高亮（「____（待填写：××）」空得看得见）
+    body.innerHTML = escapeHtml(dr.clause_draft || "")
+      .replace(/____（待填写：([^）]+)）/g,
+        '<span class="draft-blank">____（待填写：$1）</span>');
+    card.appendChild(body);
+    if ((dr.blanks || []).length) {
+      const blanks = document.createElement("p");
+      blanks.className = "draft-blanks";
+      blanks.textContent = "留空待填：" + dr.blanks.join("、");
+      card.appendChild(blanks);
+    }
+    if (dr.placement) {
+      const place = document.createElement("p");
+      place.className = "draft-place";
+      place.textContent = "常见位置参考：" + dr.placement;
+      card.appendChild(place);
+    }
+    if ((dr.related || []).length) {
+      const rel = document.createElement("p");
+      rel.className = "draft-related";
+      rel.textContent = "关联条款：" + dr.related.join("；");
+      card.appendChild(rel);
+    }
+    const hint = document.createElement("p");
+    hint.className = "draft-hint";
+    hint.textContent = "复制前先对照原文核一遍（确认意思没跑偏）";
+    card.appendChild(hint);
+
+    const actions = document.createElement("div");
+    actions.className = "draft-actions";
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "link";
+    copyBtn.textContent = "复制示范文本";
+    copyBtn.onclick = () => copyRewrite(copyBtn, dr.clause_draft || "", "复制示范文本");
+    const editBtn = document.createElement("button");
+    editBtn.type = "button";
+    editBtn.className = "link";
+    editBtn.textContent = "调整文本";
+    editBtn.onclick = () => renderRemediationEditor(card, item, rem);
+    const askBtn = document.createElement("button");
+    askBtn.type = "button";
+    askBtn.className = "link";
+    askBtn.textContent = "继续讨论";
+    askBtn.onclick = () => discussRemediation(item);
+    const adoptBtn = document.createElement("button");
+    adoptBtn.type = "button";
+    adoptBtn.className = "link";
+    adoptBtn.id = "btn-draft-adopt";
+    adoptBtn.textContent = rem.adopted ? "已标记选用" : "标记选用";
+    adoptBtn.disabled = !!rem.adopted;
+    adoptBtn.onclick = () => adoptRemediation(item);
+    const ignoreBtn = document.createElement("button");
+    ignoreBtn.type = "button";
+    ignoreBtn.className = "link";
+    ignoreBtn.textContent = "忽略";
+    ignoreBtn.onclick = () => renderDraftEntryIdle(item);
+    actions.appendChild(copyBtn);
+    actions.appendChild(editBtn);
+    actions.appendChild(askBtn);
+    actions.appendChild(adoptBtn);
+    actions.appendChild(ignoreBtn);
+    card.appendChild(actions);
+  }
+
+  async function showRemediationContext(item, index, button, context) {
+    const reviewId = state.reviewId;
+    if (!reviewId) return;
+    button.disabled = true;
+    try {
+      const url = "/api/review/" + encodeURIComponent(reviewId) + "/items/"
+        + encodeURIComponent(item.id) + "/remediate/context/" + index;
+      const res = await fetch(url);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || "暂时无法读取合同上下文");
+      if (state.reviewId !== reviewId || state.selectedItemId !== item.id || !context.isConnected) return;
+      context.innerHTML = "";
+      const label = document.createElement("p");
+      label.className = "draft-context-label";
+      if (data.status !== "verified") {
+        label.textContent = data.status === "ambiguous"
+          ? "摘句在合同多处出现，无法确定具体位置，请对照合同全文核对。"
+          : "当前无法在合同中定位摘句，请对照合同全文核对。";
+        context.appendChild(label);
+      } else {
+        label.textContent = (data.heading ? "所在条款：" + data.heading + "。" : "合同原文上下文。")
+          + (data.truncated ? "仅显示局部，请结合全文核对。" : "请结合全文核对。");
+        const source = document.createElement("div");
+        source.className = "draft-context-text";
+        const before = document.createTextNode(data.before || "");
+        const match = document.createElement("mark");
+        match.textContent = data.match || "";
+        const after = document.createTextNode(data.after || "");
+        source.append(before, match, after);
+        context.append(label, source);
+      }
+      context.classList.remove("hidden");
+      context.scrollIntoView({behavior: "smooth", block: "nearest"});
+      context.focus({preventScroll: true});
+    } catch (e) {
+      if (state.reviewId === reviewId && state.selectedItemId === item.id && context.isConnected) {
+        context.textContent = e.message || "暂时无法读取合同上下文";
+        context.classList.remove("hidden");
+      }
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function renderRemediationEditor(card, item, rem) {
+    const reviewId = state.reviewId;
+    const original = (rem.draft && rem.draft.clause_draft) || "";
+    card.innerHTML = "";
+    const label = document.createElement("label");
+    label.textContent = "自行调整参考文本（保存不会修改合同原文件）";
+    const input = document.createElement("textarea");
+    input.id = "draft-edit-input";
+    input.maxLength = 6000;
+    input.value = original;
+    label.appendChild(input);
+    const error = document.createElement("p");
+    error.className = "error hidden";
+    const save = document.createElement("button");
+    save.type = "button";
+    save.textContent = "保存调整";
+    save.onclick = async () => {
+      if (!input.value.trim()) { error.textContent = "请输入参考文本"; error.classList.remove("hidden"); return; }
+      save.disabled = true;
+      try {
+        const url = "/api/review/" + encodeURIComponent(reviewId) + "/items/"
+          + encodeURIComponent(item.id) + "/remediate";
+        const res = await fetch(url, {method: "PUT", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({clause_draft: input.value, expected_draft: original})});
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) throw new Error(data.detail || data.error || "保存失败");
+        if (state.reviewId !== reviewId || !state.review) return;
+        const current = _remediationFor(item.id);
+        if (current) { current.draft = data.draft; current.adopted = !!data.adopted; current.user_edited = true; }
+        if (state.selectedItemId === item.id && current) renderRemediationResult(card, item, current);
+      } catch (e) {
+        if (state.reviewId === reviewId && state.selectedItemId === item.id) {
+          error.textContent = e.message || "保存失败"; error.classList.remove("hidden"); save.disabled = false;
+        }
+      }
+    };
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.textContent = "取消";
+    cancel.onclick = () => renderRemediationResult(card, item, rem);
+    card.append(label, error, save, cancel);
+    input.focus();
+  }
+
+  function renderDraftEntryIdle(item) {
+    // 忽略只收起界面；已保存的记录和报告留痕不删除。
+    const card = $("draft-entry-card");
+    if (!card) return;
+    const rem = _remediationFor(item.id);
+    card.innerHTML = "";
+    card.dataset.state = "idle";
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "link";
+    btn.textContent = "查看补充参考";
+    btn.onclick = () => renderRemediationResult(card, item, rem);
+    card.appendChild(btn);
+  }
+
+  function discussRemediation(item) {
+    // 线框 §2.3：继续讨论 → 该未找到条目为讨论对象（窄门：仅草稿卡
+    // 生成后开放——renderRemediationResult 能到这一步说明 remediation 存在）
+    const wb = $("ask-workbench");
+    if (wb) wb.classList.remove("hidden");
+    fillAskContext(item);
+    renderThreadFromData(threadTurnsForScope(
+      (state.review && state.review.ask_thread
+        && state.review.ask_thread.turns) || []));
+    expandThreadHistory();
+    syncSideEmpty();
+    const wbEl = $("ask-workbench");
+    if (wbEl) wbEl.scrollIntoView({ block: "center" });
+    const input = $("ask-input");
+    if (input) input.focus();
+  }
+
+  async function adoptRemediation(item) {
+    if (!state.reviewId) return;
+    const reviewId = state.reviewId;
+    const isCurrent = () => state.reviewId === reviewId && state.selectedItemId === item.id;
+    const btn = $("btn-draft-adopt");
+    if (btn) { btn.disabled = true; btn.textContent = "标记中…"; }
+    try {
+      const base = "/api/review/" + encodeURIComponent(reviewId)
+        + "/items/" + encodeURIComponent(item.id) + "/remediate/adopt";
+      const res = await fetch(base, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) throw new Error(data.detail || "标记失败");
+      if (state.reviewId !== reviewId) return;
+      const rem = _remediationFor(item.id);
+      if (rem) rem.adopted = true;
+      if (isCurrent() && rem) renderRemediationResult($("draft-entry-card"), item, rem);
+      // 铁律：不改档位——清单 tag 原样保持「未找到」
+    } catch (e) {
+      if (isCurrent()) renderRemediationError(item, e.message || String(e));
+    }
+  }
+
+
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
     const nav = $("shell-nav");
@@ -2849,6 +3433,14 @@
     });
   }
   bindShellEntries();
+  // B7-6d：历史范围切换（本疑点/本合同全部）
+  const scopeBar = $("wb-scope-bar");
+  if (scopeBar) {
+    scopeBar.addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-scope]");
+      if (btn) setThreadScope(btn.dataset.scope);
+    });
+  }
   renderShellHistory();
   renderShellContext();
 

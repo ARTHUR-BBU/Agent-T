@@ -27,6 +27,11 @@ from app.api.schemas import (
     ClauseIndexInfo,
     PrecheckInfo,
     QualityInfo,
+    RemediateAdoptResponse,
+    RemediateContextResponse,
+    RemediateEditRequest,
+    RemediateRequest,
+    RemediateResponse,
     ReviewSummary,
     ScorecardInfo,
     UploadResponse,
@@ -40,7 +45,7 @@ from app.services import category_suggest as category_suggest_service
 from app.services import llm_ask, precheck as precheck_service, report as report_service
 from app.services import verify as verify_service
 from app.prompts import precheck as precheck_prompts
-from app.services import llm_budget, llm_call_log, rate_limit
+from app.services import llm_budget, llm_call_log, rate_limit, remediation_budget
 from app.services.checklist import list_categories
 from app.services.clause_index import build_clause_context
 from app.services.extract import ExtractionError, extract_text
@@ -541,6 +546,26 @@ def get_review(review_id: str):
     facts = row.get("facts")
     if not facts and isinstance(quality, dict):
         facts = quality.get("facts") or []
+    # 历史草稿可能早于当前禁止清单；读取时也要按现行边界呈现，不能靠按钮拦截。
+    from app.services import llm_remediate
+    saved_rems = row.get("remediations") or {}
+    safe_rems = dict(saved_rems) if isinstance(saved_rems, dict) else {}
+    for entry in row.get("items") or []:
+        if not isinstance(entry, dict):
+            continue
+        iid = entry.get("id")
+        old = safe_rems.get(iid)
+        if (isinstance(old, dict) and old.get("mode") != "guidance"
+                and (llm_remediate.is_negative_item(entry)
+                     or llm_remediate.needs_specialist(entry, row.get("text") or ""))):
+            guidance = llm_remediate.remediate_item(item=entry, contract_text=row.get("text") or "")
+            safe_rems[iid] = {"mode": "guidance", "guidance": guidance.get("guidance")}
+        elif isinstance(old, dict) and old.get("mode") == "elsewhere":
+            # 能力标记只由支持该只读端点的服务器添加，兼容仍在运行的旧预览。
+            raw_elsewhere = old.get("elsewhere")
+            elsewhere = dict(raw_elsewhere) if isinstance(raw_elsewhere, dict) else {}
+            elsewhere["context_available"] = True
+            safe_rems[iid] = {**old, "elsewhere": elsewhere}
     return ReviewSummary(
         precheck=PrecheckInfo(**pc) if pc else None,
         id=row["id"],
@@ -576,6 +601,8 @@ def get_review(review_id: str):
         ai_findings=ai_findings_service.review_findings(row),
         # B7-6：共享对话流（持久化随单；无对话为 None）
         ask_thread=row.get("ask_thread"),
+        # B7-6c：补写建议随单（草稿卡刷新恢复）
+        remediations=safe_rems or None,
         export_scope_note=row.get("export_scope_note")
         or (
             "报告只含本次读到并展示的内容；未读部分不写入结论"
@@ -585,6 +612,7 @@ def get_review(review_id: str):
                 if (row.get("ask_thread") or {}).get("turns")
                 else ""
             )
+            + ("、补充参考及选用记录" if row.get("remediations") else "")
             + "、参考评分与补盲）"
         ),
     )
@@ -636,6 +664,18 @@ def download_report(review_id: str):
             }
             for f in obs_findings if f.get("fact_type") is False
         ]
+        # B7-6c（老钱 2.3）：补写建议留痕——草稿全文+选用状态进报告
+        _rems = row.get("remediations") or {}
+        view["remediation_records"] = [
+            {
+                "item_id": iid,
+                "item_name": next(
+                    (it.get("name") or "" for it in (row.get("items") or [])
+                     if isinstance(it, dict) and it.get("id") == iid), ""),
+                **(r if isinstance(r, dict) else {}),
+            }
+            for iid, r in (_rems.items() if isinstance(_rems, dict) else [])
+        ]
         # B7-6（codex 十五轮 P1-1）：问清楚对话记录入报告——纯读库组装，
         # 无对话返回空列表 → 章节整体不渲染（旧报告字节契约不变）
         _thread = row.get("ask_thread") or {}
@@ -647,6 +687,7 @@ def download_report(review_id: str):
                 "state": t.get("state") or "",
                 "error": t.get("error"),
                 "answer": t.get("answer") if isinstance(t.get("answer"), dict) else None,
+                "source": t.get("source"),
             }
             for t in (_t_list or []) if isinstance(t, dict)
         ]
@@ -751,12 +792,41 @@ def ask(body: AskRequest):
         raise HTTPException(status_code=404, detail="审查记录不存在")
     items = row.get("items") or []
     item = next((i for i in items if i.get("id") == body.item_id), None)
+    # 未物化观点只开放解释追问；始终从当前审查单重建，不能由客户端提供观点正文。
+    if item is None and body.item_id.startswith("opinion:"):
+        from app.services.evidence import derive_claims_view
+        normalized, _, _ = derive_claims_view(row)
+        key = body.item_id[len("opinion:"):]
+        finding = next((f for f in ai_findings_service.review_findings(normalized).get("findings", [])
+                        if f.get("finding_key") == key and not f.get("fact_type")), None)
+        if finding and finding.get("status") != "disputed":
+            item = {"id": body.item_id, "name": finding.get("title") or "AI 观点",
+                    "status": "AI 观点", "tag_source": "ai_opinion",
+                    "note": finding.get("comment") or "", "quote": finding.get("quote") or "",
+                    "clause_ids": [finding["clause_id"]] if finding.get("clause_id") else []}
     if not item:
         raise HTTPException(status_code=404, detail="清单项不存在")
     # B7-5a 反悔闭环：停用的 AI 发现不可追问（与生成/选定/牵连同一资格判据）
     if item.get("tag_source") == "ai_finding" and item.get("status") != "需关注":
         raise HTTPException(status_code=409,
                             detail="该 AI 发现已争议撤回，暂不能追问（可恢复确认后再操作）")
+    # B7-6c 窄开（老钱裁定）：未找到条目只在补写参考生成后才开放讨论——
+    # 前后端两道闸（前端 askable 同口径），防止未找到变成无约束问答口
+    _remediated = False
+    _rem: dict = {}
+    if item.get("status") == "未找到":
+        from app.services import llm_remediate
+        if (llm_remediate.is_negative_item(item)
+                or llm_remediate.needs_specialist(item, row.get("text") or "")):
+            raise HTTPException(status_code=409, detail="该条目需由专业人士核对，不能通过补写草稿追问")
+        _rems = row.get("remediations") or {}
+        _candidate = _rems.get(body.item_id) if isinstance(_rems, dict) else None
+        _rem = _candidate if isinstance(_candidate, dict) else {}
+        _remediated = _rem.get("mode") == "draft"
+        if not _remediated:
+            raise HTTPException(
+                status_code=409,
+                detail="「未找到」条目请先点「看看怎么补」生成补充参考，再继续讨论")
 
     # ---- B7-6 对话工作台：turn 生命周期（codex 十二/十三轮规则）----
     # 幂等键=客户端 request_id；服务端唯一键 (review_id, request_id)；
@@ -821,6 +891,10 @@ def ask(body: AskRequest):
                 "state": "processing",
                 "question": (body.question or "")[:llm_ask.MAX_QUESTION_CHARS],
                 "created_at": time.time(),
+                # B7-6c：补写讨论轮来源标记（线程/报告「· 补写」标签）
+                **({"source": "remediate"}
+                   if item.get("status") == "未找到" else {}),
+                **({"source": "opinion"} if item.get("tag_source") == "ai_opinion" else {}),
             })
             store.update(body.review_id, ask_thread=thread)
 
@@ -850,7 +924,9 @@ def ask(body: AskRequest):
     # B2-3 §2.1：ask 是独立入口——每次追问生成一张自己的证（关联 review 既有值）
     with llm_call_log.record_node(
         "ask", body.review_id,
-        prompt_version=llm_ask.PROMPT_VERSION,
+        prompt_version=(llm_ask.OPINION_PROMPT_VERSION if item.get("tag_source") == "ai_opinion"
+                        else llm_ask.REMEDIATION_DISCUSSION_PROMPT_VERSION if _remediated
+                        else llm_ask.PROMPT_VERSION),
         trace_id=llm_call_log.new_call_id()):
             result = llm_ask.ask_about_item(
             question=body.question,
@@ -869,6 +945,8 @@ def ask(body: AskRequest):
             category=row.get("category") or "procurement",
             stance=row.get("stance") or "neutral",
             history=history_turns,
+            skip_status_gate=_remediated,
+            remediation_draft=(_rem.get("draft") or {}) if _remediated else None,
         )
     ok_flag = bool(result.get("ok"))
     _archive_ask_turn(body.review_id, request_id, turn_no, result, ok_flag)
@@ -884,6 +962,312 @@ def ask(body: AskRequest):
         evidence=result.get("evidence"),
         turn_no=turn_no,
     )
+
+
+@router.post(
+    "/review/{review_id}/items/{item_id}/remediate",
+    response_model=RemediateResponse,
+    dependencies=[Depends(rate_limit.ask_rate_limit)],
+)
+def remediate_item(review_id: str, item_id: str,
+                   _body: RemediateRequest = RemediateRequest()):
+    """B7-6c「看看怎么补」：先查写在别处/替代安排，确缺失出中性示范草稿。
+
+    老钱裁定落地：负清单类目（主体/签署/格式条款公平性）入口级拦截——
+    零模型零费用，只给行动指引；草稿不改档位（附件工件，铁律）。"""
+    row = store.get(review_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="审查记录不存在")
+    if (row.get("status") or "") != "done":
+        raise HTTPException(status_code=409, detail="审查尚未完成，暂不能生成补充参考")
+    items = row.get("items") or []
+    item = next((i for i in items if i.get("id") == item_id), None)
+    if not item:
+        raise HTTPException(status_code=404, detail="清单项不存在")
+    if item.get("status") != "未找到":
+        raise HTTPException(status_code=409, detail="仅「未找到」条目提供补写参考")
+    if item.get("tag_source") == "blind":
+        raise HTTPException(status_code=409, detail="补盲候选不提供补写参考")
+
+    from app.services import llm_remediate
+    no_llm = (llm_remediate.is_negative_item(item)
+              or llm_remediate.needs_specialist(item, row.get("text") or ""))
+    cached = (row.get("remediations") or {}).get(item_id)
+    if (isinstance(cached, dict) and cached.get("mode") in ("guidance", "elsewhere", "draft")
+            and (not no_llm or cached.get("mode") == "guidance")):
+        return RemediateResponse(ok=True, item_id=item_id,
+                                 item_name=item.get("name") or "", **cached)
+    if no_llm:
+        return _execute_remediation(review_id, item_id, row, item, no_llm=True, guard=None)
+    with remediation_budget.item_lock(review_id, item_id) as guard:
+        if guard is None:
+            raise HTTPException(status_code=409, detail="该条补写正在处理或系统繁忙，请稍后刷新查看")
+        return _execute_remediation(review_id, item_id, row, item, no_llm=False, guard=guard)
+
+
+def _execute_remediation(review_id: str, item_id: str, row: dict[str, Any], item: dict[str, Any],
+                         *, no_llm: bool, guard: remediation_budget.CallGuard | None):
+    from app.services import llm_remediate
+    if no_llm:
+        # 负清单：入口级拦截（不进模型，零费用）——直接给行动指引
+        result = llm_remediate.remediate_item(
+            item=item, contract_text=row.get("text") or "",
+            category=row.get("category") or "procurement")
+    else:
+        if guard is None:
+            raise RuntimeError("补写任务缺少锁凭证")
+        # 按最坏路径预留全部分段调用，避免处理一半时额度不足。
+        if not str(row.get("text") or "").strip():
+            return RemediateResponse(ok=False, item_id=item_id,
+                                     item_name=item.get("name") or "", mode="error",
+                                     error="合同正文不可用，无法核查补充参考")
+        required_calls = llm_remediate.calls_needed(row.get("text") or "")
+        if required_calls is None:
+            return RemediateResponse(ok=False, item_id=item_id,
+                                     item_name=item.get("name") or "", mode="error",
+                                     error="合同超过补写查证的长度上限，请人工核对")
+        if not (llm_ask._deepseek_key() or llm_ask._zhipu_key() or llm_ask._xai_key()):
+            return RemediateResponse(ok=False, item_id=item_id,
+                                     item_name=item.get("name") or "", mode="error",
+                                     error="补写建议暂未开通")
+        reservation = remediation_budget.reserve(review_id, item_id, calls=required_calls, guard=guard)
+        if reservation != "reserved":
+            if reservation == "expired":
+                raise HTTPException(status_code=404, detail="审查记录已过期")
+            if reservation == "interrupted":
+                raise HTTPException(
+                    status_code=409,
+                    detail="上次补写已中断，已发出的模型请求可能已计费；如需重新检查，请点击重试。")
+            if reservation == "legacy_processing":
+                raise HTTPException(
+                    status_code=409,
+                    detail="旧版任务状态无法安全确认，请重新提交合同审查，避免重复调用。")
+            if reservation == "exhausted":
+                llm_call_log.emit_skip(
+                    node="remediate", provider="not_called", model="not_called",
+                    review_id=review_id, prompt_version=llm_remediate.PROMPT_VERSION,
+                    outcome="budget_exceeded",
+                    error_detail=(f"remediation budget exhausted (attempts={remediation_budget.MAX_ATTEMPTS_PER_REVIEW}, "
+                                  f"calls={remediation_budget.MAX_CALLS_PER_REVIEW}, requested={required_calls})"))
+            if reservation == "success":
+                fresh = store.get(review_id) or {}
+                entry = (fresh.get("remediations") or {}).get(item_id)
+                if isinstance(entry, dict):
+                    return RemediateResponse(ok=True, item_id=item_id,
+                                             item_name=item.get("name") or "", **entry)
+            message = ("该条补写正在处理，请稍后刷新查看" if reservation == "processing"
+                       else "本次审查的补写调用额度已用完或结果不可用，请重新提交合同审查")
+            raise HTTPException(status_code=409, detail=message)
+        try:
+            with llm_call_log.record_node(
+                "remediate", review_id,
+                prompt_version=llm_remediate.PROMPT_VERSION,
+                trace_id=llm_call_log.new_call_id()):
+                result = llm_remediate.remediate_item(
+                    item=item, contract_text=row.get("text") or "",
+                    clause_context=build_clause_context(
+                        row.get("text") or "",
+                        row.get("clause_index") or {},
+                        item.get("clause_ids") or [],
+                        primary_clause_id=item.get("primary_clause_id") or "",
+                    ),
+                    category=row.get("category") or "procurement",
+                    before_call=lambda: remediation_budget.note_call_started(guard),
+                )
+        except Exception:
+            remediation_budget.finish(review_id, item_id, success=False)
+            raise
+
+    # 随单持久（TTL 同审查单；刷新恢复草稿卡；选用状态在此流转）
+    rem_entry = {
+        "mode": result.get("mode") or "error",
+        "elsewhere": result.get("elsewhere") or {},
+        "draft": result.get("draft") or {},
+        "guidance": result.get("guidance"),
+        "quote_verified": result.get("quote_verified"),
+        "adopted": False,
+        "created_at": time.time(),
+    }
+    if result.get("mode") in ("guidance", "elsewhere", "draft"):
+        def save_entry(fresh: dict[str, Any]) -> None:
+            live_item = next((i for i in fresh.get("items") or []
+                              if isinstance(i, dict) and i.get("id") == item_id), None)
+            if not live_item or live_item.get("status") != "未找到":
+                raise HTTPException(status_code=409, detail="条目状态已改变，请刷新后重试")
+            rems = dict(fresh.get("remediations") or {})
+            # 不覆盖已保存的结果或用户选用状态。
+            if no_llm and isinstance(rems.get(item_id), dict) and rems[item_id].get("mode") != "guidance":
+                # 保留旧工件供审计，不再作为当前可选用草稿展示。
+                rem_entry["previous_record"] = rems[item_id]
+                rems[item_id] = rem_entry
+            else:
+                rems.setdefault(item_id, rem_entry)
+            fresh["remediations"] = rems
+
+        try:
+            updated = store.mutate(review_id, save_entry)
+        except Exception:
+            if not no_llm:
+                remediation_budget.finish(review_id, item_id, success=False)
+            raise
+        if updated is None:
+            if not no_llm:
+                remediation_budget.finish(review_id, item_id, success=False)
+            raise HTTPException(status_code=404, detail="审查记录已过期")
+
+    if not no_llm:
+        remediation_budget.finish(review_id, item_id,
+                                  success=result.get("mode") in ("elsewhere", "draft"))
+
+    if result.get("mode") == "elsewhere" and isinstance(result.get("elsewhere"), dict):
+        result["elsewhere"]["context_available"] = True
+    return RemediateResponse(
+        ok=bool(result.get("ok")),
+        item_id=item_id,
+        item_name=item.get("name") or "",
+        mode=result.get("mode") or "error",
+        guidance=result.get("guidance"),
+        elsewhere=result.get("elsewhere") if result.get("ok") else None,
+        draft=result.get("draft") if result.get("ok") else None,
+        quote_verified=result.get("quote_verified"),
+        error=result.get("error"),
+    )
+
+
+@router.get(
+    "/review/{review_id}/items/{item_id}/remediate/context/{quote_index}",
+    response_model=RemediateContextResponse,
+)
+def get_remediation_context(review_id: str, item_id: str, quote_index: int):
+    """仅返回已保存摘句周围的有限原文；多处命中时不猜测位置。"""
+    row = store.get(review_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="审查记录不存在")
+    if row.get("status") != "done":
+        raise HTTPException(status_code=409, detail="审查尚未完成")
+    item = next((i for i in row.get("items") or []
+                 if isinstance(i, dict) and i.get("id") == item_id), None)
+    from app.services import llm_remediate
+    if (not item or item.get("status") != "未找到"
+            or llm_remediate.is_negative_item(item)
+            or llm_remediate.needs_specialist(item, row.get("text") or "")):
+        raise HTTPException(status_code=404, detail="该条目没有可查看的补写查证原文")
+    rems = row.get("remediations") or {}
+    rem = rems.get(item_id) if isinstance(rems, dict) else None
+    elsewhere = rem.get("elsewhere") if isinstance(rem, dict) and rem.get("mode") == "elsewhere" else None
+    quotes = elsewhere.get("quotes") if isinstance(elsewhere, dict) else None
+    if not isinstance(quotes, list) or not 0 <= quote_index < min(len(quotes), 3):
+        raise HTTPException(status_code=404, detail="原文摘句不存在")
+    quote = quotes[quote_index]
+    if not isinstance(quote, str) or not quote.strip():
+        raise HTTPException(status_code=404, detail="原文摘句不存在")
+    from app.services.evidence import locate_quote_span
+    text = str(row.get("text") or "")
+    start, end, status = locate_quote_span(text, quote)
+    if status != "verified" or start is None or end is None:
+        return RemediateContextResponse(status="ambiguous" if status == "ambiguous" else "missing")
+    heading = ""
+    index = row.get("clause_index") or {}
+    clauses = index.get("clauses") if isinstance(index, dict) else []
+    for clause in clauses or []:
+        if not isinstance(clause, dict):
+            continue
+        left, right = clause.get("start"), clause.get("end")
+        if isinstance(left, int) and isinstance(right, int) and 0 <= left <= start < end <= right <= len(text):
+            candidate = str(clause.get("heading") or "")[:200]
+            needle = "".join(candidate.rstrip("…").split())
+            if needle and needle in "".join(text[left:min(right, left + 400)].split()):
+                heading = candidate
+            break
+    match_end = min(end, start + 1200)
+    before_start = max(0, start - 500)
+    after_end = min(len(text), end + 500)
+    return RemediateContextResponse(
+        status="verified", heading=heading, before=text[before_start:start],
+        match=text[start:match_end], after=text[end:after_end] if match_end == end else "",
+        truncated=before_start > 0 or after_end < len(text) or match_end < end,
+    )
+
+
+@router.put(
+    "/review/{review_id}/items/{item_id}/remediate",
+    response_model=RemediateResponse,
+)
+def edit_remediation(review_id: str, item_id: str, body: RemediateEditRequest):
+    """仅保存用户自己修改的示范文本，不调用模型、不变更清单档位。"""
+    from app.services import llm_remediate
+    updated_text = body.clause_draft.strip()
+    if not updated_text:
+        raise HTTPException(status_code=422, detail="补充参考不能为空")
+
+    def edit(fresh: dict[str, Any]) -> None:
+        item = next((i for i in fresh.get("items") or []
+                     if isinstance(i, dict) and i.get("id") == item_id), None)
+        if (not item or item.get("status") != "未找到"
+                or llm_remediate.is_negative_item(item)
+                or llm_remediate.needs_specialist(item, fresh.get("text") or "")):
+            raise HTTPException(status_code=409, detail="该条目不能调整补写草稿")
+        rems = fresh.get("remediations") or {}
+        rem = rems.get(item_id) if isinstance(rems, dict) else None
+        if not isinstance(rem, dict) or rem.get("mode") != "draft":
+            raise HTTPException(status_code=409, detail="该条目暂无补写草稿")
+        draft = rem.get("draft") or {}
+        if not isinstance(draft, dict) or draft.get("clause_draft") != body.expected_draft:
+            raise HTTPException(status_code=409, detail="草稿已在其他地方更改，请刷新后再调整")
+        if rem.get("adopted") and updated_text != body.expected_draft:
+            history = rem.setdefault("past_adoptions", [])
+            if len(history) >= 10:
+                raise HTTPException(status_code=409, detail="历史选用记录已达上限，请重新审查合同")
+            history.append({"clause_draft": body.expected_draft, "adopted_at": rem.get("adopted_at")})
+            rem["adopted"] = False
+            rem.pop("adopted_at", None)
+        rem.setdefault("initial_draft", dict(draft))
+        draft["clause_draft"] = updated_text
+        # 原先由 AI 提供的留空与关联提示可能已不适用于用户修改的文本。
+        draft["blanks"] = []
+        draft["related"] = []
+        draft["placement"] = ""
+        rem["draft"] = draft
+        rem["user_edited"] = True
+        rem["user_edited_at"] = time.time()
+        fresh["remediations"] = rems
+
+    fresh = store.mutate(review_id, edit)
+    if not fresh:
+        raise HTTPException(status_code=404, detail="审查记录不存在或已过期")
+    item = next((i for i in fresh.get("items") or [] if i.get("id") == item_id), {})
+    rem = fresh["remediations"][item_id]
+    return RemediateResponse(ok=True, item_id=item_id, item_name=item.get("name") or "", **rem)
+
+
+@router.post(
+    "/review/{review_id}/items/{item_id}/remediate/adopt",
+    response_model=RemediateAdoptResponse,
+)
+def adopt_remediation(review_id: str, item_id: str):
+    """B7-6c 标记选用（老钱 2.3）：只表态不核查——不改档位是铁律。"""
+    row = store.get(review_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="审查记录不存在")
+    def adopt(fresh: dict[str, Any]) -> None:
+        item = next((i for i in fresh.get("items") or []
+                     if isinstance(i, dict) and i.get("id") == item_id), None)
+        from app.services import llm_remediate
+        if (not item or item.get("status") != "未找到"
+                or llm_remediate.is_negative_item(item)
+                or llm_remediate.needs_specialist(item, fresh.get("text") or "")):
+            raise HTTPException(status_code=409, detail="该条目不能标记选用补写草稿")
+        rems = dict(fresh.get("remediations") or {})
+        rem = rems.get(item_id)
+        if not isinstance(rem, dict) or rem.get("mode") != "draft":
+            raise HTTPException(status_code=409,
+                                detail="该条目暂无补写草稿，不能标记选用")
+        rem["adopted"] = True
+        rem["adopted_at"] = time.time()
+        fresh["remediations"] = rems
+    if store.mutate(review_id, adopt) is None:
+        raise HTTPException(status_code=404, detail="审查记录已过期")
+    return RemediateAdoptResponse(ok=True, item_id=item_id, adopted=True)
 
 
 def _archive_ask_turn(review_id: str, request_id: str, turn_no: int,

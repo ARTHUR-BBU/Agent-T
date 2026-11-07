@@ -30,6 +30,8 @@ NODE_MAX_OUTPUT_TOKENS: dict[str, int] = {
     # （#138 同款流程）。
     "revision": 16000,
     "impact": 8000,
+    # B7-6c：分段核查可能多次调用；上限先按保守值登记，后续凭账单校准。
+    "remediate": 6000,
 }
 DEFAULT_MAX_OUTPUT_TOKENS = 16000
 

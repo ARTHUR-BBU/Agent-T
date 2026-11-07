@@ -208,6 +208,8 @@ class ReviewStore:
 
     def update(self, review_id: str, **kwargs: Any) -> dict[str, Any] | None:
         with self._lock, closing(self._conn()) as conn, conn:
+            # 写前加 SQLite 写锁：跨进程的读取-合并-写回必须是一笔事务。
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT created_at, data FROM reviews WHERE id = ?", (review_id,)
             ).fetchone()
@@ -223,6 +225,23 @@ class ReviewStore:
                 "UPDATE reviews SET data = ? WHERE id = ?",
                 (json.dumps(data, ensure_ascii=False), review_id),
             )
+            return data
+
+    def mutate(self, review_id: str, change: Callable[[dict[str, Any]], None]) -> dict[str, Any] | None:
+        """持数据库写锁完成嵌套字段的读改写，避免不同进程覆盖对方结果。"""
+        with self._lock, closing(self._conn()) as conn, conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT created_at, data FROM reviews WHERE id = ?", (review_id,)).fetchone()
+            if not row:
+                return None
+            if self._is_expired(row[0]):
+                conn.execute("DELETE FROM reviews WHERE id = ?", (review_id,))
+                self._run_purge_hooks(conn, [review_id])
+                return None
+            data = json.loads(row[1])
+            change(data)
+            conn.execute("UPDATE reviews SET data = ? WHERE id = ?",
+                         (json.dumps(data, ensure_ascii=False), review_id))
             return data
 
 
