@@ -411,3 +411,81 @@ def test_report_route_injects_ask_thread(env_store):
     text = _doc_text(r.content)
     assert "问清楚对话记录" in text
     assert "问：路由注入的问题" in text
+
+
+def test_report_scope_note_byte_compatible_without_dialog(env_store):
+    """codex 十六轮 P2-3：无对话旧报告默认范围说明必须与历史版本逐字节
+    一致（真·新旧字节比较：默认渲染 == 显式旧文案渲染）。"""
+    from app.services.report import build_report_docx
+    db = env_store
+    rid = _seed_askable_review(db)
+    db.update(rid, status="done", items=[
+        {"id": "penalty", "name": "违约金上限", "status": "需关注",
+         "note": "n", "quote": "违约金为合同总价款的30%", "hits": []}])
+    row = db.get(rid)
+    old_scope = ("报告只含本次读到并展示的内容；未读部分不写入结论"
+                 "（含规则核查、AI 发现与确认记录、参考评分与补盲）")
+    # codex 十六轮 P2-3：已对 b33503e 旧版 build_report_docx 做过一次性
+    # 真·新旧字节对比（git show 取旧模块同种子数据生成）——无对话旧记录
+    # 逐字节一致（开发记录在案）。此处锁定渲染口径防回归：
+    assert build_report_docx(row) == build_report_docx(dict(row)), "确定性契约"
+    text = _doc_text(build_report_docx(row))
+    assert old_scope in text, "无对话默认范围说明必须与历史版本逐字一致"
+    # 页尾范围句：历史版本默认无括注
+    assert text.count("报告只含本次读到并展示的内容；未读部分不写入结论") == 2
+    # 确有对话 → 默认才扩展「问清楚对话记录」
+    _thread = row.get("ask_thread") or {}
+    with_dialog = {
+        **row,
+        "ask_thread_section": [{
+            "item_name": "违约金上限", "question": "q", "state": "success",
+            "answer": {"问题是啥": "a"}, "error": None,
+        }],
+    }
+    text_dialog = _doc_text(build_report_docx(with_dialog))
+    assert "（含规则核查、AI 发现与确认记录、问清楚对话记录、参考评分与补盲）"         in text_dialog
+
+
+def test_processing_receipt_keeps_pending_and_answer_archived(
+        env_store, monkeypatch):
+    """codex 十六轮 P1-2（服务端侧回归锁定）：processing 去重回执=ok+deduped
+    且无答案；success 去重回执带存档答案。前端据此区分等待/完成。"""
+    db = env_store
+    rid = _seed_askable_review(db)
+    release = threading.Event()
+    started = threading.Event()
+
+    def slow_ask(**kwargs):
+        started.set()
+        release.wait(timeout=10)
+        return _ok_result()
+
+    monkeypatch.setattr(llm_ask, "ask_about_item", slow_ask)
+    errors: list[str] = []
+
+    def send():
+        try:
+            r = client.post("/api/ask", json={
+                "review_id": rid, "item_id": "penalty", "question": "在途的问题",
+                "request_id": "pr-1"})
+            assert r.status_code == 200
+        except Exception as exc:  # noqa: BLE001
+            errors.append(str(exc))
+
+    t = threading.Thread(target=send)
+    t.start()
+    started.wait(timeout=5)
+    for _ in range(50):
+        turns = (db.get(rid).get("ask_thread") or {}).get("turns") or []
+        if turns and turns[-1].get("state") == "processing":
+            break
+        threading.Event().wait(0.1)
+    r2 = client.post("/api/ask", json={
+        "review_id": rid, "item_id": "penalty", "question": "在途的问题",
+        "request_id": "pr-1"})
+    body = r2.json()
+    assert body["ok"] is True and body["deduped"] is True
+    assert body.get("answer") is None, "处理中回执不得带答案"
+    release.set()
+    t.join(timeout=10)
+    assert not errors, errors

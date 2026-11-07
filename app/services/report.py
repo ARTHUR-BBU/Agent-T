@@ -155,13 +155,25 @@ def _cover(doc: Any, row: dict[str, Any]) -> None:
 
     # A3 / 九哥：导出范围一句（灰字不抢评分卡；B7-5a 起含 AI 发现与确认记录，
     # 旧记录已存的自带说明按原样渲染——字节契约不破）
-    scope = row.get("export_scope_note") or (
-        "报告只含本次读到并展示的内容；未读部分不写入结论"
-        "（含规则核查、AI 发现与确认记录、问清楚对话记录、参考评分与补盲）"
-    )
+    # codex 十六轮 P2：默认文案只在确有对话时扩展「问清楚对话记录」——
+    # 无对话旧报告的默认范围说明必须与历史版本逐字节一致
+    scope = row.get("export_scope_note") or _default_scope_note(row)
     p = doc.add_paragraph()
     run = p.add_run(scope)
     run.italic = True
+
+
+def _default_scope_note(row: dict[str, Any]) -> str:
+    """默认导出范围说明：基线=历史版本原文（逐字节）；仅当本报告确有
+    问清楚对话时插入「、问清楚对话记录」（codex 十六轮 P2-3）。"""
+    base = ("报告只含本次读到并展示的内容；未读部分不写入结论"
+            "（含规则核查、AI 发现与确认记录")
+    if any(
+        isinstance(t, dict) and str(t.get("question") or "").strip()
+        for t in (row.get("ask_thread_section") or [])
+    ):
+        base += "、问清楚对话记录"
+    return base + "、参考评分与补盲）"
 
 
 def _known_statuses() -> tuple[str, ...]:
@@ -673,9 +685,9 @@ def _footer(doc: Any, row: dict[str, Any]) -> None:
     p = doc.add_paragraph()
     run = p.add_run(disclaimer)
     run.italic = True
+    # 页尾范围句：历史版本默认无括注——保持逐字节原样（codex 十六轮 P2-3）
     scope = row.get("export_scope_note") or (
         "报告只含本次读到并展示的内容；未读部分不写入结论"
-        "（含规则核查、AI 发现与确认记录、问清楚对话记录、参考评分与补盲）"
     )
     p2 = doc.add_paragraph()
     run2 = p2.add_run(scope)

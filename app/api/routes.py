@@ -579,7 +579,13 @@ def get_review(review_id: str):
         export_scope_note=row.get("export_scope_note")
         or (
             "报告只含本次读到并展示的内容；未读部分不写入结论"
-            "（含规则核查、AI 发现与确认记录、参考评分与补盲）"
+            "（含规则核查、AI 发现与确认记录"
+            + (
+                "、问清楚对话记录"
+                if (row.get("ask_thread") or {}).get("turns")
+                else ""
+            )
+            + "、参考评分与补盲）"
         ),
     )
 

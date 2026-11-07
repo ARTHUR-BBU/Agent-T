@@ -2114,3 +2114,102 @@ def test_switch_back_item_syncs_archived_answer(home):
     home.wait_for_selector("#ask-thread .ask-msg", state="visible", timeout=10000)
     assert "甲的在途问题" in home.inner_text("#ask-thread .ask-msg-q")
     assert "甲的归档答案SYNC" in home.inner_text("#ask-thread")
+
+
+def test_pending_saved_before_send_survives_reload(home):
+    """codex 十六轮 P1-1：请求在途（未收到回执）关标签再重开 → 恢复卡
+    接得上（身份在发送之前落盘，不靠失败回调）。"""
+    import json as _json
+    home.route("**/api/ask", lambda route: None)  # 挂起不 fulfill = 模拟在途
+    _stub_ask_flow(home, {})
+    home.unroute("**/api/ask")
+    home.route("**/api/ask", lambda route: None)
+    home.locator("#item-list .item.attention").first.click()
+    home.click("#detail-ask")
+    home.wait_for_selector("#ask-workbench .ask-interact", state="visible")
+    home.fill("#ask-input", "在途关标签的问题")
+    home.click("#btn-ask")
+    home.wait_for_timeout(500)
+    stored = home.evaluate("localStorage.getItem('ask-pending-v1')")
+    assert stored, "发送前就必须落盘（在途无回执也要能恢复）"
+    assert _json.loads(stored)["question"] == "在途关标签的问题"
+    # 模拟重开：刷新 + 清 hash
+    home.reload()
+    home.evaluate("location.hash = ''")
+    home.wait_for_selector("#entry-file", state="visible", timeout=10000)
+    _stub_ask_flow(home, {})
+    home.locator("#item-list .item.attention").first.click()
+    home.click("#detail-ask")
+    home.wait_for_selector("#ask-pending:not(.hidden)", state="visible")
+    assert "在途关标签的问题" in home.inner_text("#ask-pending")
+
+
+def test_processing_receipt_shows_waiting_then_result(home):
+    """codex 十六轮 P1-2：processing 去重回执（ok+deduped 无答案）→
+    保留编号+对话流显示「正在回答…」，轮询到最终结果后渲染并清编号；
+    全程不得渲染「暂无」假答案。"""
+    import json as _json
+    stub = _quality_review_stub(None)
+    stub["ask_available"] = True
+    turn = {
+        "turn_no": 1, "request_id": "proc-1", "item_id": "sublet",
+        "item_name": "转租限制", "state": "success",
+        "question": "处理中的问题", "created_at": 1.0,
+        "answer": {"问题是啥": "轮询拿到答案PROC"},
+        "raw_text": None, "quote_verified": True,
+    }
+    gets = {"n": 0}
+    sent = {"request_id": None}
+
+    def ask_route(r):
+        # 客户端生成幂等键——归档轮必须回显同一个编号（服务端按
+        # (review_id, request_id) 去重，轮询按编号找 turn）
+        sent["request_id"] = (_json.loads(r.request.post_data or "{}")
+                              ).get("request_id")
+        r.fulfill(status=200, content_type="application/json",
+                  body=_json.dumps({"ok": True, "deduped": True,
+                                    "item_id": "sublet", "item_name": "转租限制",
+                                    "turn_no": 1}, ensure_ascii=False))
+
+    def review_route(r):
+        gets["n"] += 1
+        payload = dict(stub)
+        if gets["n"] > 4 and sent["request_id"]:
+            # 头几拍读档无归档轮（模拟模型还在跑）——延后两拍让「正在回答」
+            # 等待态稳定可断言，之后带上同编号归档轮
+            archived = dict(turn, request_id=sent["request_id"])
+            payload["ask_thread"] = {"turns": [archived]}
+        r.fulfill(status=200, content_type="application/json",
+                  body=_json.dumps(payload, ensure_ascii=False))
+
+    home.route("**/api/upload", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"review_id": "e2eq00001", "message": "uploaded",
+                          "status": "uploaded"})))
+    home.route("**/api/review/e2eq00001", review_route)
+    home.route("**/api/review/e2eq00001/items/*/revision/state", lambda r: r.fulfill(
+        status=200, content_type="application/json",
+        body=_json.dumps({"status": "ok", "item_id": "sublet", "drafts": [],
+                          "selected": None, "impact": None,
+                          "remaining": {"revision": 4, "impact": 3}})))
+    home.route("**/api/ask", ask_route)
+    home.click("#entry-file")
+    home.set_input_files("#file", str(FIXTURE))
+    home.click("#btn-upload")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    home.locator("#item-list .item.attention").first.click()
+    home.click("#detail-ask")
+    home.fill("#ask-input", "处理中的问题")
+    home.click("#btn-ask")
+    # 等待态出现（不是「暂无」假答案）
+    home.wait_for_selector("#ask-thread .ask-msg-waiting", state="visible")
+    assert "正在回答" in home.inner_text("#ask-thread .ask-msg-waiting")
+    assert home.evaluate("localStorage.getItem('ask-pending-v1')") is not None, \
+        "处理中不得清编号"
+    # 轮询到最终结果：等待态移除、真答案渲染、编号清空
+    home.wait_for_selector("#ask-thread .ask-msg .answer", state="visible",
+                           timeout=12000)
+    home.wait_for_selector("#ask-thread .ask-msg-waiting", state="detached",
+                           timeout=5000)
+    assert "轮询拿到答案PROC" in home.inner_text("#ask-thread")
+    assert home.evaluate("localStorage.getItem('ask-pending-v1')") is None

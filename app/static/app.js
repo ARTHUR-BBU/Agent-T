@@ -1458,6 +1458,13 @@
       : ((window.crypto && crypto.randomUUID)
         ? crypto.randomUUID()
         : "req-" + Date.now().toString(36) + Math.random().toString(36).slice(2));
+    // codex 十六轮 P1-1：请求身份在发送之前就落盘——请求在途关标签再重开，
+    // 恢复卡才能接上（失败后才存会漏掉「发出但没等到回执」的窗口）
+    state.lastAskFail = {
+      review_id: snapshot.reviewId,
+      item_id: snapshot.itemId, question, request_id,
+    };
+    savePendingAsk(state.lastAskFail);
     try {
       const res = await fetch("/api/ask", {
         method: "POST",
@@ -1473,13 +1480,17 @@
       if (!isAskResponseCurrent(snapshot)) return;
       if (!res.ok) throw new Error(data.detail || "请求失败");
       if (!data.ok) {
-        state.lastAskFail = {
-          review_id: snapshot.reviewId,
-          item_id: snapshot.itemId, question, request_id,
-        };
-        savePendingAsk(state.lastAskFail);
         err.textContent = data.error || "追问暂未开通";
         err.classList.remove("hidden");
+        return;
+      }
+      // codex 十六轮 P1-2：「仍在处理」不是「已回答」——processing 去重
+      // 回执没有答案，不得清编号、不得渲染「暂无」。保留恢复编号，对话流
+      // 显示等待态，轮询读最终结果（成功清编号 / 失败保留可原号重试）
+      if (data.deduped && !data.answer) {
+        const waitEl = appendWaitingBubble(question, state.askItem);
+        threadScrollBottom();
+        pollAskTurn(snapshot.reviewId, request_id, snapshot, waitEl, 0);
         return;
       }
       state.lastAskFail = null;
@@ -1603,6 +1614,88 @@
     thread.appendChild(msg);
     answerEl.innerHTML = "";
     answerEl.classList.add("hidden");
+  }
+
+  /** B7-6（codex 十六轮 P1-2）：处理中等待气泡——processing 去重回执
+   * 没有答案，对话流如实显示等待态（拿到最终结果后整条移除）。 */
+  function appendWaitingBubble(question, item) {
+    const thread = $("ask-thread");
+    if (!thread) return null;
+    const msg = document.createElement("div");
+    msg.className = "ask-msg ask-msg-waiting";
+    const about = document.createElement("p");
+    about.className = "ask-msg-about";
+    about.textContent = "关于：" + ((item && item.name) || "");
+    const q = document.createElement("p");
+    q.className = "ask-msg-q";
+    q.textContent = question;
+    const st = document.createElement("p");
+    st.className = "ask-msg-state";
+    st.textContent = "正在回答…";
+    msg.appendChild(about);
+    msg.appendChild(q);
+    msg.appendChild(st);
+    thread.appendChild(msg);
+    return msg;
+  }
+
+  /** B7-6（codex 十六轮 P1-1/2）：处理中轮询——2 秒一次、上限 2 分钟。
+   * success：清编号+渲染气泡（仅当仍在同一审查同一条目；离开过就交给
+   * syncThreadFromServer 补渲，旧快照不回写）；failed：保留编号可原号
+   * 重试；超时：如实告知并指向恢复卡。 */
+  function pollAskTurn(reviewId, requestId, snapshot, waitEl, attempt, question) {
+    if (attempt > 60) {
+      if (waitEl && waitEl.parentNode) waitEl.remove();
+      const err = $("ask-error");
+      if (err && state.askItem && state.askItem.id === snapshot.itemId
+          && state.reviewId === reviewId) {
+        err.textContent = "等了很久还没拿到结果，请点恢复卡重新发送（原编号重试，不会重复计费）";
+        err.classList.remove("hidden");
+      }
+      return;
+    }
+    fetch("/api/review/" + encodeURIComponent(reviewId))
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("read"))))
+      .then((data) => {
+        const turns = (data && data.ask_thread && data.ask_thread.turns) || [];
+        const turn = turns.find((t) => t && t.request_id === requestId);
+        if (!turn || turn.state === "processing") {
+          setTimeout(() => pollAskTurn(
+            reviewId, requestId, snapshot, waitEl, attempt + 1, question), 2000);
+          return;
+        }
+        if (waitEl && waitEl.parentNode) waitEl.remove();
+        if (turn.state === "success") {
+          state.lastAskFail = null;
+          clearPendingAsk();
+          if (state.reviewId === reviewId && state.askItem
+              && state.askItem.id === snapshot.itemId) {
+            const verified = turn.quote_verified !== false
+              && !!(turn.answer && turn.answer.quote_verified !== false
+                    && turn.answer["原文在哪"]
+                    && turn.answer["原文在哪"] !== "未定位到原文");
+            const box = document.createElement("div");
+            renderAnswer(turn.answer || {}, turn.raw_text || "",
+              { quoteVerified: verified }, box);
+            appendThreadBubble(turn.question || question || "",
+              box, state.askItem);
+            threadScrollBottom();
+          }
+          // 已离开本条目：syncThreadFromServer 在切回时按持久化轮次补渲
+        } else {
+          const err = $("ask-error");
+          if (err && state.askItem && state.askItem.id === snapshot.itemId
+              && state.reviewId === reviewId) {
+            err.textContent = turn.error || "这次没有答上来，可原编号重试";
+            err.classList.remove("hidden");
+          }
+        }
+      })
+      .catch(() => {
+        // 读档失败不放弃：继续轮询（服务端归档是事实源）
+        setTimeout(() => pollAskTurn(
+          reviewId, requestId, snapshot, waitEl, attempt + 1, question), 2000);
+      });
   }
 
   /** B7-6 共享对话流：从持久化 turns 渲染全部历史（刷新恢复/未选条目
