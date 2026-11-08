@@ -78,6 +78,10 @@
   "impact": {  // 绑定 (draft_id, stance) 的**最新一次**检查结果
     "bound": {"draft_id": "...", "stance": "平衡"},
     "state": "ok"|"uncovered"|"degraded"|"not_initiated",
+    "uncovered_reason": "no_match"|"missing_source"|null,
+    // v3 补（线框 §3 态F1/F2）：uncovered 的机器可读细分——no_match=检索
+    // 过词族未命中；missing_source=合同全文缺失无法检索。后端 impact
+    // 报告 payload 已有对应文本依据，state 组装时映射
     "findings": [...], "notice": "...",
     "legacy": false,  // 历史记录（无版别）标记
     "hidden_findings": 0  // 因输出检查未通过而隐藏的条数
