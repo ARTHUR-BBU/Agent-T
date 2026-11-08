@@ -1,13 +1,18 @@
 # 技术服务品类审查清单（B2-1 品类骨架）
 # 设计稿：docs/spec-b2-technical-service.md v1.1.1（外审复批通过）
 # 法务依据：老钱 13 项设计稿（2026-10-09）+保密三裁（2026-10-10）+金标 v2.1
-# 收录边界：技术开发/技术服务/软件外包/系统集成运维；拒收咨询/劳务派遣/技术转让（分诊台）
-# v1.1.1：subtype=unknown 阶段，termination/ip 只给中性说明；功能开关隐藏（B2-2 金标锁定后开放）
+# 收录边界以风险清单适配性为准；咨询/劳务派遣/技术转让不套用本清单，
+# 数据服务与能源托管等边界样本按既有分类裁定处理，不默认套用。
+# subtype=unknown 阶段，termination/ip 只给中性说明。
+stances:
+  view: null
+  allowed: [neutral, client, vendor]
+  labels:
+    neutral: 中性（未声明）
+    client: 委托方
+    vendor: 受托方
 category: technical_service
 label: 技术服务
-# 功能开关（v1.1.1 外审复批）：B2-1 注册配置与测试入口就位但用户不可见；
-# B2-2 金标锁定后移除本开关开放 UI 与分诊（先盖好房子再开门）
-hidden: true
 version: 1
 
 scorecard:

@@ -18,10 +18,10 @@ def _item(text: str, item_id: str) -> dict:
 
 # ---------- 功能开关（v1.1.1 外审复批） ----------
 
-def test_hidden_category_not_visible_to_users() -> None:
-    """hidden 品类对用户不可见（UI 数据源），但测试入口 include_hidden 可见。"""
+def test_technical_service_category_visible_to_users() -> None:
+    """开放后用户品类列表和内部配置均包含技术服务。"""
     visible = [c["id"] for c in checklist.list_categories()]
-    assert "technical_service" not in visible, "功能开关泄漏：hidden 品类对用户可见"
+    assert "technical_service" in visible
     all_cats = [c["id"] for c in checklist.list_categories(include_hidden=True)]
     assert "technical_service" in all_cats
 

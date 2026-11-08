@@ -55,7 +55,7 @@ def test_unsupported_branch_no_review_id(monkeypatch):
     assert body["status"] == "category_confirm"
     assert body["review_id"] is None, "confirm 分支绝不能开审"
     assert body["precheck"]["detected_type"] == "委托创作服务合同"
-    assert {c["id"] for c in body["supported_categories"]} == {"lease", "procurement", "nda"}
+    assert {c["id"] for c in body["supported_categories"]} == {"lease", "procurement", "nda", "technical_service"}
 
 
 def test_mismatch_branch_suggests_switch(monkeypatch):

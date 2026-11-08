@@ -227,10 +227,11 @@ def test_home_renders_upload_screen(home):
     assert home.title() == "合同审查"
     assert home.is_visible("#ws-empty")
     assert not home.is_visible("#ws-results")
+    home.wait_for_selector('#category option[value="technical_service"]', state="attached")
     options = home.eval_on_selector_all(
         "#category option", "els => els.map(e => [e.value, e.textContent])"
     )
-    assert [v for v, _ in options] == ["procurement", "nda", "lease"]
+    assert [v for v, _ in options] == ["procurement", "nda", "lease", "technical_service"]
     home.click("#entry-file")  # B7-6：设置区由入口卡露出
     assert home.is_visible("#btn-upload")
 
@@ -1442,6 +1443,8 @@ def test_rev_cards_full_chain_busy_resets_and_single_post(home):
     home.click("#rev-cards [data-action=select]")
     home.wait_for_selector("#rev-cards .rev-version.selected", state="visible")
     assert "已选定" in home.inner_text("#rev-cards")
+    assert home.locator("#rev-cards .rev-version.selected [data-action=select]").get_attribute("aria-pressed") == "true"
+    assert home.locator("#rev-cards .rev-version.selected [data-action=select]").inner_text() == "已选定"
     assert "正在" not in home.inner_text("#rev-cards")
     # 牵连检查 → findings 渲染
     home.click("#rev-cards [data-action=impact]")
@@ -1697,6 +1700,7 @@ def test_desktop_ask_workbench_flow(desktop_home):
     bubble = desktop_home.inner_text("#ask-thread .ask-msg")
     assert "关于：" in bubble
     assert "工作台答案标记DLG9" in bubble
+    assert desktop_home.locator("#ask-thread .detail-note").first.evaluate("el => getComputedStyle(el).fontSize") == "13px"
     # 回答槽位已清空（下一轮用）
     assert desktop_home.inner_text("#ask-answer") == ""
 
@@ -2541,3 +2545,243 @@ def test_thread_scope_filters_between_item_and_all(home):
     home.wait_for_function(
         "document.querySelectorAll('#ask-thread .ask-msg').length === 1")
     assert "乙的历史问题" not in home.inner_text("#ask-thread")
+
+
+def test_desktop_columns_are_adjacent_and_resizable(desktop_home):
+    """桌面三个区域并排，拖动/键盘调整不能挤掉清单。"""
+    _stub_quality_flow(desktop_home, _DESKTOP_MIN_QUALITY)
+    desktop_home.locator("#item-list .item").first.click()
+    main = desktop_home.locator(".col-main").bounding_box()
+    side = desktop_home.locator(".col-side").bounding_box()
+    nav = desktop_home.locator("#shell-nav").bounding_box()
+    assert nav["x"] + nav["width"] <= main["x"]
+    assert main["x"] + main["width"] <= side["x"]
+    assert abs(main["y"] - side["y"]) < 5
+    divider = desktop_home.locator("#detail-resizer")
+    previous = side["width"]
+    divider.focus()
+    desktop_home.keyboard.press("ArrowLeft")
+    assert desktop_home.locator(".col-side").bounding_box()["width"] > previous
+    nav_divider = desktop_home.locator("#nav-resizer")
+    assert nav_divider.get_attribute("aria-valuenow") is not None
+    nav_box = nav_divider.bounding_box()
+    old_nav = desktop_home.locator("#shell-nav").bounding_box()["width"]
+    desktop_home.mouse.move(nav_box["x"] + 5, nav_box["y"] + 40)
+    desktop_home.mouse.down()
+    desktop_home.mouse.move(nav_box["x"] + 35, nav_box["y"] + 40, steps=3)
+    desktop_home.mouse.up()
+    assert desktop_home.locator("#shell-nav").bounding_box()["width"] > old_nav
+    detail_box = divider.bounding_box()
+    old_side = desktop_home.locator(".col-side").bounding_box()["width"]
+    desktop_home.mouse.move(detail_box["x"] + 5, detail_box["y"] + 40)
+    desktop_home.mouse.down()
+    desktop_home.mouse.move(detail_box["x"] - 25, detail_box["y"] + 40, steps=3)
+    desktop_home.mouse.up()
+    assert desktop_home.locator(".col-side").bounding_box()["width"] > old_side
+    nav_divider.focus()
+    for _ in range(30):
+        desktop_home.keyboard.press("ArrowRight")
+    assert desktop_home.locator(".col-main").bounding_box()["width"] >= 280
+    desktop_home.set_viewport_size({"width": 900, "height": 900})
+    assert desktop_home.locator("#nav-resizer").is_hidden()
+    assert desktop_home.locator("#item-detail").evaluate("el => el.closest('.col-main') !== null")
+
+
+def test_proposals_dialog_shows_review_state_and_records_decision(desktop_home):
+    """提案评审可见，外部文本按纯文本展示，提交不声称发布。"""
+    records = [{"claim_id": "old-claim", "claim_content_hash": "hash-1", "verdict": "approved",
+                "reviewer": "甲", "at": "2026-11-08", "note": "旧版"}]
+    proposal = {"review_id": "sample123", "filename": "样本.txt", "rule_id": "rule-1",
+                "claim_id": "claim-1", "claim_content_hash": "hash-1", "snapshot_hash": "a" * 64,
+                "quote": "合同原文摘句", "counter_evidence": "反证内容", "proposal": "<img src=x onerror=alert(1)>", "reasoning": "需要核对", "reviews": records}
+    desktop_home.route("**/api/objection-proposals", lambda r: r.fulfill(
+        status=200, json={"proposals": [proposal], "truncated": False}))
+    desktop_home.route("**/api/review/sample123/objection-proposals/review", lambda r: r.fulfill(
+        status=200, json={"ok": True, "rule_published": False}))
+    desktop_home.click("#btn-proposals")
+    desktop_home.wait_for_selector(".proposal-card")
+    assert desktop_home.locator("#proposal-list img").count() == 0
+    assert "旧版本提案（不适用于当前内容）" in desktop_home.inner_text("#proposal-list")
+    assert "评审通过不等于规则已生效" in desktop_home.inner_text("#proposal-dialog")
+    assert "合同原文摘句" in desktop_home.inner_text("#proposal-list")
+    assert desktop_home.get_by_text("打开对应审查记录", exact=True).count() == 1
+    desktop_home.get_by_label("评审人姓名").fill("测试人")
+    desktop_home.get_by_label("评审理由").fill("请补充规则测试")
+    desktop_home.get_by_label("评审结论").select_option("approved")
+    with desktop_home.expect_request("**/objection-proposals/review") as req:
+        desktop_home.get_by_text("记录评审意见", exact=True).click()
+    assert req.value.post_data_json["reviewer"] == "测试人"
+    desktop_home.click("#proposal-close")
+
+
+def test_design_workspace_layout_and_mobile_legibility(home):
+    """视觉规范必须保留可读的分栏、状态与移动端完整文案。"""
+    _stub_quality_flow(home, None, ask_available=True)
+    home.set_viewport_size({"width": 1440, "height": 900})
+    home.wait_for_timeout(300)
+    home.locator("#item-list .item").first.click()
+    assert home.get_by_role("heading", name="审查清单", exact=True).is_visible()
+    assert home.get_by_role("heading", name="条目详情", exact=True).is_visible()
+    main = home.locator(".col-main").bounding_box()
+    side = home.locator(".col-side").bounding_box()
+    assert main["x"] + main["width"] <= side["x"]
+    assert "需关注" in home.locator("#detail-head").inner_text()
+    home.locator("#results-meta-main strong").first.evaluate("el => { el.textContent = 'A'.repeat(220) + '.docx'; }")
+    assert home.locator("#shell-main").evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+    home.set_viewport_size({"width": 390, "height": 844})
+    home.wait_for_timeout(300)
+    capsule = home.locator("#stance-capsule")
+    assert capsule.is_visible()
+    assert capsule.evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+    assert home.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+    assert home.locator("#shell-main").evaluate("el => el.scrollWidth <= el.clientWidth + 1")
+    assert home.locator("#shell-main").evaluate("el => parseFloat(getComputedStyle(el.querySelector('.ws-inner')).paddingBottom) >= 48")
+
+
+def test_sidebar_selection_and_font_follow_current_section(desktop_home):
+    """导航同字号，可键盘激活，选中态跟清单同步；不可用的目的地不可选。"""
+    _stub_quality_flow(desktop_home, None, ask_available=True)
+    nav = desktop_home.locator("#shell-context")
+    overview = nav.get_by_role("button", name="概览")
+    checklist = nav.get_by_role("button", name="清单", exact=True)
+    target = nav.get_by_role("button", name="转租限制")
+    assert overview.get_attribute("aria-current") == "location"
+    sizes = desktop_home.evaluate("""() => [
+      getComputedStyle(document.querySelector('#shell-context-sect')).fontSize,
+      getComputedStyle(document.querySelector('#shell-context button')).fontSize,
+      getComputedStyle(document.querySelector('#btn-new-review')).fontSize
+    ]""")
+    assert len(set(sizes)) == 1
+    target.focus()
+    desktop_home.keyboard.press("Enter")
+    assert target.get_attribute("aria-current") == "location"
+    assert target.evaluate("el => el.classList.contains('is-current')")
+    assert desktop_home.locator("#item-list .item").first.get_attribute("aria-pressed") == "true"
+    desktop_home.locator("#item-list .item").nth(1).click()
+    assert checklist.get_attribute("aria-current") == "location"
+    assert target.get_attribute("aria-current") is None
+    assert desktop_home.locator("#item-list .item").first.get_attribute("aria-pressed") == "false"
+    assert nav.get_by_role("button", name="AI 发现").is_disabled()
+    assert nav.get_by_role("button", name="评分").is_disabled()
+    checklist.focus()
+    desktop_home.keyboard.press("Space")
+    assert checklist.get_attribute("aria-current") == "location"
+
+
+def test_sidebar_history_selection_follows_successful_review_switch(desktop_home):
+    """历史合同切换成功后才标记当前，并清除上一合同的章节选中。"""
+    rows = [{"id": "e2eq00001", "filename": "第一份合同.txt", "category": "lease", "status": "done"},
+            {"id": "e2eq00002", "filename": "第二份合同.txt", "category": "lease", "status": "done"}]
+    desktop_home.route("**/api/reviews?limit=50", lambda r: r.fulfill(status=200, json={"reviews": rows}))
+    second = _quality_review_stub(None)
+    second["id"] = "e2eq00002"
+    second["filename"] = "第二份合同.txt"
+    desktop_home.route("**/api/review/e2eq00002", lambda r: r.fulfill(status=200, json=second))
+    _stub_quality_flow(desktop_home, None, ask_available=True)
+    history = desktop_home.locator("#shell-history")
+    first = history.locator('button[data-rid="e2eq00001"]')
+    other = history.locator('button[data-rid="e2eq00002"]')
+    first.wait_for(state="visible")
+    assert first.get_attribute("aria-current") == "page"
+    desktop_home.locator("#shell-context").get_by_role("button", name="转租限制").click()
+    desktop_home.evaluate("""() => {
+      const originalFetch = window.fetch;
+      window.fetch = (...args) => String(args[0]).endsWith('/api/review/e2eq00002')
+        ? new Promise(resolve => setTimeout(() => resolve(originalFetch(...args)), 1000))
+        : originalFetch(...args);
+    }""")
+    other.focus()
+    desktop_home.keyboard.press("Enter")
+    desktop_home.wait_for_function("document.querySelector('#shell-context').classList.contains('hidden')")
+    desktop_home.wait_for_function("document.querySelector('#results-meta-main').textContent.includes('第二份合同.txt')")
+    desktop_home.wait_for_function("document.querySelector('#shell-history button[data-rid=\"e2eq00002\"]').getAttribute('aria-current') === 'page'")
+    assert desktop_home.locator("#shell-context").get_by_role("button", name="概览").get_attribute("aria-current") == "location"
+    assert history.locator('button[data-rid="e2eq00001"]').get_attribute("aria-current") is None
+
+
+def test_sidebar_current_does_not_outlive_detail_on_review_refresh(desktop_home):
+    """同一合同重绘关闭详情时，侧栏不再错误标记旧条目。"""
+    quality = {"available": True, "observations": [
+        {"dimension": "completeness", "title": "缺少安排", "comment": "请核对", "quote": "月租金"}]}
+    desktop_home.route("**/api/review/e2eq00001/ai-finding/status", lambda r: r.fulfill(status=200, json={"ok": True}))
+    _stub_quality_flow(desktop_home, quality)
+    desktop_home.locator("#shell-context").get_by_role("button", name="转租限制").click()
+    assert desktop_home.locator("#item-detail").is_visible()
+    desktop_home.locator("#ai-findings-panel").get_by_text("确认无误", exact=True).click()
+    desktop_home.wait_for_function("document.querySelector('#item-detail').classList.contains('hidden')")
+    assert desktop_home.locator("#shell-context").get_by_role("button", name="清单", exact=True).get_attribute("aria-current") == "location"
+    assert desktop_home.locator("#shell-context").get_by_role("button", name="转租限制").get_attribute("aria-current") is None
+
+
+def test_findings_spacing_controls_and_detail_body_typography(desktop_home):
+    """发现卡留白与操作可辨，条目正文在桌面与窄屏使用一致字号。"""
+    quality = {"available": True, "observations": [
+        {"dimension": "completeness", "title": "缺少通知期限", "comment": "请核对通知方式", "quote": "原文摘句"},
+        {"dimension": "impact", "title": "退还条件不明", "comment": "请核对退还时间", "quote": "合同原文"}]}
+    _stub_quality_flow(desktop_home, quality, ask_available=True)
+    desktop_home.locator("#item-list .item").first.click()
+    cards = desktop_home.locator("#ai-findings-panel .quality-item")
+    assert cards.count() == 2
+    assert cards.first.evaluate("el => parseFloat(getComputedStyle(el).paddingLeft) >= 14")
+    assert cards.first.evaluate("el => parseFloat(getComputedStyle(el).paddingRight) >= 14")
+    primary = cards.first.get_by_role("button", name="确认无误")
+    secondary = cards.first.get_by_role("button", name="有异议")
+    assert primary.evaluate("el => getComputedStyle(el).backgroundColor") != secondary.evaluate("el => getComputedStyle(el).backgroundColor")
+    assert secondary.evaluate("el => parseFloat(getComputedStyle(el).borderTopWidth) >= 1")
+    body = desktop_home.locator("#detail-note")
+    quote = desktop_home.locator("#detail-quote")
+    assert body.evaluate("el => getComputedStyle(el).fontSize") == "13px"
+    assert quote.evaluate("el => getComputedStyle(el).fontSize") == "13px"
+    assert desktop_home.locator("#ask-input").evaluate("el => getComputedStyle(el).fontSize") == "13px"
+    desktop_home.set_viewport_size({"width": 390, "height": 844})
+    desktop_home.wait_for_timeout(300)
+    assert cards.first.evaluate("el => parseFloat(getComputedStyle(el).paddingLeft) >= 14")
+    assert primary.evaluate("el => el.getBoundingClientRect().height >= 44")
+    assert desktop_home.locator("#ask-input").evaluate("el => getComputedStyle(el).fontSize") == "16px"
+    assert body.evaluate("el => getComputedStyle(el).fontSize") == "13px"
+    assert quote.evaluate("el => getComputedStyle(el).fontSize") == "13px"
+    assert desktop_home.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 1")
+
+
+def test_technical_service_upload_option_and_stances(home):
+    """技术服务从实际下拉可选，并提供委托方和受托方立场。"""
+    home.wait_for_selector('#category option[value="technical_service"]', state="attached")
+    home.click("#entry-file")
+    home.locator('#stance-track label').filter(has_text="买方（采购方）").click()
+    home.select_option("#category", "technical_service")
+    assert home.locator('#stance-track input[value="neutral"]').is_checked()
+    assert home.locator('#stance-track input[value="client"]').count() == 1
+    assert home.locator('#stance-track input[value="vendor"]').count() == 1
+    home.locator('#stance-track label').filter(has_text="受托方").click()
+    assert home.locator('#stance-track input[value="vendor"]').is_checked()
+
+
+def test_precheck_switches_to_technical_only_after_confirmation(home):
+    """用户确认后切到技术服务，重传保留 force 且重置旧立场。"""
+    calls = []
+    def upload(route):
+        calls.append(route.request.post_data or "")
+        if len(calls) == 1:
+            route.fulfill(status=200, json={"review_id": None, "message": "category_confirm", "status": "category_confirm",
+                "precheck": {"performed": True, "detected_type": "技术服务合同", "confidence": "high", "summary": "技术服务"},
+                "suggested_category": "technical_service", "supported_categories": []})
+        else:
+            route.fulfill(status=200, json={"review_id": "tech0001", "message": "uploaded", "status": "uploaded"})
+    home.route("**/api/upload", upload)
+    home.route("**/api/review/tech0001", lambda r: r.fulfill(status=200, json={
+        "id": "tech0001", "filename": "tech.txt", "category": "technical_service", "category_label": "技术服务",
+        "status": "done", "stage": "done", "items": [], "scorecard": {"available": False},
+        "blind_enabled": False, "stance": "neutral", "stance_declaration": "测试声明"}))
+    home.wait_for_selector('#category option[value="technical_service"]', state="attached")
+    home.click("#entry-file")
+    home.set_input_files("#file", str(FIXTURE))
+    home.locator('#stance-track label').filter(has_text="买方（采购方）").click()
+    home.click("#btn-upload")
+    home.wait_for_selector("#precheck-dialog[open]")
+    assert len(calls) == 1
+    assert "技术服务" in home.inner_text("#btn-precheck-switch")
+    home.click("#btn-precheck-switch")
+    home.wait_for_selector("#results-body", state="visible", timeout=15000)
+    assert len(calls) == 2
+    assert "technical_service" in calls[1] and "neutral" in calls[1] and "buyer" not in calls[1]
+    assert 'name="force"\r\n\r\n1\r\n' in calls[1]

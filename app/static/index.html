@@ -9,17 +9,21 @@
 <body>
   <header id="shell-top">
     <button type="button" id="shell-menu" class="shell-menu" aria-label="打开导航菜单" aria-expanded="false">☰</button>
-    <span class="shell-logo">合同审查</span>
+    <span class="shell-brand-mark" aria-hidden="true">审</span>
+    <span class="shell-logo">合同审查 <span class="shell-brand-sub">Agent-T</span></span>
+    <span class="shell-top-note">审查工作台</span>
   </header>
   <div id="drawer-mask" class="hidden"></div>
   <div id="shell">
     <nav id="shell-nav">
       <button id="btn-new-review" class="primary shell-new" type="button">＋ 新审查</button>
+      <button id="btn-proposals" class="shell-new hidden" type="button">规则改进提案</button>
       <p class="shell-sect">历史审查</p>
       <ul id="shell-history" class="shell-history"></ul>
       <p class="shell-sect hidden" id="shell-context-sect">本份合同</p>
       <ul id="shell-context" class="shell-context hidden"></ul>
     </nav>
+    <div id="nav-resizer" class="column-resizer" role="separator" tabindex="0" aria-label="调整导航栏宽度" aria-orientation="vertical"></div>
     <div id="shell-main" data-ws="empty">
       <div class="ws-inner">
         <!-- ws-empty：上传融入右工作区（阳仔线框 §3.1；原 screen-upload
@@ -27,11 +31,11 @@
         <div id="ws-empty">
           <div class="card ws-guide">
             <p class="ws-guide-title">把合同交给我，我来逐条核对。</p>
-            <p class="muted">PDF、Word 都行，也可以直接粘贴文本。（占位文案过九哥）</p>
+            <p class="muted">上传合同或粘贴正文，开始逐条核对。</p>
           </div>
           <div class="ws-entry-cards">
-            <button type="button" class="ws-entry" id="entry-file"><span class="ws-entry-main">📄 上传合同文件</span><span class="ws-entry-sub">点选或拖入文件</span></button>
-            <button type="button" class="ws-entry" id="entry-paste"><span class="ws-entry-main">📋 粘贴合同文本</span><span class="ws-entry-sub">复制正文直接开始</span></button>
+            <button type="button" class="ws-entry" id="entry-file"><span class="ws-entry-icon" aria-hidden="true">＋</span><span class="ws-entry-main">上传合同文件</span><span class="ws-entry-sub">选择 PDF、Word 或文本文件</span></button>
+            <button type="button" class="ws-entry" id="entry-paste"><span class="ws-entry-icon" aria-hidden="true">≡</span><span class="ws-entry-main">粘贴合同文本</span><span class="ws-entry-sub">复制正文，直接开始审查</span></button>
           </div>
           <div id="ws-settings" class="hidden">
             <!-- B7-6 附录 B：粘贴入口（互斥切换；超限禁用提交不截短） -->
@@ -160,6 +164,7 @@
              #item-detail 静态留在原位，JS 在 ≥1024 时搬进右栏 aside -->
         <div class="results-cols">
         <div class="col-main">
+        <div class="workspace-section-head"><div><span class="workspace-kicker">REVIEW CHECKLIST</span><h2>审查清单</h2></div><span class="workspace-section-note">逐项核对合同内容</span></div>
         <!-- 事实材料：次级卡片，浅灰底；空态由 JS 填写 -->
         <section id="facts-panel" class="facts-card hidden" aria-label="事实材料"></section>
         <!-- 阶段 2.3 IA 重排：图例降级为清单正上方一行（去卡片化，tag 色块保留=
@@ -287,7 +292,9 @@
           </div>
         </details>
         </div><!-- /col-main -->
+        <div id="detail-resizer" class="column-resizer" role="separator" tabindex="0" aria-label="调整详情栏宽度" aria-orientation="vertical"></div>
         <aside class="col-side">
+          <div class="workspace-section-head workspace-side-head"><div><span class="workspace-kicker">ITEM DETAILS</span><h2>条目详情</h2></div></div>
           <!-- B7-5b 右栏空态：未选条目时的灰字引导（与 item-detail 显隐取反） -->
           <div id="side-empty" class="side-empty hidden">从左侧清单选一条，这里会显示它的说明、原文和可做的操作。</div>
           <!-- #item-detail ≥1024 时由 JS 搬到本 aside 内（matchMedia 节点搬迁，
@@ -299,6 +306,12 @@
       </div><!-- /ws-inner -->
     </div><!-- /shell-main -->
   </div><!-- /shell -->
+  <dialog id="proposal-dialog" aria-labelledby="proposal-title">
+    <div class="proposal-header"><h2 id="proposal-title">规则改进提案</h2><button type="button" id="proposal-close">关闭</button></div>
+    <p>这里记录人工评审意见。评审通过不等于规则已生效；规则仍需负责人修改、测试并发布。</p>
+    <p>提案按对应审查记录的保存期限清除；评审人姓名为填写内容，系统不会验证身份。请及时另行保存需要长期留存的材料。</p>
+    <div id="proposal-list" aria-live="polite"></div>
+  </dialog>
   <!-- 阶段 1.4⑤ 预审确认 dialog 化（阳仔线框）：原生 <dialog>，文案零改动只换
        载体；Esc/点遮罩 = 放弃本次上传；焦点默认给保守按钮「按原类型继续」 -->
   <dialog id="precheck-dialog" class="precheck-dialog" aria-labelledby="precheck-title">

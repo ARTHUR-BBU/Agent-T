@@ -4,6 +4,8 @@
     review: null,
     askItem: null,
     selectedItemId: null,
+    shellContextKey: "overview",
+    shellContextReviewId: null,
     resultsScrollY: 0,
     askReqSeq: 0,
     // B7-6d：未发送草稿按条目留存 + 历史查看范围（本疑点/本合同全部）
@@ -47,7 +49,7 @@
 
   /** 左栏下区显隐：有打开的审查才渲染「本份合同」导航区 */
   function syncShellChrome() {
-    const has = state.reviewId != null;
+    const has = state.reviewId != null && state.review != null && state.review.id === state.reviewId;
     const sect = $("shell-context-sect");
     const list = $("shell-context");
     if (sect) sect.classList.toggle("hidden", !has);
@@ -352,6 +354,7 @@
         if ((data.items || []).length) {
           renderResults(data, { partial: true, failed: true });
           body.classList.remove("hidden");
+          renderShellHistory();
           errBox.textContent = data.error || "AI 部分未完成，规则结果仍可查看";
           errBox.classList.remove("hidden");
           return;
@@ -362,6 +365,7 @@
       }
       renderResults(data);
       body.classList.remove("hidden");
+      renderShellHistory();
       return;
     }
     loading.classList.add("hidden");
@@ -586,6 +590,8 @@
     const list = $("item-list");
     list.innerHTML = "";
     state.selectedItemId = null;
+    // 结果重绘会关闭详情，不能继续把旧条目标为当前项。
+    if (state.shellContextKey.startsWith("item:")) state.shellContextKey = "checklist";
     $("item-detail").classList.add("hidden");
     syncSideEmpty();
     revHideAll(); // B7-3a：清单重渲时三卡一并收起
@@ -624,6 +630,7 @@
     renderThreadFromData(threadTurnsForScope(
       ((data.ask_thread || {}).turns) || []));
     renderShellContext();
+    syncShellChrome();
     const wb = $("ask-workbench");
     if (wb) wb.classList.remove("hidden");
   }
@@ -1070,9 +1077,13 @@
       const adoptBtn = document.createElement("button");
       adoptBtn.type = "button";
       adoptBtn.className = "link objection-adopt";
-      if (ob.adopted) {
-        adoptBtn.textContent = "已采纳（提案待人工评审）";
+      if (ob.adopted && ob.decision && ob.decision.consistency === "consistent") {
+        adoptBtn.textContent = "已采纳为改进提案（新版本左侧可评审）";
         adoptBtn.disabled = true;
+      } else if (ob.adopted) {
+        adoptBtn.textContent = ob.claim_id ? "提案已变化，请核对后重新提交" : "提案证据已失效，请重新审查合同";
+        adoptBtn.disabled = !ob.claim_id;
+        if (ob.claim_id) adoptBtn.onclick = () => adoptObjection(data.id, rawIndex, adoptBtn);
       } else {
         adoptBtn.textContent = "采纳为规则改进提案";
         adoptBtn.onclick = () =>
@@ -1103,9 +1114,13 @@
       }
       if (state.review && state.review.id === reviewId && state.review.objections
           && Array.isArray(state.review.objections.objections)) {
-        state.review.objections.objections[index].adopted = true;
+        if (body && Array.isArray(body.objections) && body.objections[index]) {
+          state.review.objections.objections[index] = body.objections[index];
+        } else {
+          state.review.objections.objections[index].adopted = true;
+        }
       }
-      btn.textContent = "已采纳（提案待人工评审）";
+      btn.textContent = "已采纳为改进提案（新版本左侧可评审）";
     } catch (err) {
       console.warn("adopt error", err);
       btn.disabled = false;
@@ -1174,6 +1189,7 @@
     li.dataset.itemId = isBlind ? `blind:${item.id}` : item.id;
     li.dataset.blind = isBlind ? "1" : "0";
     li.setAttribute("role", "button");
+    li.setAttribute("aria-pressed", "false");
     li.tabIndex = 0;
 
     const head = document.createElement("div");
@@ -1274,8 +1290,11 @@
     const selKey = item._blind ? `blind:${item.id}` : item.id;
     state.selectedItemId = selKey;
     document.querySelectorAll(".item").forEach((el) => {
-      el.classList.toggle("selected", el.dataset.itemId === selKey);
+      const selected = el.dataset.itemId === selKey;
+      el.classList.toggle("selected", selected);
+      el.setAttribute("aria-pressed", selected ? "true" : "false");
     });
+    setShellContextActive(item.status === "需关注" && !item._blind ? `item:${item.id}` : "checklist");
 
     const detail = $("item-detail");
     const noteEl = $("detail-note");
@@ -1382,7 +1401,12 @@
 
     detail.classList.remove("hidden");
     syncSideEmpty();
-    detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    if (mqDesktop.matches) {
+      const side = document.querySelector(".col-side");
+      if (side) side.scrollTop = 0;
+    } else {
+      detail.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
   }
 
   /** 阶段 2.4：移动端点条目 = 独立详情页。hash 是唯一事实源——写 hash 后由
@@ -2143,6 +2167,12 @@
     if (!rid) return;
     state.reviewId = rid;
     state.selectedItemId = null;
+    // 切换加载时旧合同导航不能对新合同发起操作。
+    state.review = null;
+    document.querySelectorAll("#shell-history .is-current").forEach((el) => {
+      el.classList.remove("is-current");
+      el.removeAttribute("aria-current");
+    });
     show("results");
     hidePrecheckConfirm();
     $("results-loading").classList.remove("hidden");
@@ -2316,6 +2346,13 @@
       const data = await res.json();
       const meta = {};
       (data.categories || []).forEach((c) => {
+        const select = $("category");
+        if (select && c.id && !Array.from(select.options).some((o) => o.value === c.id)) {
+          const option = document.createElement("option");
+          option.value = c.id;
+          option.textContent = c.label || c.id;
+          select.appendChild(option);
+        }
         if (c.stances && Array.isArray(c.stances.allowed) && c.stances.allowed.length) {
           meta[c.id] = c.stances;
         }
@@ -2436,9 +2473,9 @@
               escapeHtml(v.stance || "") + (selectedHere ? "（已选定）" : "") + "</p>");
             parts.push('<p class="rev-text">' + escapeHtml(v.text || "") + "</p>");
             parts.push('<p class="rev-caption">适用：' + escapeHtml(v.note || "") + "</p>");
-            parts.push('<button type="button" class="rev-btn" data-action="select" data-draft="' +
+            parts.push('<button type="button" class="rev-btn" aria-pressed="' + (selectedHere ? "true" : "false") + '" data-action="select" data-draft="' +
               escapeHtml(d.draft_id) + '" data-stance="' + escapeHtml(v.stance || "") +
-              '">选定这一版</button>');
+              '">' + (selectedHere ? "已选定" : "选定这一版") + '</button>');
             parts.push("</div>");
           });
           parts.push('<p class="rev-caption">三版共同理由：' + escapeHtml(d.rationale || "") + "</p>");
@@ -2845,6 +2882,7 @@
     const mask = $("drawer-mask");
     const btn = $("shell-menu");
     if (!nav) return;
+    const wasOpen = nav.classList.contains("is-open");
     nav.classList.toggle("is-open", open);
     if (mask) mask.classList.toggle("hidden", !open);
     if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
@@ -2857,7 +2895,7 @@
     if (open) {
       const first = nav.querySelector(".shell-item, .shell-new");
       if (first) first.focus();
-    } else if (btn) {
+    } else if (btn && wasOpen) {
       btn.focus();
     }
   }
@@ -2880,8 +2918,11 @@
         }
         list.forEach((rv) => {
           const li = document.createElement("li");
-          li.className = "shell-item" + (rv.id === state.reviewId ? " is-current" : "");
-          li.dataset.rid = rv.id;
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "shell-item" + (rv.id === state.reviewId ? " is-current" : "");
+          button.dataset.rid = rv.id;
+          if (rv.id === state.reviewId) button.setAttribute("aria-current", "page");
           const mainL = document.createElement("p");
           mainL.className = "shell-item-main";
           mainL.textContent = rv.filename || "(未命名)";
@@ -2894,13 +2935,14 @@
           sub.appendChild(document.createTextNode(
             (rv.category_label || rv.category || "") + " · " +
             (rv.status === "done" ? "已完成" : rv.status === "error" ? "失败" : "审查中")));
-          li.appendChild(mainL);
-          li.appendChild(sub);
-          li.onclick = () => {
+          button.appendChild(mainL);
+          button.appendChild(sub);
+          button.onclick = () => {
             shellDrawer(false);
             if (rv.id === state.reviewId) return;
             setReviewHash(rv.id); // hashchange 驱动 resumeFromHash 加载
           };
+          li.appendChild(button);
           ul.appendChild(li);
         });
       })
@@ -2909,29 +2951,49 @@
 
   /** 左栏下区：当前合同导航（锚点跳转，不复制内容；codex 十二轮 P2-5：
    * 对话历史不依赖选中态——未选条目也可经「对话」锚点查看全部历史） */
+  function setShellContextActive(key) {
+    const list = $("shell-context");
+    if (!list) return;
+    const target = Array.from(list.querySelectorAll("button[data-context-key]"))
+      .find((button) => button.dataset.contextKey === key && !button.disabled);
+    if (!target) return;
+    state.shellContextKey = key;
+    list.querySelectorAll("button[data-context-key]").forEach((button) => {
+      const active = button === target;
+      button.classList.toggle("is-current", active);
+      if (active) button.setAttribute("aria-current", "location");
+      else button.removeAttribute("aria-current");
+    });
+  }
+
   function renderShellContext() {
     const ul = $("shell-context");
     if (!ul) return;
     ul.innerHTML = "";
     const data = state.review;
     if (!data) return;
+    if (state.shellContextReviewId !== data.id) {
+      state.shellContextReviewId = data.id;
+      state.shellContextKey = "overview";
+    }
     const entries = [
-      { label: "概览", act: () => scrollToEl($("results-meta")) },
-      { label: "清单", act: () => scrollToEl($("item-list")) },
+      { key: "overview", label: "概览", act: () => scrollToEl($("results-meta")) },
+      { key: "checklist", label: "清单", act: () => scrollToEl($("item-list")) },
     ];
     (data.items || []).filter((i) => i.status === "需关注").forEach((i) => {
-      entries.push({ label: i.name || i.id, act: () => jumpToItem(i.id) });
+      entries.push({ key: `item:${i.id}`, label: i.name || i.id, act: () => jumpToItem(i.id) });
     });
     const af = data.ai_findings;
     const pending = (af && af.available && Array.isArray(af.findings))
       ? af.findings.filter((f) => f.status === "pending").length : 0;
     entries.push({
-      label: "AI 发现" + (pending ? `（${pending} 待确认）` : ""),
+      key: "ai", label: "AI 发现" + (pending ? `（${pending} 待确认）` : ""),
+      unavailable: $("ai-findings-panel").classList.contains("hidden"),
       act: () => scrollToEl($("ai-findings-panel")),
     });
     const turns = ((data.ask_thread || {}).turns) || [];
     entries.push({
-      label: "对话" + (turns.length ? `（${turns.length}）` : ""),
+      key: "chat", label: "对话" + (turns.length ? `（${turns.length}）` : ""),
       act: () => {
         if (askWorkbench) {
           askWorkbench.classList.remove("hidden");
@@ -2939,14 +3001,23 @@
         }
       },
     });
-    entries.push({ label: "评分", act: () => scrollToEl($("score-card")) });
+    entries.push({ key: "score", label: "评分", unavailable: $("score-card").classList.contains("hidden"),
+      act: () => scrollToEl($("score-card")) });
     entries.forEach((it) => {
       const li = document.createElement("li");
-      li.className = "shell-item";
-      li.textContent = it.label;
-      li.onclick = () => { it.act(); shellDrawer(false); };
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "shell-item";
+      button.dataset.contextKey = it.key;
+      button.textContent = it.label;
+      button.disabled = !!it.unavailable;
+      if (it.unavailable) button.title = "本次审查暂无此内容";
+      button.onclick = () => { it.act(); setShellContextActive(it.key); shellDrawer(false); };
+      li.appendChild(button);
       ul.appendChild(li);
     });
+    setShellContextActive(state.shellContextKey);
+    if (!ul.querySelector("[aria-current]")) setShellContextActive("overview");
   }
 
   // ---- B7-6 空态入口卡：文件/粘贴互斥切换 + 粘贴字数与超限禁提交 ----
@@ -3445,6 +3516,158 @@
   renderShellContext();
 
   applyDesktopLayout();
+
+  // 桌面三栏分隔线：键盘、鼠标和触屏共享同一宽度限制。
+  function setupColumnResizers() {
+    const shell = $("shell");
+    const nav = $("nav-resizer");
+    const detail = $("detail-resizer");
+    if (!shell || !nav || !detail) return;
+    function setWidth(kind, value) {
+      const available = shell.clientWidth;
+      const navWidth = parseFloat(getComputedStyle(shell).getPropertyValue("--shell-sidebar-w")) || 280;
+      const sideWidth = parseFloat(getComputedStyle(shell).getPropertyValue("--side-w")) || 400;
+      // 留出清单最小宽度、两条分隔线及工作区内边距。
+      const max = kind === "nav" ? Math.max(180, Math.min(400, available - sideWidth - 370))
+        : Math.max(280, Math.min(750, available - navWidth - 370));
+      const min = kind === "nav" ? 180 : 280;
+      const width = Math.round(Math.min(max, Math.max(min, value)));
+      shell.style.setProperty(kind === "nav" ? "--shell-sidebar-w" : "--side-w", width + "px");
+      const handle = kind === "nav" ? nav : detail;
+      handle.setAttribute("aria-valuemin", String(min));
+      handle.setAttribute("aria-valuemax", String(max));
+      handle.setAttribute("aria-valuenow", String(width));
+    }
+    for (const [handle, kind] of [[nav, "nav"], [detail, "detail"]]) {
+      const getWidth = () => kind === "nav"
+        ? $("shell-nav").getBoundingClientRect().width
+        : document.querySelector(".col-side").getBoundingClientRect().width;
+      handle.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        const start = event.clientX, width = getWidth();
+        handle.setPointerCapture(event.pointerId);
+        const move = (e) => setWidth(kind, width + (e.clientX - start) * (kind === "nav" ? 1 : -1));
+        const end = () => {
+          handle.removeEventListener("pointermove", move);
+          handle.removeEventListener("pointerup", end);
+          handle.removeEventListener("pointercancel", end);
+        };
+        handle.addEventListener("pointermove", move);
+        handle.addEventListener("pointerup", end);
+        handle.addEventListener("pointercancel", end);
+      });
+      handle.addEventListener("keydown", (event) => {
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        const delta = event.key === "ArrowRight" ? 16 : -16;
+        setWidth(kind, getWidth() + delta * (kind === "nav" ? 1 : -1));
+      });
+    }
+    window.addEventListener("resize", () => {
+      if (mqDesktop.matches) {
+        const styles = getComputedStyle(shell);
+        setWidth("nav", parseFloat(styles.getPropertyValue("--shell-sidebar-w")) || 280);
+        setWidth("detail", parseFloat(styles.getPropertyValue("--side-w")) || 400);
+      }
+    });
+    if (mqDesktop.matches) {
+      setWidth("nav", parseFloat(getComputedStyle(shell).getPropertyValue("--shell-sidebar-w")) || 280);
+      setWidth("detail", parseFloat(getComputedStyle(shell).getPropertyValue("--side-w")) || 400);
+    }
+  }
+  setupColumnResizers();
+
+  // 提案评审只记录人工意见；不修改规则或发布规则版本。
+  const proposalDialog = $("proposal-dialog");
+  const proposalList = $("proposal-list");
+  async function loadProposals() {
+    proposalList.textContent = "正在读取提案…";
+    try {
+      const res = await fetch("/api/objection-proposals");
+      if (!res.ok) throw new Error("读取失败，请稍后重试");
+      const data = await res.json();
+      proposalList.textContent = "";
+      if (!data.proposals.length) proposalList.textContent = "当前没有可评审的提案。";
+      for (const item of data.proposals) {
+        const card = document.createElement("section");
+        card.className = "proposal-card";
+        const title = document.createElement("h3");
+        title.textContent = (item.filename || "审查记录") + " · " + (item.rule_id || item.item_id);
+        const proposal = document.createElement("p");
+        proposal.textContent = "改进提案：" + (item.proposal || "无文本");
+        const reasoning = document.createElement("p");
+        reasoning.textContent = "异议理由：" + (item.reasoning || "无");
+        const quote = document.createElement("p");
+        quote.textContent = "合同摘句：" + (item.quote || "无");
+        const counter = document.createElement("p");
+        counter.textContent = "反证说明：" + (item.counter_evidence || "无");
+        const hint = document.createElement("p");
+        hint.textContent = "摘句可能不完整，请返回审查记录并结合合同原文核对。";
+        const openReview = document.createElement("a");
+        openReview.href = "#/review/" + encodeURIComponent(item.review_id);
+        openReview.textContent = "打开对应审查记录";
+        openReview.addEventListener("click", () => proposalDialog.close());
+        card.append(title, proposal, reasoning, quote, counter, hint, openReview);
+        const history = Array.isArray(item.reviews) ? item.reviews : [];
+        for (const record of history) {
+          const line = document.createElement("p");
+          const current = record.claim_id === item.claim_id && record.claim_content_hash === item.claim_content_hash
+            && record.snapshot_hash === item.snapshot_hash;
+          line.textContent = (current ? "当前提案：" : "旧版本提案（不适用于当前内容）：")
+            + (record.verdict === "approved" ? "评审通过，待规则维护" : "评审未通过")
+            + " · 填写人：" + record.reviewer + " · " + record.at + " · " + record.note;
+          card.appendChild(line);
+        }
+        const form = document.createElement("form");
+        const reviewer = document.createElement("input");
+        reviewer.required = true; reviewer.maxLength = 80; reviewer.placeholder = "填写评审人姓名";
+        reviewer.setAttribute("aria-label", "评审人姓名");
+        const note = document.createElement("textarea");
+        note.required = true; note.maxLength = 2000; note.placeholder = "填写评审理由";
+        note.setAttribute("aria-label", "评审理由");
+        const verdict = document.createElement("select");
+        verdict.setAttribute("aria-label", "评审结论");
+        verdict.required = true;
+        for (const [value, label] of [["", "请选择评审结论"], ["approved", "通过，交规则负责人处理"], ["rejected", "不通过"]]) {
+          const option = document.createElement("option"); option.value = value; option.textContent = label;
+          verdict.appendChild(option);
+        }
+        const submit = document.createElement("button");
+        submit.type = "submit"; submit.textContent = "记录评审意见";
+        const error = document.createElement("p"); error.className = "error";
+        form.append(reviewer, note, verdict, submit, error);
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault(); submit.disabled = true; error.textContent = "";
+          try {
+            const result = await fetch("/api/review/" + encodeURIComponent(item.review_id) + "/objection-proposals/review", {
+              method: "POST", headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({claim_id: item.claim_id, claim_content_hash: item.claim_content_hash, snapshot_hash: item.snapshot_hash,
+                revision: history.length, reviewer: reviewer.value, note: note.value, verdict: verdict.value}),
+            });
+            if (!result.ok) {
+              const body = await result.json(); throw new Error(body.detail || "保存失败");
+            }
+            await loadProposals();
+          } catch (e) { error.textContent = e.message || "保存失败"; submit.disabled = false; }
+        });
+        card.appendChild(form); proposalList.appendChild(card);
+      }
+      if (data.truncated) {
+        const warning = document.createElement("p"); warning.textContent = "仅检查最近 1000 条审查记录。";
+        proposalList.appendChild(warning);
+      }
+    } catch (e) { proposalList.textContent = e.message || "读取失败，请稍后重试"; }
+  }
+  if (proposalDialog && proposalList) {
+    const proposalButton = $("btn-proposals");
+    fetch("/api/objection-proposals/capability")
+      .then((res) => res.ok ? res.json() : null)
+      .then((body) => { if (body && body.available === true) proposalButton.classList.remove("hidden"); })
+      .catch(() => {});
+    proposalButton.addEventListener("click", () => { shellDrawer(false); proposalDialog.showModal(); loadProposals(); });
+    $("proposal-close").addEventListener("click", () => proposalDialog.close());
+  }
 
   loadStanceMeta();
   resumeFromHash();
