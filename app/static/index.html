@@ -18,6 +18,7 @@
     <nav id="shell-nav">
       <button id="btn-new-review" class="primary shell-new" type="button">＋ 新审查</button>
       <button id="btn-proposals" class="shell-new hidden" type="button">规则改进提案</button>
+      <button id="btn-rule-catalog" class="shell-new hidden" type="button">查看检查项</button>
       <p class="shell-sect">历史审查</p>
       <ul id="shell-history" class="shell-history"></ul>
       <p class="shell-sect hidden" id="shell-context-sect">本份合同</p>
@@ -39,20 +40,21 @@
           </div>
           <div id="ws-settings" class="hidden">
             <!-- B7-6 附录 B：粘贴入口（互斥切换；超限禁用提交不截短） -->
-            <div id="paste-wrap" class="card hidden">
+            <div class="card ws-settings-card">
+            <div id="paste-wrap" class="input-section hidden">
               <label class="field"><span>粘贴合同正文</span>
                 <textarea id="paste-text" rows="10" placeholder="把合同正文粘贴到这里"></textarea>
               </label>
               <p class="muted" id="paste-count"></p>
               <p id="paste-error" class="error hidden"></p>
             </div>
-            <div id="file-wrap" class="hidden">
+            <div id="file-wrap" class="input-section hidden">
               <label class="field file-field">
                 <span>选择文件</span>
                 <input type="file" id="file" accept=".txt,.md,.pdf,.docx,.doc,text/plain" />
               </label>
             </div>
-      <div class="card">
+        <div class="settings-divider"></div>
         <label class="field">
           <span>合同类型</span>
           <select id="category">
@@ -73,10 +75,6 @@
           <p class="stance-iron" id="stance-iron-upload">立场只影响解释，不改变清单通过/需关注等规则档</p>
           <p class="muted stance-note hidden" id="stance-note"></p>
         </div>
-        <label class="field file-field">
-          <span>选择文件</span>
-          <input type="file" id="file" accept=".txt,.md,.pdf,.docx,.doc,text/plain" />
-        </label>
         <button id="btn-upload" class="primary" type="button">开始审查</button>
         <p id="upload-error" class="error hidden"></p>
         <!-- 外审 P1-3：HTTP 红线警示。连接未加密时显眼常驻（HTTPS 下由 JS 移除）——
@@ -306,6 +304,11 @@
       </div><!-- /ws-inner -->
     </div><!-- /shell-main -->
   </div><!-- /shell -->
+  <dialog id="rule-catalog-dialog" aria-labelledby="rule-catalog-title">
+    <div class="proposal-header"><h2 id="rule-catalog-title">审查检查项</h2><button type="button" id="rule-catalog-close">关闭</button></div>
+    <p>这里展示当前开放品类的检查项和已公开的配置字段；部分条件需要结合程序解释。配置标注版本不会随修改自动变化，不能作为发布版本；默认类别可被细则覆盖。历史审查可能使用不同配置；编辑、启停和发布功能正在建设。</p>
+    <div id="rule-catalog-list" aria-live="polite"></div>
+  </dialog>
   <dialog id="proposal-dialog" aria-labelledby="proposal-title">
     <div class="proposal-header"><h2 id="proposal-title">规则改进提案</h2><button type="button" id="proposal-close">关闭</button></div>
     <p>这里记录人工评审意见。评审通过不等于规则已生效；规则仍需负责人修改、测试并发布。</p>

@@ -3043,6 +3043,8 @@
     };
     entryFile.onclick = () => {
       reveal();
+      entryFile.setAttribute("aria-pressed", "true");
+      entryPaste.setAttribute("aria-pressed", "false");
       pasteWrap.classList.add("hidden");
       fileWrap.classList.remove("hidden");
       updateSubmitEnabled();
@@ -3050,8 +3052,11 @@
     };
     entryPaste.onclick = () => {
       reveal();
+      entryFile.setAttribute("aria-pressed", "false");
+      entryPaste.setAttribute("aria-pressed", "true");
       fileWrap.classList.add("hidden");
       pasteWrap.classList.remove("hidden");
+      updateSubmitEnabled();
       if (pasteArea) pasteArea.focus();
     };
     if (pasteArea) {
@@ -3667,6 +3672,48 @@
       .catch(() => {});
     proposalButton.addEventListener("click", () => { shellDrawer(false); proposalDialog.showModal(); loadProposals(); });
     $("proposal-close").addEventListener("click", () => proposalDialog.close());
+  }
+
+  const catalogButton = $("btn-rule-catalog");
+  const catalogDialog = $("rule-catalog-dialog");
+  const catalogList = $("rule-catalog-list");
+  if (catalogButton && catalogDialog && catalogList) {
+    fetch("/api/rules/catalog/capability").then((res) => {
+      if (res.status !== 404) catalogButton.classList.remove("hidden");
+    }).catch(() => catalogButton.classList.remove("hidden"));
+    catalogButton.addEventListener("click", async () => {
+      shellDrawer(false);
+      catalogDialog.showModal();
+      catalogList.textContent = "正在读取规则清单…";
+      try {
+        const response = await fetch("/api/rules/catalog");
+        if (!response.ok) throw new Error("读取失败，请稍后重试。");
+        const data = await response.json();
+        catalogList.textContent = "";
+        if (!data.packs.length) catalogList.textContent = "目前没有开放的规则清单。";
+        data.packs.forEach((pack) => {
+          const group = document.createElement("details");
+          const title = document.createElement("summary");
+          title.textContent = `${pack.label} · ${pack.items.length} 项 · 配置版本：${pack.version == null ? "未标注" : pack.version}`;
+          group.appendChild(title);
+          pack.items.forEach((item) => {
+            const row = document.createElement("div"); row.className = "catalog-item";
+            const classLabels = { existence: "存在性检查", heuristic: "线索判断" };
+            const categoryLabel = classLabels[item.class] || (item.class ? `其他（${item.class}）` : "未标注");
+            const name = document.createElement("strong"); name.textContent = `${item.name || item.id}（${item.id} · 分段：${item.segment || "未标注"} · 默认类别：${categoryLabel}）`;
+            const desc = document.createElement("p"); desc.textContent = item.description || "暂无说明";
+            const definition = document.createElement("details");
+            const definitionTitle = document.createElement("summary"); definitionTitle.textContent = "查看规则配置字段";
+            const definitionBody = document.createElement("pre");
+            definitionBody.textContent = item.definition ? JSON.stringify(item.definition, null, 2) : "当前服务未提供详细配置。";
+            definition.append(definitionTitle, definitionBody);
+            row.append(name, desc, definition); group.appendChild(row);
+          });
+          catalogList.appendChild(group);
+        });
+      } catch (error) { catalogList.textContent = error.message || "读取失败，请稍后重试。"; }
+    });
+    $("rule-catalog-close").addEventListener("click", () => catalogDialog.close());
   }
 
   loadStanceMeta();

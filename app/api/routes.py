@@ -46,7 +46,7 @@ from app.services import llm_ask, precheck as precheck_service, report as report
 from app.services import verify as verify_service
 from app.prompts import precheck as precheck_prompts
 from app.services import llm_budget, llm_call_log, rate_limit, remediation_budget
-from app.services.checklist import list_categories
+from app.services.checklist import list_categories, load_checklist
 from app.services.clause_index import build_clause_context
 from app.services.extract import ExtractionError, extract_text
 from app.services import stance as stance_service
@@ -107,6 +107,48 @@ async def _read_limited(file: Any) -> tuple[bytes, bool]:
 @router.get("/categories")
 def categories():
     return {"categories": list_categories()}
+
+
+_RULE_CATALOG_KEYS = frozenset({
+    "id", "name", "description", "segment", "class", "missing_as", "missing_note",
+    "na", "na_note", "na_reason", "pass_fulltext_fallback", "signal_gate", "rules",
+    "need_attention", "pass", "not_found", "note", "pattern", "patterns", "all_of",
+    "any_of", "unless", "unless_window", "matcher", "require_hit_type",
+    "hit_alternatives", "start_token", "neg_sensitive", "blank_flag_note",
+    "blank_flag_pattern",
+})
+
+
+def _catalog_definition(value):
+    """仅公开规则条件白名单，防止未来内部元数据自动暴露。"""
+    if isinstance(value, dict):
+        return {k: _catalog_definition(v) for k, v in value.items() if k in _RULE_CATALOG_KEYS}
+    if isinstance(value, list):
+        return [_catalog_definition(v) for v in value]
+    return value
+
+
+@router.get("/rules/catalog/capability")
+def rule_catalog_capability():
+    return {"available": True}
+
+
+@router.get("/rules/catalog")
+def rule_catalog():
+    """只读当前开放品类的清单；不是历史审查的冻结快照。"""
+    packs = []
+    for category in list_categories():
+        cfg = load_checklist(category["id"])
+        packs.append({
+            "id": category["id"], "label": category["label"],
+            "version": cfg.get("version"),
+            "items": [{"id": item.get("id"), "name": item.get("name"),
+                       "description": item.get("description", ""),
+                       "segment": item.get("segment"), "class": item.get("class"),
+                       "definition": _catalog_definition(item)}
+                      for item in cfg.get("items", [])],
+        })
+    return {"packs": packs}
 
 
 # 限频依赖先于 handler 执行：超频请求在读文件/预审之前就被廉价拒绝（阶段 0.5）
