@@ -14,3 +14,4 @@ fixtures/replay/*
 !fixtures/replay/lease_replay_01.txt
 !fixtures/replay/lease_replay_02.txt
 !fixtures/replay/lease_replay_synthetic.txt
+trial-db/
