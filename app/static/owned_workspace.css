@@ -1,0 +1,17 @@
+.owned-body { min-height:100vh; }
+.owned-header { display:flex; align-items:center; gap:20px; padding:14px 28px; background:var(--color-surface); border-bottom:1px solid var(--color-divider); }
+.owned-header strong { font-size:20px; margin-right:auto; }.owned-header span,.owned-muted { color:var(--color-text-secondary); font-size:14px; }
+.owned-header a { font-size:14px; color:var(--color-accent); }
+.owned-layout { display:grid; grid-template-columns:260px minmax(0,1fr); min-height:calc(100vh - 70px); }
+.owned-sidebar { padding:24px 18px; background:var(--color-surface); border-right:1px solid var(--color-divider); }
+.owned-sidebar h2 { font-size:16px; }.owned-sidebar .primary { width:100%; }.owned-sidebar #identity { margin:20px 0 8px; }
+.owned-history-item { display:block; width:100%; text-align:left; padding:11px 10px; background:transparent; border:0; border-radius:8px; font:inherit; font-size:14px; cursor:pointer; overflow-wrap:anywhere; }
+.owned-history-item:hover,.owned-history-item[aria-current="true"] { background:#e8f1fb; color:#005bb5; }
+.owned-content { padding:32px clamp(20px,4vw,56px) 64px; min-width:0; }.owned-content h1 { font-size:25px; margin:0 0 18px; }
+.owned-notice { margin:0 0 26px; padding:12px 16px; color:#76510e; background:var(--color-attention-bg); border-radius:8px; font-size:14px; }
+.owned-form { max-width:950px; }.owned-form label { display:flex; flex-direction:column; gap:7px; margin:18px 0; font-size:14px; font-weight:600; }
+.owned-form input,.owned-form textarea,.owned-form select { width:100%; padding:11px 12px; border:1px solid var(--color-divider); border-radius:8px; background:white; font:inherit; font-weight:400; }
+.owned-form textarea { resize:vertical; line-height:1.6; }.owned-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }
+.owned-item { padding:16px 0; border-top:1px solid var(--color-divider); }.owned-item strong { font-size:16px; }.owned-item p { margin:6px 0; font-size:14px; white-space:pre-wrap; overflow-wrap:anywhere; }
+.owned-actions { display:flex; flex-wrap:wrap; gap:10px; }.owned-content #message { color:#9b2c25; }
+@media (max-width:700px) { .owned-layout { grid-template-columns:1fr; }.owned-sidebar { border-right:0; border-bottom:1px solid var(--color-divider); }.owned-header { flex-wrap:wrap; gap:10px; }.owned-fields { grid-template-columns:1fr; gap:0; } }
