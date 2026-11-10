@@ -33,9 +33,11 @@ from pathlib import Path
 sys.path[:0] = json.loads(sys.argv[2])
 from app.services.account_store import AccountStore
 from app.services.rule_release import RuleReleaseService
+from app.services.rule_validation_service import RuleValidationService
 from app.services import ai_findings, impact, llm_call_log, remediation_budget, revision
 accounts = AccountStore(Path(sys.argv[1]))
 RuleReleaseService(accounts)
+RuleValidationService(accounts)
 with revision._connect() as conn:
     conn.execute(impact._SELECTED_DDL)
     conn.execute(impact._IMPACT_REPORTS_DDL)

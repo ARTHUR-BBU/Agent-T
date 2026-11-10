@@ -18,7 +18,7 @@ _ACCOUNT_TABLES = {
     "account_users", "account_sessions", "account_login_attempts", "account_login_budget", "account_audit",
     "rule_versions", "rule_active_versions", "rule_candidates", "rule_candidate_reviews", "rule_candidate_details",
     "rule_submission_requests", "rule_validation_results", "rule_validation_jobs", "rule_full_regression_results",
-    "rule_release_events",
+    "rule_release_events", "rule_validation_control",
 }
 _REVIEW_TABLES = {
     "reviews", "revision_budget", "revision_drafts", "selected_drafts", "impact_reports",
