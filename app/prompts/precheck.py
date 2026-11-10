@@ -86,9 +86,9 @@ def build_retry_system_prompt(system: str) -> str:
     return system + "\n\n【再次提醒】上一轮输出不是合法 JSON 或字段缺失。重新输出，严格只输出一个 JSON 对象，字段为：detected_type / is_supported / suggested_category / confidence / summary。"
 
 
-def build_user_prompt(text: str, selected_category: str, stance: str = "neutral") -> str:
+def build_user_prompt(text: str, selected_category: str, stance: str = "neutral", *, stance_label: str | None = None) -> str:
     stance_line = (
-        f"用户声明立场：{stance_service.stance_label(selected_category, stance)}"
+        f"用户声明立场：{stance_label if stance_label is not None else stance_service.stance_label(selected_category, stance)}"
         if stance
         else "用户声明立场：中性（未声明）"
     )
