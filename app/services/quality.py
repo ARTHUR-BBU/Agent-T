@@ -21,6 +21,8 @@
 """
 from __future__ import annotations
 
+from app.services.owned_llm_transport import OwnedTransportError, enabled as owned_llm_enabled
+
 import json
 import logging
 import os
@@ -147,6 +149,7 @@ def run_quality(
     policies: Optional[list[str]] = None,
     category: str = "procurement",
     stance: str = "neutral",
+    stance_label: Optional[str] = None,
     clause_index: Optional[dict[str, Any]] = None,
     chat_fn: Optional[ChatFn] = None,
     budget: Optional[Any] = None,
@@ -156,6 +159,8 @@ def run_quality(
     budget 排全链末位（预审/评分先到先得）：预算紧张时 quality 最先
     被牺牲（budget_exceeded 软降级），既有参考层优先级不被稀释。
     """
+    if owned_llm_enabled() and chat_fn is not None:
+        raise OwnedTransportError("账户模型模式不允许自定义发送器")
     if not is_quality_enabled():
         return outcome_unavailable(Reason.DISABLED.value)
     if not (text or "").strip():
@@ -183,7 +188,7 @@ def run_quality(
         chunks, plan_meta = build_review_plan(text, clause_index, max_segments=_max_segments())
         if not chunks:
             return outcome_unavailable(Reason.ERROR.value)
-        system = quality_prompts.build_system_prompt(policies, category=category, stance=stance)
+        system = quality_prompts.build_system_prompt(policies, category=category, stance=stance, stance_label=stance_label)
         chunks_total = len(chunks)
         chunks_ok = 0
         stop_reason = None
@@ -201,9 +206,11 @@ def run_quality(
                 if not budget.try_consume():
                     stop_reason = "budget_exhausted"
                     break
-            user = quality_prompts.build_user_prompt(chunk, items, clause_index, category=category, stance=stance)
+            user = quality_prompts.build_user_prompt(chunk, items, clause_index, category=category, stance=stance, stance_label=stance_label)
             try:
                 raw = chat(system, user)
+            except OwnedTransportError:
+                raise
             except Exception:  # noqa: BLE001
                 logger.exception("Quality map chunk %d/%d LLM error; skipping", part_no, chunks_total)
                 continue
@@ -251,13 +258,15 @@ def run_quality(
                     pending_questions=pending_questions,
                 ).model_dump()
     else:
-        system = quality_prompts.build_system_prompt(policies, category=category, stance=stance)
-        user = quality_prompts.build_user_prompt(text, items, clause_index, category=category, stance=stance)
+        system = quality_prompts.build_system_prompt(policies, category=category, stance=stance, stance_label=stance_label)
+        user = quality_prompts.build_user_prompt(text, items, clause_index, category=category, stance=stance, stance_label=stance_label)
         if budget is not None and not budget.try_consume():
             logger.warning("Quality skipped: LLM budget exhausted")
             return outcome_unavailable(Reason.BUDGET_EXCEEDED.value)
         try:
             raw = chat(system, user)
+        except OwnedTransportError:
+            raise
         except Exception:  # noqa: BLE001
             logger.exception("Quality LLM error")
             return outcome_unavailable(Reason.LLM_ERROR.value)
@@ -269,6 +278,8 @@ def run_quality(
             retry_system = quality_prompts.build_retry_system_prompt(system)
             try:
                 raw = chat(retry_system, user)
+            except OwnedTransportError:
+                raise
             except Exception:  # noqa: BLE001
                 logger.exception("Quality retry LLM error")
                 return outcome_unavailable(Reason.LLM_ERROR.value)
@@ -348,6 +359,8 @@ def _run_consistency_round(
     )
     try:
         raw = chat(system, user)
+    except OwnedTransportError:
+        raise
     except Exception:  # noqa: BLE001
         logger.exception("Quality consistency round LLM error")
         return [], 0, True
@@ -357,6 +370,8 @@ def _run_consistency_round(
             return [], 0, False
         try:
             raw = chat(quality_prompts.build_retry_system_prompt(system), user)
+        except OwnedTransportError:
+            raise
         except Exception:  # noqa: BLE001
             logger.exception("Quality consistency retry LLM error")
             return [], 0, True

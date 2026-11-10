@@ -127,12 +127,25 @@ def _cover(doc: Any, row: dict[str, Any]) -> None:
         run.bold = True
         p.add_run(str(value))
 
+    provenance = row.get("rule_provenance")
+    if isinstance(provenance, dict) and provenance.get("source") == "local_file" and provenance.get("content_sha256"):
+        doc.add_paragraph("选定规则文件 SHA-256：" + str(provenance["content_sha256"]))
+        doc.add_paragraph("该摘要仅标识选定的规则文件，不代表规则已执行或完整运行环境。")
+    elif isinstance(provenance, dict) and provenance.get("source") == "database_test" and provenance.get("content_sha256"):
+        doc.add_paragraph(f"选定规则：数据库试验版本（代次 {provenance.get('generation')}，版本 {provenance.get('version_id')}）")
+        doc.add_paragraph("规则文件 SHA-256：" + str(provenance["content_sha256"]))
+        doc.add_paragraph("仅供本机试验，不代表正式发布、规则已执行或完整运行环境。")
+    elif provenance:
+        doc.add_paragraph("规则文件版本：未知（来源信息不可识别）")
+    else:
+        doc.add_paragraph("规则文件版本：未知（历史记录未保存完整摘要）")
+
     # 立场声明（阶段 1.3，老钱裁决书）：默认中性也声明——让「按哪把尺子的
     # 哪个方向读」始终摆在明面上；文案由 stance.declaration 单一来源生成
-    stance = row.get("stance") or "neutral"
-    declaration = stance_service.declaration(row.get("category") or "", stance)
+    declaration = stance_service.review_declaration(row)
     p = doc.add_paragraph()
-    run = p.add_run(f"审查立场：{stance_service.stance_label(row.get('category') or '', stance)}")
+    label = stance_service.review_label(row)
+    run = p.add_run(f"审查立场：{label}")
     run.bold = True
     doc.add_paragraph(declaration)
 
@@ -140,7 +153,7 @@ def _cover(doc: Any, row: dict[str, Any]) -> None:
     # 照旧开审，但知情权不能省——报告头必须带上这行）
     pc = row.get("precheck") or {}
     if pc.get("stance_notice"):
-        notice = stance_service.counterparty_view_notice(row.get("category") or "")
+        notice = stance_service.review_notice(row)
         if notice:
             p = doc.add_paragraph()
             run = p.add_run(notice)

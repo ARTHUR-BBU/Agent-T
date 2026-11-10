@@ -4,6 +4,15 @@ from __future__ import annotations
 import time
 
 
+def create_active_account(store, admin_token, username, display_name, password, role):
+    """Create a test account and exercise mandatory first-login password change."""
+    temporary = "temporary-test-password-123"
+    user = store.create_user(admin_token, username, display_name, temporary, role)
+    token = store.login(username, temporary)
+    store.change_password(token, temporary, password)
+    return user
+
+
 def wait_review_done(client, review_id: str, timeout: float = 30.0) -> dict:
     """审查已改后台任务：轮询直到 done/error（上传接口即时返回 review_id）。"""
     deadline = time.time() + timeout

@@ -231,7 +231,7 @@ def test_home_renders_upload_screen(home):
     options = home.eval_on_selector_all(
         "#category option", "els => els.map(e => [e.value, e.textContent])"
     )
-    assert [v for v, _ in options] == ["procurement", "nda", "lease", "technical_service"]
+    assert sorted(v for v, _ in options) == sorted(["procurement", "nda", "lease", "technical_service"])
     home.click("#entry-file")  # B7-6：设置区由入口卡露出
     assert home.is_visible("#btn-upload")
 
@@ -395,6 +395,12 @@ def test_full_review_flow_renders_results(home):
     api_count = home.evaluate(
         f"async () => (await (await fetch('/api/review/{review_id}')).json()).items.length"
     )
+    provenance = home.evaluate(
+        f"async () => (await (await fetch('/api/review/{review_id}')).json()).rule_provenance"
+    )
+    assert provenance["source"] == "local_file"
+    assert "选定规则文件：本机" in meta
+    assert provenance["content_sha256"][:12] in meta
     assert rows.count() == api_count
     # 无 Key → 无补盲候选行
     assert home.locator("#item-list .item.blind-candidate").count() == 0

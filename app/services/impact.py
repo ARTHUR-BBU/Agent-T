@@ -13,6 +13,8 @@
 """
 from __future__ import annotations
 
+from app.services.owned_llm_transport import OwnedTransportError
+
 import json
 import logging
 import os
@@ -609,6 +611,8 @@ def analyze_impact(
             findings = _parse_findings(raw, len(excerpts))
         except _Degraded as exc:
             degraded = exc
+        except OwnedTransportError:
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.warning("impact llm error: %s", exc)
             degraded = _Degraded("llm_error")

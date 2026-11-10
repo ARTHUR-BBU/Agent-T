@@ -6,6 +6,9 @@ routes_objection.py；共享依赖 → deps.py。URL 与对外语义零变化（
 from __future__ import annotations
 
 import logging
+import hashlib
+import os
+import sqlite3
 import threading
 import time
 import uuid
@@ -15,7 +18,8 @@ from urllib.parse import quote
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
+import yaml
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 
 from app.api.schemas import (
@@ -39,6 +43,12 @@ from app.api.schemas import (
 from app.api.routes_objection import router as _objection_router
 from app.api.routes_verify import _merge_evidence_index, _pack_verify, router as _verify_router
 from app.api.routes_ai_findings import router as _ai_finding_router
+from app.api.routes_rule_drafts import router as _rule_drafts_router
+from app.api.routes_local_accounts import router as _local_accounts_router
+from app.api.routes_local_accounts import _guard as _local_account_guard
+from app.api.routes_local_rule_management import router as _local_rule_management_router
+from app.api.routes_local_owned_reviews import router as _local_owned_reviews_router
+from app.api.routes_local_owned_upload import router as _local_owned_upload_router
 from app.graph.pipeline import run_review
 from app.services import ai_findings as ai_findings_service
 from app.services import category_suggest as category_suggest_service
@@ -47,6 +57,9 @@ from app.services import verify as verify_service
 from app.prompts import precheck as precheck_prompts
 from app.services import llm_budget, llm_call_log, rate_limit, remediation_budget
 from app.services.checklist import list_categories, load_checklist
+from app.services.rule_snapshot import RuleSnapshot, capture_rule_snapshot
+from app.services.rule_execution_trial import read_trial_versions
+from app.services import rule_trial_confirmation
 from app.services.clause_index import build_clause_context
 from app.services.extract import ExtractionError, extract_text
 from app.services import stance as stance_service
@@ -104,9 +117,56 @@ async def _read_limited(file: Any) -> tuple[bytes, bool]:
 
 
 
+def _trial_versions(request: Request, *, write: bool = False):
+    mode = os.getenv("RULE_EXECUTION_DB_TRIAL", "0")
+    if mode in ("", "0"):
+        return None
+    if mode != "1":
+        raise HTTPException(503, "规则试验配置无效")
+    path = _local_account_guard(request, write=write)
+    try:
+        return read_trial_versions(path)
+    except (OSError, ValueError, sqlite3.Error, yaml.YAMLError) as exc:
+        logger.warning("Cannot read local trial rule versions", exc_info=True)
+        raise HTTPException(503, "试验规则暂不可用，请检查本机基线") from exc
+
+
+def _trial_categories(versions):
+    result = []
+    for category, selected in versions.items():
+        config = selected.snapshot.configuration()
+        if config.get("hidden"):
+            continue
+        label = config.get("label", category)
+        if not isinstance(label, str) or not label:
+            raise HTTPException(503, "试验规则品类名称无效")
+        result.append({"id": category, "label": label, "stances": config.get("stances") or {}})
+    return result
+
+
+def _issue_trial_confirmation(versions, category: str, stance: str, suggested: str | None,
+                              raw: bytes, input_kind: str) -> str | None:
+    if versions is None or not suggested or suggested == category or suggested not in versions:
+        return None
+    suggested_config = versions[suggested].snapshot.configuration()
+    if suggested_config.get("hidden"):
+        return None
+    default_stance = stance_service.get_stances(suggested, configuration=suggested_config)["allowed"][0]
+    choices = {}
+    for chosen, chosen_stance in ((category, stance), (suggested, default_stance)):
+        selected = versions[chosen]
+        choices[chosen] = (selected.version_id, selected.generation, selected.sha256, chosen_stance)
+    try:
+        return rule_trial_confirmation.issue(hashlib.sha256(raw).hexdigest(), input_kind, choices)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(503, "确认请求暂不可用，请重试") from exc
+
+
 @router.get("/categories")
-def categories():
-    return {"categories": list_categories()}
+def categories(request: Request):
+    versions = _trial_versions(request)
+    return {"categories": list_categories() if versions is None else _trial_categories(versions),
+            "rule_source": "local_file" if versions is None else "database_test"}
 
 
 _RULE_CATALOG_KEYS = frozenset({
@@ -134,21 +194,23 @@ def rule_catalog_capability():
 
 
 @router.get("/rules/catalog")
-def rule_catalog():
+def rule_catalog(request: Request):
     """只读当前开放品类的清单；不是历史审查的冻结快照。"""
     packs = []
-    for category in list_categories():
-        cfg = load_checklist(category["id"])
+    versions = _trial_versions(request)
+    entries = list_categories() if versions is None else _trial_categories(versions)
+    for category in entries:
+        cfg = load_checklist(category["id"]) if versions is None else versions[category["id"]].snapshot.configuration()
         packs.append({
             "id": category["id"], "label": category["label"],
             "version": cfg.get("version"),
             "items": [{"id": item.get("id"), "name": item.get("name"),
                        "description": item.get("description", ""),
-                       "segment": item.get("segment"), "class": item.get("class"),
+                       "segment": item.get("segment"), "class": item.get("class"), "enabled": item.get("enabled", True),
                        "definition": _catalog_definition(item)}
                       for item in cfg.get("items", [])],
         })
-    return {"packs": packs}
+    return {"packs": packs, "rule_source": "local_file" if versions is None else "database_test"}
 
 
 # 限频依赖先于 handler 执行：超频请求在读文件/预审之前就被廉价拒绝（阶段 0.5）
@@ -160,6 +222,8 @@ def _start_review(
     stance: str,
     budget: object | None,
     precheck_record: dict | None,
+    rule_snapshot: RuleSnapshot,
+    rule_provenance: dict[str, Any] | None = None,
     parsed_text: str | None = None,
     trace_id: str | None = None,
 ) -> str:
@@ -169,6 +233,7 @@ def _start_review(
     直接上抛（调用方负责还槽），线程成功启动后所有权转移给 worker 的
     finally——「一定成对释放」不依赖 worker 是否真的跑起来。
     """
+    selected_configuration = rule_snapshot.configuration()
     rid = store.create(
         # B2-3 §2.1 审查单锚点（终审 P1-1）：trace 持久化进审查单——
         # review_id→trace_id→账本全链反查（reviews.data JSON 字段，零迁移）
@@ -176,6 +241,11 @@ def _start_review(
         filename=filename,
         category=category,
         category_label=category,
+        rule_provenance=rule_provenance or {"source": "local_file", "category": rule_snapshot.category,
+                                            "content_sha256": rule_snapshot.content_sha256},
+        stance_label_at_review=stance_service.stance_label(category, stance, configuration=selected_configuration),
+        stance_declaration_at_review=stance_service.declaration(category, stance),
+        stance_notice_at_review=stance_service.counterparty_view_notice(category, configuration=selected_configuration),
         created_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
         status="processing",
         # 阶段 0.2：进度段位（triage→scanning→scoring→done/error）；预审已在
@@ -235,6 +305,7 @@ def _start_review(
                     parsed_text=reused_text,
                     stance=stance,
                     review_id=review_id,
+                    rule_snapshot=rule_snapshot,
                 )
                 if result.get("error"):
                     store.update(
@@ -319,20 +390,42 @@ def list_reviews(limit: int = 50):
     dependencies=[Depends(rate_limit.upload_rate_limit)],
 )
 async def upload(
+    request: Request,
     file: UploadFile = File(None),
     pasted_text: str = Form(""),
     category: str = Form("procurement"),
     stance: str = Form("neutral"),
     force: bool = Form(False),
+    confirmation_token: str = Form("", max_length=128),
 ):
     # 品类必须显式合法（外部审计：未知品类此前会静默回退采购清单）
-    valid_categories = {c["id"] for c in list_categories()}
+    try:
+        trial_versions = _trial_versions(request, write=True)
+        supported_categories = list_categories() if trial_versions is None else _trial_categories(trial_versions)
+        valid_categories = {c["id"] for c in supported_categories}
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        logger.warning("Cannot load category configuration", exc_info=True)
+        raise HTTPException(status_code=503, detail="合同类型规则暂不可用，请稍后再试") from exc
     if category not in valid_categories:
         raise HTTPException(status_code=422, detail=f"未知合同类型：{category}")
     # 立场校验（阶段 1.3，老钱矩阵）：不在品类可审集合内直接 422——UI 根本
     # 不渲染不可审立场（前馈小字），这里是 API 层兜底；不新增阻断弹窗
-    if not stance_service.is_allowed(category, stance):
+    try:
+        selected = None if trial_versions is None else trial_versions[category]
+        snapshot = capture_rule_snapshot(category) if selected is None else selected.snapshot
+        configuration = snapshot.configuration()
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        logger.warning("Cannot capture selected category configuration", exc_info=True)
+        raise HTTPException(status_code=503, detail="合同类型规则暂不可用，请稍后再试") from exc
+    if configuration.get("hidden") or not stance_service.is_allowed(category, stance, configuration=configuration):
         raise HTTPException(status_code=422, detail=f"该合同类型不支持立场：{stance}")
+    # The selected entry must describe the same bytes that the worker will use,
+    # even if the file changed after the initial list was read.
+    supported_categories = [
+        {**entry, "label": configuration.get("label", entry["label"]),
+         "stances": configuration.get("stances") or {}}
+        if entry["id"] == category else entry for entry in supported_categories
+    ]
 
     # ---- B7-6 附录 B：粘贴文本模式（codex 十二轮 P1-3/十三轮批示）----
     # 互斥：文件与粘贴文本二选一；超限后端独立校验（不截短续审——
@@ -375,6 +468,15 @@ async def upload(
         from datetime import datetime as _dt
         filename = f"粘贴文本_{_dt.now():%Y年%m月%d日}.txt"
         raw = pasted_body.encode("utf-8") if pasted_body else b""
+
+    input_kind = "file:" + Path(filename).suffix.lower() if has_file else "pasted_text"
+    if trial_versions is not None and force:
+        assert selected is not None
+        if not rule_trial_confirmation.consume(
+            confirmation_token, document_sha256=hashlib.sha256(raw).hexdigest(), input_kind=input_kind,
+            category=category, selected_version=(selected.version_id, selected.generation, selected.sha256, stance),
+        ):
+            raise HTTPException(409, detail="确认已失效或合同、类型、立场、规则版本已变化，请重新提交")
 
     # 单次审查 LLM 预算（阶段 0.5）：每个 upload 请求一个 Budget 对象，
     # 按引用贯穿预审与审查线程，随 GC 清理；force 重传天然新预算。
@@ -431,7 +533,7 @@ async def upload(
         if (sug_outcome.performed and sug is not None and sug.category
                 and sug.category not in {category, "other"}):
             tier = category_suggest_service.confidence_tier(sug.confidence or 0.0)
-            supported_ids = {c["id"] for c in list_categories()}
+            supported_ids = valid_categories
             is_unsupported = sug.category not in supported_ids
             zh = category_suggest_service.category_zh(sug.category)
             if is_unsupported:
@@ -455,7 +557,9 @@ async def upload(
                 # 对齐预审 confirm 分支先例，防前端「切换」点击 422
                 suggested_category=(sug.category
                                     if sug.category in supported_ids else None),
-                supported_categories=list_categories(),
+                supported_categories=supported_categories,
+                confirmation_token=_issue_trial_confirmation(trial_versions, category, stance,
+                    sug.category if sug.category in supported_ids else None, raw, input_kind),
             )
         elif (sug_outcome.performed and sug is not None
                 and sug.category == category
@@ -476,7 +580,8 @@ async def upload(
                 trace_id=trace_id,
             ):
             outcome = await run_in_threadpool(
-                precheck_service.run_precheck, contract_text, category, None, budget, stance
+                precheck_service.run_precheck, contract_text, category, None, budget, stance,
+                supported_categories, stance_service.stance_label(category, stance, configuration=configuration)
             )
         branch = precheck_service.decide_branch(outcome, category)
         # force（小智娘门禁 P1）：用户在确认弹窗里已拍板（切换或坚持原品类）。
@@ -498,7 +603,9 @@ async def upload(
                     coverage=outcome.coverage,
                 ),
                 suggested_category=r.suggested_category if r.is_supported else None,
-                supported_categories=list_categories(),
+                supported_categories=supported_categories,
+                confirmation_token=_issue_trial_confirmation(trial_versions, category, stance,
+                    r.suggested_category if r.is_supported else None, raw, input_kind),
             )
         # 分支 C 知情提示（老钱裁决：中性 + 检出对方视角起草 → 照审 + 非阻断
         # 告知；买方/承租方立场则静默——对方格式合同正是清单靶心场景）
@@ -554,7 +661,9 @@ async def upload(
         rid = _start_review(
             filename=filename, raw=raw, category=category,
             stance=stance, budget=budget, precheck_record=precheck_record,
-            parsed_text=contract_text, trace_id=trace_id,
+            parsed_text=contract_text, trace_id=trace_id, rule_snapshot=snapshot,
+            rule_provenance=({"source": "database_test", "category": category, "content_sha256": selected.sha256,
+                              "version_id": selected.version_id, "generation": selected.generation} if selected else None),
         )
     except Exception:
         _review_slots.release()
@@ -572,7 +681,7 @@ def get_review(review_id: str):
     if pc:
         # 分支 C 文案服务端生成（单一来源，前端只渲染不拼接）
         pc = {**pc, "stance_notice_text": (
-            stance_service.counterparty_view_notice(row.get("category") or "")
+            stance_service.review_notice(row)
             if pc.get("stance_notice") else ""
         )}
     # 宪法证据法批（第三轮复核 P1-2）：读路径归一化**全部** EvidenceRef
@@ -614,11 +723,13 @@ def get_review(review_id: str):
         filename=row.get("filename") or "",
         category=row.get("category") or "",
         category_label=row.get("category_label") or "",
+        rule_provenance=row.get("rule_provenance"),
         status=row.get("status") or "pending",
         stage=row.get("stage"),
         items=row.get("items") or [],
         stance=stance,
-        stance_declaration=stance_service.declaration(row.get("category") or "", stance),
+        stance_label=stance_service.review_label(row),
+        stance_declaration=stance_service.review_declaration(row),
         scorecard=ScorecardInfo(**(row.get("scorecard") or {})),
         clause_index=ClauseIndexInfo(**clause_index) if clause_index else None,
         blind_candidates=row.get("blind_candidates") or [],
@@ -986,6 +1097,7 @@ def ask(body: AskRequest):
             # A4：立场进追问解释（规则档位不变）
             category=row.get("category") or "procurement",
             stance=row.get("stance") or "neutral",
+            stance_label=stance_service.review_label(row),
             history=history_turns,
             skip_status_gate=_remediated,
             remediation_draft=(_rem.get("draft") or {}) if _remediated else None,
@@ -1345,3 +1457,8 @@ def _archive_ask_turn(review_id: str, request_id: str, turn_no: int,
 router.include_router(_verify_router)
 router.include_router(_objection_router)
 router.include_router(_ai_finding_router)
+router.include_router(_rule_drafts_router)
+router.include_router(_local_accounts_router)
+router.include_router(_local_rule_management_router)
+router.include_router(_local_owned_reviews_router)
+router.include_router(_local_owned_upload_router)

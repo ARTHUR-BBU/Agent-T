@@ -148,7 +148,7 @@ def _seller_view_precheck(monkeypatch):
     monkeypatch.setenv("PRECHECK_ENABLED", "true")
     monkeypatch.setattr(
         "app.api.routes.precheck_service.run_precheck",
-        lambda t, c, chat_fn=None, budget=None, stance="neutral": __import__(
+        lambda t, c, chat_fn=None, budget=None, stance="neutral", categories=None, stance_label=None: __import__(
             "app.services.precheck", fromlist=["PrecheckOutcome"]
         ).PrecheckOutcome(
             performed=True,

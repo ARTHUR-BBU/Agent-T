@@ -14,6 +14,8 @@
 """
 from __future__ import annotations
 
+from app.services.owned_llm_transport import OwnedTransportError
+
 import json
 import logging
 import re
@@ -203,6 +205,8 @@ def remediate_item(
         system = _build_system_prompt(category, segmented=segmented)
         user = _build_user_prompt(item, contract_text, clause_context, segmented=segmented)
         raw = chat(system, user)
+    except OwnedTransportError:
+        raise
     except Exception:  # noqa: BLE001
         logger.exception("Remediate LLM API error")
         return {"ok": False, "error": "智能补写服务暂时不可用，请稍后重试",

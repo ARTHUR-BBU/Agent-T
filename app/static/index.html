@@ -19,6 +19,9 @@
       <button id="btn-new-review" class="primary shell-new" type="button">＋ 新审查</button>
       <button id="btn-proposals" class="shell-new hidden" type="button">规则改进提案</button>
       <button id="btn-rule-catalog" class="shell-new hidden" type="button">查看检查项</button>
+      <button id="btn-rule-drafts" class="shell-new hidden" type="button">规则变更草稿</button>
+      <button id="btn-local-accounts" class="shell-new hidden" type="button">账户管理试用</button>
+      <button id="btn-rule-review" class="shell-new hidden" type="button">规则审核试用</button>
       <p class="shell-sect">历史审查</p>
       <ul id="shell-history" class="shell-history"></ul>
       <p class="shell-sect hidden" id="shell-context-sect">本份合同</p>
@@ -27,6 +30,7 @@
     <div id="nav-resizer" class="column-resizer" role="separator" tabindex="0" aria-label="调整导航栏宽度" aria-orientation="vertical"></div>
     <div id="shell-main" data-ws="empty">
       <div class="ws-inner">
+        <p id="rule-execution-trial-warning" class="account-warning hidden" role="status">本机规则数据库试验：当前使用试验规则版本，尚未正式发布；合同数据尚未按账户隔离，请仅使用测试数据。</p>
         <!-- ws-empty：上传融入右工作区（阳仔线框 §3.1；原 screen-upload
              内容逐字平移，品类/立场/铁律旁注/HTTP 警示/隐私说明一个不丢） -->
         <div id="ws-empty">
@@ -75,7 +79,7 @@
           <p class="stance-iron" id="stance-iron-upload">立场只影响解释，不改变清单通过/需关注等规则档</p>
           <p class="muted stance-note hidden" id="stance-note"></p>
         </div>
-        <button id="btn-upload" class="primary" type="button">开始审查</button>
+        <button id="btn-upload" class="primary" type="button" disabled>开始审查</button>
         <p id="upload-error" class="error hidden"></p>
         <!-- 外审 P1-3：HTTP 红线警示。连接未加密时显眼常驻（HTTPS 下由 JS 移除）——
              Base64 不是加密，Basic Auth 与合同正文在裸 HTTP 下均明文过网 -->
@@ -304,6 +308,99 @@
       </div><!-- /ws-inner -->
     </div><!-- /shell-main -->
   </div><!-- /shell -->
+  <dialog id="rule-review-dialog" aria-labelledby="rule-review-title">
+    <div class="proposal-header"><h2 id="rule-review-title">规则审核试用</h2><button type="button" id="rule-review-close">关闭</button></div>
+    <p class="account-warning">候选和审核结果不会改变现有审查规则。测试仅覆盖当前品类金标，不代表完整回归或法律审核。显示名称来自当前账户资料，不代表实名认证。</p>
+    <p id="rule-validation-block-warning" class="account-warning hidden" role="status">规则测试已暂停或状态尚未确认，请检查此前测试进程及工作区。</p>
+    <p id="rule-review-message" role="status" aria-live="polite"></p>
+    <form id="rule-review-init" class="account-section hidden"><h3>初始化试用基线</h3><p class="draft-hint">从当前规则文件创建本机审核基线；不会发布规则。</p><div class="draft-actions"><select id="rule-review-init-category" aria-label="要初始化的合同类型"></select><button type="submit" class="secondary">初始化基线</button></div></form>
+    <form id="rule-review-form" class="account-section"><h3>提交新候选</h3>
+      <div class="draft-grid"><label class="field"><span>试用基线</span><select id="rule-review-version" required></select></label>
+      <label class="field"><span>变更方式</span><select id="rule-review-operation"><option value="add">新增检查项</option><option value="edit">修改名称和说明</option><option value="disable">建议停用</option><option value="enable">建议启用</option></select></label>
+      <label class="field" id="rule-review-id-wrap"><span>新检查项编号</span><input id="rule-review-item-id" maxlength="64" /></label>
+      <label class="field hidden" id="rule-review-target-wrap"><span>现有检查项</span><select id="rule-review-target"></select></label>
+      <label class="field" id="rule-review-name-wrap"><span>名称</span><input id="rule-review-name" maxlength="120" /></label>
+      <label class="field" id="rule-review-segment-wrap"><span>评分分段</span><select id="rule-review-segment"></select></label></div>
+      <label class="field" id="rule-review-description-wrap"><span>说明</span><textarea id="rule-review-description" maxlength="1000" rows="2"></textarea></label>
+      <div id="rule-review-examples"><label class="field"><span>字面关键词</span><input id="rule-review-literal" maxlength="120" /></label>
+        <div class="draft-grid"><label class="field"><span>应命中的虚构示例</span><textarea id="rule-review-positive" maxlength="2000" rows="2"></textarea></label>
+        <label class="field"><span>不应命中的虚构示例</span><textarea id="rule-review-negative" maxlength="2000" rows="2"></textarea></label></div>
+        <label class="account-ack"><input id="rule-review-ack" type="checkbox" /> 我确认示例可供管理员查看，并可明文保存在本机。</label></div>
+      <label class="field"><span>变更理由</span><textarea id="rule-review-reason" maxlength="500" rows="2" required></textarea></label>
+      <button id="rule-review-submit" type="submit" class="primary">提交候选</button>
+    </form>
+    <section class="account-section"><h3>审核队列</h3><p class="draft-hint">普通用户查看自己的候选；管理员可查看并审核全部候选。</p><div id="rule-review-list"></div><button type="button" id="rule-review-more" class="secondary hidden">加载更多</button></section>
+    <section id="rule-release-section" class="account-section hidden"><h3>本机试验版本与回滚</h3><p class="draft-hint">回滚影响此后新发起的本机试验审查；历史审查保持原版本。完整候选回归尚未接通，不能在此发布新规则。</p><div id="rule-release-events"></div><form id="rule-rollback-form"><label class="field"><span>回滚至历史版本</span><select id="rule-rollback-target" required></select></label><label class="field"><span>回滚理由</span><textarea id="rule-rollback-reason" maxlength="1000" required></textarea></label><button class="secondary" type="submit" id="rule-rollback-submit">回滚本机试验版本</button></form></section>
+    <section id="rule-review-detail" class="account-section hidden"><h3>候选详情</h3><div id="rule-review-detail-body"></div><div class="draft-actions"><button type="button" id="rule-review-validate">运行品类金标</button></div>
+      <form id="rule-review-decision" class="hidden"><label class="field"><span>审核理由</span><textarea id="rule-review-reason-decision" maxlength="1000" rows="2" required></textarea></label><div class="draft-actions"><button type="submit" name="decision" value="approve" class="primary">审核通过</button><button type="submit" name="decision" value="reject">退回</button></div></form>
+    </section>
+  </dialog>
+  <dialog id="account-dialog" aria-labelledby="account-title">
+    <div class="proposal-header"><h2 id="account-title">账户管理试用</h2><button type="button" id="account-close">关闭</button></div>
+    <p class="account-warning">仅供本机使用。现有合同和审查记录尚未按账户隔离，请勿用于多人处理真实合同。</p>
+    <p id="account-message" role="status" aria-live="polite"></p>
+    <form id="account-login-form" class="account-section">
+      <h3>登录账户</h3>
+      <label class="field"><span>账号</span><input id="account-login-username" autocomplete="username" required /></label>
+      <label class="field"><span>密码</span><input id="account-login-password" type="password" autocomplete="current-password" required /></label>
+      <button type="submit" class="primary">登录</button>
+    </form>
+    <div id="account-session" class="hidden">
+      <div class="account-session-header"><strong id="account-identity"></strong><button type="button" id="account-logout">退出登录</button></div>
+      <p id="account-restricted" class="account-warning hidden">首次登录请先修改临时密码</p>
+      <form id="account-password-form" class="account-section">
+        <h3>修改自己的密码</h3>
+        <div class="draft-grid"><label class="field"><span>当前密码</span><input id="account-current-password" type="password" autocomplete="current-password" required /></label>
+        <label class="field"><span>新密码（至少 12 个字符）</span><input id="account-new-password" type="password" autocomplete="new-password" minlength="12" required /></label></div>
+        <button type="submit" class="secondary">修改密码</button>
+      </form>
+      <section id="account-admin" class="account-section hidden">
+        <h3>账户列表</h3><div id="account-users" aria-live="polite"></div>
+        <form id="account-create-form" class="account-section">
+          <h3>创建账户</h3><p class="draft-hint">临时密码 24 小时有效，使用者首次登录必须修改。</p>
+          <div class="draft-grid"><label class="field"><span>账号</span><input id="account-create-username" autocomplete="off" required /></label>
+          <label class="field"><span>姓名</span><input id="account-create-name" required /></label>
+          <label class="field"><span>临时密码</span><input id="account-create-password" type="password" autocomplete="new-password" minlength="12" required /></label>
+          <label class="field"><span>角色</span><select id="account-create-role"><option value="user">普通用户</option><option value="admin">管理员</option></select></label></div>
+          <button type="submit" class="secondary">创建账户</button>
+        </form>
+        <form id="account-reset-form" class="account-section">
+          <h3>重置账户密码</h3><p class="draft-hint">需要验证你的管理员密码；被重置者需用新临时密码重新登录并修改。</p>
+          <div class="draft-grid"><label class="field"><span>账户</span><select id="account-reset-user" required></select></label>
+          <label class="field"><span>新临时密码</span><input id="account-reset-password" type="password" autocomplete="new-password" minlength="12" required /></label>
+          <label class="field"><span>你的管理员密码</span><input id="account-reset-admin-password" type="password" autocomplete="current-password" required /></label></div>
+          <button type="submit" class="secondary">重置密码</button>
+        </form>
+      </section>
+    </div>
+  </dialog>
+  <dialog id="rule-drafts-dialog" aria-labelledby="rule-drafts-title">
+    <div class="proposal-header"><h2 id="rule-drafts-title">规则变更草稿</h2><button type="button" id="rule-drafts-close">关闭</button></div>
+    <p class="draft-intro">本机试用：保存的是变更建议，不会改变当前审查规则，也不代表已审核或上线。请只填写虚构示例；草稿明文保存在本机，删除后备份中仍可能保留副本。</p>
+    <form id="draft-form" class="rule-draft-form">
+      <fieldset id="draft-fields" class="draft-fields" disabled>
+      <div class="draft-grid">
+        <label class="field"><span>合同类型</span><select id="draft-category"></select></label>
+        <label class="field"><span>变更方式</span><select id="draft-operation"><option value="add">新增检查项</option><option value="edit">修改名称和说明</option><option value="disable">建议停用</option><option value="enable">建议启用</option></select></label>
+        <label class="field hidden" id="draft-target-wrap"><span>现有检查项</span><select id="draft-target"></select></label>
+        <label class="field" id="draft-id-wrap"><span>新检查项编号（小写英文、数字或下划线）</span><input id="draft-item-id" maxlength="64" /></label>
+        <label class="field" id="draft-name-wrap"><span>检查项名称</span><input id="draft-name" maxlength="120" /></label>
+        <label class="field" id="draft-segment-wrap"><span>所属评分分段</span><select id="draft-segment"></select></label>
+      </div>
+      <p class="draft-hint hidden" id="draft-target-hint"></p>
+      <label class="field" id="draft-description-wrap"><span>检查项说明</span><textarea id="draft-description" rows="3" maxlength="1000"></textarea></label>
+      <div id="draft-examples-wrap">
+        <label class="field"><span>需要识别的字面关键词（英文不区分大小写）</span><input id="draft-literal" maxlength="120" /></label>
+        <div class="draft-grid"><label class="field"><span>应命中的虚构例子</span><textarea id="draft-positive" rows="3" maxlength="2000"></textarea></label><label class="field"><span>不应命中的虚构例子</span><textarea id="draft-negative" rows="3" maxlength="2000"></textarea></label></div>
+        <p class="draft-hint">保存时用规则引擎检查关键词正反例；这不代表已通过评分、历史合同回归或法律审核。</p>
+      </div>
+      <label class="field"><span>变更理由</span><textarea id="draft-reason" rows="2" maxlength="500" required></textarea></label>
+      <div class="draft-actions"><button class="primary" type="submit" id="draft-save">保存草稿</button><button class="secondary" type="button" id="draft-new">清空并新建</button></div>
+      </fieldset>
+      <p id="draft-message" role="status" aria-live="polite"></p>
+    </form>
+    <h3>已保存的草稿</h3><div id="draft-list" aria-live="polite"></div>
+  </dialog>
   <dialog id="rule-catalog-dialog" aria-labelledby="rule-catalog-title">
     <div class="proposal-header"><h2 id="rule-catalog-title">审查检查项</h2><button type="button" id="rule-catalog-close">关闭</button></div>
     <p>这里展示当前开放品类的检查项和已公开的配置字段；部分条件需要结合程序解释。配置标注版本不会随修改自动变化，不能作为发布版本；默认类别可被细则覆盖。历史审查可能使用不同配置；编辑、启停和发布功能正在建设。</p>
@@ -327,5 +424,7 @@
     </div>
   </dialog>
   <script src="/static/app.js"></script>
+  <script src="/static/accounts.js"></script>
+  <script src="/static/rules_review.js"></script>
 </body>
 </html>

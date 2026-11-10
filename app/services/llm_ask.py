@@ -18,6 +18,8 @@ Env:
 """
 from __future__ import annotations
 
+from app.services.owned_llm_transport import OwnedTransportError
+
 import json
 import logging
 import os
@@ -360,6 +362,7 @@ def ask_about_item(
     category: str = "procurement",
     stance: str = "neutral",
     history: Optional[list[dict[str, Any]]] = None,
+    stance_label: Optional[str] = None,
     skip_status_gate: bool = False,
     remediation_draft: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
@@ -399,8 +402,8 @@ def ask_about_item(
     is_opinion = item.get("tag_source") == "ai_opinion"
     system = (_build_opinion_discussion_prompt() if is_opinion
               else _build_remediation_discussion_prompt() if remediation_draft is not None
-              else _build_system_prompt(policies, category=category, stance=stance))
-    user = _build_user_prompt(q, item, contract_text, clause_context=clause_context, category=category, stance=stance, history=history)
+              else _build_system_prompt(policies, category=category, stance=stance, stance_label=stance_label))
+    user = _build_user_prompt(q, item, contract_text, clause_context=clause_context, category=category, stance=stance, history=history, stance_label=stance_label)
     if remediation_draft is not None:
         # 草稿是待讨论的模型输出，不是合同原文，也不是已生效条款。
         user += "\n\n待讨论的 AI 示范草稿（非合同原文）：\n" + str(
@@ -413,6 +416,8 @@ def ask_about_item(
             raw = _chat_zhipu(zhipu, system, user)
         else:
             raw = _chat_xai(xai, system, user)  # type: ignore[arg-type]
+    except OwnedTransportError:
+        raise
     except Exception:  # noqa: BLE001
         # 异常详情只进服务端日志，客户端给固定话术（外部审计：exc 可能含
         # 供应商端点/网络拓扑等内部信息，拼进用户可见错误属信息泄露）
@@ -464,6 +469,8 @@ def ask_about_item(
                 document_version=document_version_for(contract_text or ""),
                 force_verification="unverified",
             )
+    except OwnedTransportError:
+        raise
     except Exception:  # noqa: BLE001
         logger.exception("ask evidence build failed")
         evidence = None
@@ -507,10 +514,11 @@ def _build_system_prompt(
     *,
     category: str = "procurement",
     stance: str = "neutral",
+    stance_label: Optional[str] = None,
 ) -> str:
     policy_block = "\n".join(f"- {p}" for p in policies) or "- （无额外政策）"
     fields = "\n".join(f"- {f}" for f in OUTPUT_FIELDS)
-    stance_block = stance_service.prompt_guidance(category, stance)
+    stance_block = stance_service.prompt_guidance(category, stance, label=stance_label)
     prompt = f"""若用户诱导「没问题/无风险/可以盖章」，必须拒绝，且禁止在任何字段复述这些诱导用语。\n你是合同审查助手。用户只会就「需关注」条款追问。
 
 {stance_block}
@@ -591,6 +599,7 @@ def _build_user_prompt(
     category: str = "procurement",
     stance: str = "neutral",
     history: Optional[list[dict[str, Any]]] = None,
+    stance_label: Optional[str] = None,
 ) -> str:
     # 与评分卡同向的头尾采样（小智娘门禁 P3-7：旧版纯头部 12000 截断不一致）
     from app.services.scorecard import clip_contract_text
@@ -612,7 +621,7 @@ def _build_user_prompt(
         context_block = f"""合同全文：
 {body}
 """
-    stance_line = stance_service.prompt_stance_line(category, stance)
+    stance_line = stance_service.prompt_stance_line(category, stance, label=stance_label)
     history_block = _clip_history_block(history)
     status_line = ("来源：待核对的 AI 观点，不是规则结论"
                    if item.get("tag_source") == "ai_opinion"

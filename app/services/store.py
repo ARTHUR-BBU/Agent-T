@@ -19,11 +19,14 @@ import threading
 import time
 import uuid
 from contextlib import closing
+from pathlib import Path
 from typing import Any, Callable
 
 _DEFAULT_DB = os.path.join(
     tempfile.gettempdir(), "agent-t-reviews.db"
 )
+_ACCOUNT_MODE = os.getenv("OWNED_LLM_EXECUTION", "0")
+_ACCOUNT_PATH = os.getenv("ACCOUNT_DB_PATH", "").strip()
 
 
 def _parse_ttl_seconds() -> float:
@@ -58,6 +61,13 @@ PURGE_HOOKS: list[Callable[[sqlite3.Connection, list[str]], None]] = []
 class ReviewStore:
     def __init__(self, db_path: str | None = None, ttl_seconds: float | None = None) -> None:
         self._path = db_path or os.getenv("STORE_DB_PATH") or _DEFAULT_DB
+        if _ACCOUNT_MODE == "1":
+            raw_account = _ACCOUNT_PATH
+            if not raw_account or not Path(raw_account).is_absolute():
+                raise RuntimeError("账户模式必须配置独立账户数据库")
+            selected, account = Path(self._path).resolve(), Path(raw_account).resolve()
+            if selected != account and not (selected.exists() and account.exists() and os.path.samefile(selected, account)):
+                raise RuntimeError("账户模式禁止打开其他审查数据库")
         self._ttl = ttl_seconds if ttl_seconds is not None else _TTL_SECONDS
         self._lock = threading.Lock()
         with self._conn() as conn:
@@ -70,7 +80,8 @@ class ReviewStore:
             )
         # 重启后遗留的 processing 行永远等不到后台线程，标记为失败
         # （小智娘 P3-2：否则用户侧会挂到 TTL 过期）
-        self._mark_stale_processing()
+        if _ACCOUNT_MODE != "1":
+            self._mark_stale_processing()
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self._path, timeout=10)
@@ -245,4 +256,32 @@ class ReviewStore:
             return data
 
 
-store = ReviewStore()
+def _guard_account_mode_before_store_init() -> None:
+    """Reject shared/account database overlap before the singleton can mutate it."""
+    if _ACCOUNT_MODE not in ("", "0", "1"):
+        raise RuntimeError("账户模式配置无效")
+    if _ACCOUNT_MODE != "1":
+        return
+    raw = _ACCOUNT_PATH
+    if not raw or not Path(raw).is_absolute():
+        raise RuntimeError("账户模式必须配置独立账户数据库")
+    account = Path(raw).resolve()
+    shared = Path(os.getenv("STORE_DB_PATH") or _DEFAULT_DB).resolve()
+    if account == shared or (account.exists() and shared.exists() and os.path.samefile(account, shared)):
+        raise RuntimeError("账户数据库必须独立于共享审查数据库")
+
+
+_guard_account_mode_before_store_init()
+
+
+class _ForbiddenSharedReviewStore:
+    """In account mode, legacy shared store must not be initialized or used."""
+
+    _path = os.getenv("STORE_DB_PATH") or _DEFAULT_DB
+    ttl_seconds = _TTL_SECONDS
+
+    def __getattr__(self, name: str):
+        raise RuntimeError("账户模式禁止访问共享合同库")
+
+
+store = _ForbiddenSharedReviewStore() if _ACCOUNT_MODE == "1" else ReviewStore()

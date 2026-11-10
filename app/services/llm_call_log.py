@@ -166,6 +166,9 @@ class LLMCallRecord:
 def _db_path() -> Path:
     # 与 store 同库同 TTL 域（审查数据清，账本跟着清）；
     # store 未导出模块级常量，此处按同一 env 约定取路径
+    from app.services import owned_llm_transport
+    if owned_llm_transport.enabled():
+        raise RuntimeError("账户模型执行模式禁止访问共享调用账本")
     from app.services import store as store_module
 
     env = (store_module.os.getenv("STORE_DB_PATH") or "").strip()
@@ -271,6 +274,9 @@ def settle(
     raw_output 超长在此截断（2048+标记；内容白名单由调用方保证）。
     返回是否发生了结算（False=无匹配行、未回执的成功结算、或已定格）。
     """
+    from app.services import owned_llm_transport
+    if owned_llm_transport.enabled():
+        return owned_llm_transport.settle_decision(call_id, outcome, raw_output)
     try:
         if outcome == "success" and raw_output is None:
             return False  # 成功结算必须带回执（回执落库即「已结算」标记）

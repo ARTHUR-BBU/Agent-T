@@ -20,6 +20,8 @@ Gating matrix (tests assert all of these):
 """
 from __future__ import annotations
 
+from app.services.owned_llm_transport import OwnedTransportError, enabled as owned_llm_enabled
+
 import logging
 import os
 from typing import Any, Optional
@@ -52,11 +54,14 @@ def run_model_review(
     map_chat_fn: Optional[Any] = None,
     clause_index: Optional[dict[str, Any]] = None,
     budget: Optional[Any] = None,
+    rule_config: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     """Run the merged pass. Returns scorecard + blind halves.
 
     Never mutates rule item statuses. Score is advisory only.
     """
+    if owned_llm_enabled() and (chat_fn is not None or map_chat_fn is not None):
+        raise OwnedTransportError("账户模型模式不允许自定义发送器")
     blind_on = blind_spot.is_blind_spot_enabled()
 
     result: dict[str, Any] = {
@@ -79,7 +84,7 @@ def run_model_review(
         result["blind_skipped_reason"] = "no_llm_key" if blind_on else None
         return result
 
-    segments = scorecard.load_scorecard_config(category)["segments"]
+    segments = scorecard.load_scorecard_config(category, configuration=rule_config)["segments"]
     if not segments:
         # 旧品类没配 scorecard: 块 → 评分未开通，且不浪费 LLM 调用
         result["scorecard"] = scorecard.unavailable("no_scorecard_config")
@@ -135,6 +140,8 @@ def run_model_review(
 
     try:
         raw = _call_llm(zhipu, xai, system, user, chat_fn, deepseek=deepseek)
+    except OwnedTransportError:
+        raise
     except Exception:  # noqa: BLE001
         # reason 只给固定码：exc 含供应商 URL/响应体，会经 API 和 docx 报告外泄（肉饼门禁 P2-2）
         logger.exception("Model-review LLM error")
@@ -153,6 +160,8 @@ def run_model_review(
             return result
         try:
             raw = _call_llm(zhipu, xai, retry_system, user, chat_fn, deepseek=deepseek)
+        except OwnedTransportError:
+            raise
         except Exception:  # noqa: BLE001
             logger.exception("Model-review retry LLM error")
             result["scorecard"] = scorecard.unavailable(Reason.LLM_ERROR.value)
@@ -258,6 +267,8 @@ def _run_map_pass(
         user = scorecard.build_map_user_prompt(chunk, items, part_no, total)
         try:
             raw = _call_llm(zhipu, xai, system, user, map_chat_fn or chat_fn, deepseek=deepseek)
+        except OwnedTransportError:
+            raise
         except Exception:  # noqa: BLE001
             logger.exception("Map pass chunk %d/%d LLM error; skipping chunk", part_no, total)
             continue

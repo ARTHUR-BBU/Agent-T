@@ -24,6 +24,16 @@
   }
 
   const $ = (id) => document.getElementById(id);
+  let categorySourceReady = false;
+  let uploadInProgress = false;
+
+  function syncUploadAvailability() {
+    const btn = $("btn-upload"), pasteWrap = $("paste-wrap"), pasteArea = $("paste-text");
+    if (!btn) return;
+    const pasteActive = pasteWrap && !pasteWrap.classList.contains("hidden");
+    const length = pasteActive ? (pasteArea && pasteArea.value || "").trim().length : 0;
+    btn.disabled = !categorySourceReady || uploadInProgress || (pasteActive && length > 200000);
+  }
   // A4 九哥定稿（上传/结果/追问共用；铁律旁注常驻可见）
   const STANCE_IRON_LAW = "立场只影响解释，不改变清单通过/需关注等规则档";
   const STANCE_EXPLAIN_GUIDE = "按当前立场说明谁受益、谁担责";
@@ -142,6 +152,8 @@
     return opt ? opt.textContent : id;
   }
 
+  let pendingConfirmationToken = "";
+
   function hidePrecheckConfirm() {
     // 阶段 1.4⑤ dialog 化：开闭走 showModal/close，不用 hidden 类
     const dlg = $("precheck-dialog");
@@ -151,6 +163,7 @@
   // LLM 预审确认（分类≠裁判：AI 只建议，用户拍板；静默切换是事故温床）。
   // Esc / 点遮罩 = 放弃本次上传（确认类弹窗的默认逃生门必须是「不继续」）
   function showPrecheckConfirm(data) {
+    pendingConfirmationToken = data.confirmation_token || "";
     const dlg = $("precheck-dialog");
     const pc = data.precheck || {};
     const detected = pc.detected_type || "其他类型合同";
@@ -185,6 +198,9 @@
   }
 
   async function upload(categoryOverride, force = false) {
+    if (!categorySourceReady || uploadInProgress) return;
+    const confirmationToken = force ? pendingConfirmationToken : "";
+    pendingConfirmationToken = "";
     const fileInput = $("file");
     const err = $("upload-error");
     err.classList.add("hidden");
@@ -214,15 +230,18 @@
       }
       fd.append("file", fileInput.files[0]);
     }
-    const btn = $("btn-upload");
-    btn.disabled = true;
+    uploadInProgress = true;
+    syncUploadAvailability();
     $("stance-seg").disabled = true; // 上传进行中立场锁定（阳仔线框）
     fd.append("category", categoryOverride || $("category").value);
     // 阶段 1.3：立场随请求上报（默认 neutral）
     fd.append("stance", selectedStance());
     // 确认弹窗里的拍板必须带 force（小智娘门禁 P1）：
     // 否则重传会重跑预审，LLM 持续不同意 = 用户永远开不了审
-    if (force) fd.append("force", "1");
+    if (force) {
+      fd.append("force", "1");
+      if (confirmationToken) fd.append("confirmation_token", confirmationToken);
+    }
     try {
       const res = await fetch("/api/upload", { method: "POST", body: fd });
       const data = await res.json();
@@ -247,7 +266,8 @@
       err.textContent = e.message || String(e);
       err.classList.remove("hidden");
     } finally {
-      btn.disabled = false;
+      uploadInProgress = false;
+      syncUploadAvailability();
       $("stance-seg").disabled = false;
     }
   }
@@ -529,6 +549,20 @@
       `<strong>${escapeHtml(data.filename || "")}</strong>` +
       ` · ${escapeHtml(data.category_label || data.category || "")}` +
       `<br/>${metaExtra}`;
+
+    const provenance = data.rule_provenance;
+    const ruleInfo = document.createElement("p");
+    ruleInfo.className = "stance-declaration";
+    if (provenance && provenance.source === "local_file" && /^[0-9a-f]{64}$/.test(provenance.content_sha256 || "")) {
+      ruleInfo.textContent = `选定规则文件：本机 · 摘要 ${provenance.content_sha256.slice(0, 12)}`;
+      ruleInfo.title = `完整 SHA-256：${provenance.content_sha256}；该摘要不代表完整运行环境。`;
+    } else if (provenance && provenance.source === "database_test" && /^[0-9a-f]{64}$/.test(provenance.content_sha256 || "")) {
+      ruleInfo.textContent = `选定规则：数据库试验版本 · 代次 ${provenance.generation} · 摘要 ${provenance.content_sha256.slice(0, 12)}`;
+      ruleInfo.title = `版本 ${provenance.version_id}，完整 SHA-256：${provenance.content_sha256}；未正式发布。`;
+    } else {
+      ruleInfo.textContent = "选定规则文件：版本未知";
+    }
+    $("results-meta-main").appendChild(ruleInfo);
 
     // 阶段 1.1 条款索引：meta 行露出「已识别 N 段」（无索引时静默，旧记录兼容）
     const nClauses = data.clause_index && data.clause_index.count;
@@ -2291,12 +2325,6 @@
     if (ironUp) ironUp.textContent = STANCE_IRON_LAW;
   }
 
-  function resolveStanceLabel(category, stance) {
-    const meta = stanceMeta(category || "");
-    const st = stance || "neutral";
-    return (meta.labels && meta.labels[st]) || st;
-  }
-
   function renderStanceChrome(data) {
     // 结果页顶栏右侧胶囊 + 铁律旁注 + 解释区引导（阳仔视觉 / 九哥用词）
     const capsule = $("stance-capsule");
@@ -2305,7 +2333,7 @@
     if (iron) iron.textContent = STANCE_IRON_LAW;
     if (guide) guide.textContent = STANCE_EXPLAIN_GUIDE;
     if (!capsule) return;
-    const label = resolveStanceLabel(data && data.category, data && data.stance);
+    const label = (data && data.stance_label) || "未知（历史标签未留存）";
     capsule.textContent = "审查立场 · " + label;
     capsule.classList.remove("hidden");
     capsule.title = label;
@@ -2341,27 +2369,55 @@
   }
 
   async function loadStanceMeta() {
+    let trialMode = false;
     try {
       const res = await fetch("/api/categories");
+      trialMode = !!res.headers.get("X-Rule-Execution-Trial");
+      if (trialMode) $("rule-execution-trial-warning").classList.remove("hidden");
+      if (!res.ok && trialMode) {
+        $("category").replaceChildren();
+        $("category").disabled = true;
+        $("rule-execution-trial-warning").textContent = "本机规则数据库试验暂不可用，请检查试验基线；合同数据尚未按账户隔离。";
+        syncUploadAvailability();
+        return;
+      }
+      if (!res.ok) throw new Error("合同类型暂不可用");
       const data = await res.json();
+      if (!Array.isArray(data.categories) || !data.categories.length ||
+          !data.categories.every((c) => c && typeof c.id === "string" && /^[a-z0-9_]{1,64}$/.test(c.id) && typeof c.label === "string" && c.label.trim()) ||
+          new Set(data.categories.map((c) => c.id)).size !== data.categories.length) throw new Error("合同类型暂不可用");
+      if (data.rule_source === "database_test") {
+        $("rule-execution-trial-warning").classList.remove("hidden");
+      }
+      const select = $("category");
+      const previous = select.value;
+      select.replaceChildren();
       const meta = {};
-      (data.categories || []).forEach((c) => {
-        const select = $("category");
-        if (select && c.id && !Array.from(select.options).some((o) => o.value === c.id)) {
-          const option = document.createElement("option");
-          option.value = c.id;
-          option.textContent = c.label || c.id;
-          select.appendChild(option);
-        }
+      data.categories.forEach((c) => {
+        const option = document.createElement("option");
+        option.value = c.id;
+        option.textContent = c.label;
+        select.appendChild(option);
         if (c.stances && Array.isArray(c.stances.allowed) && c.stances.allowed.length) {
           meta[c.id] = c.stances;
         }
       });
+      select.value = data.categories.some((c) => c.id === previous) ? previous : data.categories[0].id;
+      select.disabled = false;
       if (Object.keys(meta).length) STANCE_META = meta;
+      categorySourceReady = true;
     } catch (e) {
-      /* 拉不到就退兜底表，控件照常可用 */
+      $("category").replaceChildren();
+      $("category").disabled = true;
+      $("rule-execution-trial-warning").textContent = trialMode
+        ? "本机规则数据库试验暂不可用，请刷新后重试；合同数据尚未按账户隔离。"
+        : "合同类型暂不可用，请刷新后重试。";
+      $("rule-execution-trial-warning").classList.remove("hidden");
+      syncUploadAvailability();
+      return;
     }
     renderStanceOptions();
+    syncUploadAvailability();
   }
 
   // 品类切换：枚举重渲 + 复位中性（旧立场作废——品类换了尺子，静默保留是事故温床）
@@ -3030,16 +3086,12 @@
     const fileWrap = $("file-wrap");
     const pasteArea = $("paste-text");
     const pasteErr = $("paste-error");
-    const btn = $("btn-upload");
     if (!entryFile || !entryPaste || !settings) return;
     const reveal = () => settings.classList.remove("hidden");
     // codex 十五轮 P2-8：提交可用性只由「当前激活的入口」决定——粘贴超限
     // 禁用了按钮，切回文件入口必须重算，否则正常文件也提交不了
     const updateSubmitEnabled = () => {
-      if (!btn) return;
-      const pasteActive = !pasteWrap.classList.contains("hidden");
-      const n = pasteActive ? (pasteArea && pasteArea.value || "").trim().length : 0;
-      btn.disabled = pasteActive && n > 200000;
+      syncUploadAvailability();
     };
     entryFile.onclick = () => {
       reveal();
@@ -3069,7 +3121,7 @@
           pasteErr.textContent = over ? "超出 20 万字符上限，请删减后提交。" : "";
           pasteErr.classList.toggle("hidden", !over);
         }
-        if (btn) btn.disabled = over; // codex 十二轮 P1-3：超限禁用提交（不截短续审）
+        syncUploadAvailability();
       });
     }
     // 启动恢复：上次遗留的未完成提问回到 lastAskFail（同键重试路径的前提）
@@ -3700,7 +3752,7 @@
             const row = document.createElement("div"); row.className = "catalog-item";
             const classLabels = { existence: "存在性检查", heuristic: "线索判断" };
             const categoryLabel = classLabels[item.class] || (item.class ? `其他（${item.class}）` : "未标注");
-            const name = document.createElement("strong"); name.textContent = `${item.name || item.id}（${item.id} · 分段：${item.segment || "未标注"} · 默认类别：${categoryLabel}）`;
+            const name = document.createElement("strong"); name.textContent = `${item.name || item.id}（${item.id} · ${item.enabled === false ? "停用" : "启用"} · 分段：${item.segment || "未标注"} · 默认类别：${categoryLabel}）`;
             const desc = document.createElement("p"); desc.textContent = item.description || "暂无说明";
             const definition = document.createElement("details");
             const definitionTitle = document.createElement("summary"); definitionTitle.textContent = "查看规则配置字段";
@@ -3714,6 +3766,197 @@
       } catch (error) { catalogList.textContent = error.message || "读取失败，请稍后重试。"; }
     });
     $("rule-catalog-close").addEventListener("click", () => catalogDialog.close());
+  }
+
+  const draftButton = $("btn-rule-drafts");
+  const draftDialog = $("rule-drafts-dialog");
+  if (draftButton && draftDialog) {
+    let draftPacks = [];
+    let editingDraft = null;
+    let draftInitialized = false;
+    let formBaseSha = "";
+    let lastDraftCategory = "";
+    let lastDraftOperation = "add";
+    let lastDraftTarget = "";
+    let draftLoading = false;
+    let draftSaving = false;
+    let draftCatalogReady = false;
+    let draftLoadSequence = 0;
+    let draftListSequence = 0;
+    let cleanDraftSignature = "";
+    const el = (name) => $("draft-" + name);
+    const message = (value) => { el("message").textContent = value; };
+    const syncDraftDisabled = () => {
+      const blocked = draftLoading || draftSaving || !draftCatalogReady;
+      el("fields").disabled = blocked;
+      el("list").querySelectorAll("button").forEach((button) => { button.disabled = blocked; });
+    };
+    const request = async (url, options) => {
+      const response = await fetch(url, options);
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : "操作失败，请检查填写内容");
+      return body;
+    };
+    const option = (select, value, label) => {
+      const o = document.createElement("option"); o.value = value; o.textContent = label; select.appendChild(o);
+    };
+    const currentPack = () => draftPacks.find((pack) => pack.id === el("category").value);
+    const draftSignature = () => JSON.stringify(["category", "operation", "target", "item-id", "name", "description", "segment", "literal", "positive", "negative", "reason"].map((key) => el(key).value));
+    const syncForm = (fill) => {
+      const pack = currentPack();
+      const operation = el("operation").value;
+      const adding = operation === "add";
+      ["id-wrap", "segment-wrap", "examples-wrap"].forEach((id) => el(id).classList.toggle("hidden", !adding));
+      el("target-wrap").classList.toggle("hidden", adding);
+      ["name-wrap", "description-wrap"].forEach((id) => el(id).classList.toggle("hidden", !adding && operation !== "edit"));
+      if (!pack) return;
+      const selected = el("target").value;
+      el("target").textContent = "";
+      option(el("target"), "", "请选择检查项");
+      const targets = pack.items.filter((item) => operation === "enable" ? !item.enabled :
+        operation === "disable" ? item.enabled && !item.has_hardline : !item.has_hardline);
+      targets.forEach((item) => option(el("target"), item.id, item.name + (item.has_hardline ? "（含硬性规则）" : "")));
+      if (targets.some((item) => item.id === selected)) el("target").value = selected;
+      const noTargets = !adding && !targets.length;
+      el("target-hint").classList.toggle("hidden", adding || (!noTargets && operation === "enable"));
+      el("target-hint").textContent = noTargets ? (operation === "enable" ? "当前没有已停用的检查项。" : "当前没有可选择的检查项。") : "含硬性规则的检查项不能通过普通草稿修改或停用。";
+      const stale = Boolean(formBaseSha && pack.base_sha256 !== formBaseSha);
+      if (stale) message("规则基线已变化，内容已保留；请核对后清空并新建草稿。");
+      const segment = el("segment").value;
+      el("segment").textContent = "";
+      option(el("segment"), "", "请选择分段");
+      pack.segments.forEach((s) => option(el("segment"), s.key, `${s.key} · ${s.name}`));
+      if (pack.segments.some((s) => s.key === segment)) el("segment").value = segment;
+      el("save").disabled = stale || (!adding && !el("target").value) || (adding && !el("segment").value);
+      if (fill && operation === "edit") {
+        const item = pack.items.find((i) => i.id === el("target").value);
+        el("name").value = item ? item.name : "";
+        el("description").value = item ? item.description : "";
+      }
+    };
+    const resetDraft = (category) => {
+      editingDraft = null; el("category").disabled = false; el("operation").disabled = false; el("form").reset(); el("save").textContent = "保存草稿";
+      if (category && draftPacks.some((p) => p.id === category)) el("category").value = category;
+      lastDraftCategory = el("category").value;
+      lastDraftOperation = "add"; lastDraftTarget = "";
+      formBaseSha = currentPack() ? currentPack().base_sha256 : "";
+      message(""); syncForm(true); cleanDraftSignature = draftSignature();
+    };
+    const loadDrafts = async () => {
+      const sequence = ++draftListSequence;
+      const list = el("list"); list.textContent = "正在读取…";
+      try {
+        const data = await request("/api/rule-drafts");
+        if (sequence !== draftListSequence) return;
+        list.textContent = "";
+        if (!data.drafts.length) list.textContent = "还没有规则变更草稿。";
+        data.drafts.forEach((draft) => {
+          const card = document.createElement("article"); card.className = "draft-record";
+          const pack = draftPacks.find((p) => p.id === draft.category);
+          const action = {add: "新增", edit: "修改", disable: "建议停用", enable: "建议启用"}[draft.operation] || draft.operation;
+          const title = document.createElement("strong"); title.textContent = `${pack ? pack.label : draft.category} · ${action} · ${(draft.after && draft.after.name) || draft.item_id}（未生效）`;
+          const change = document.createElement("p");
+          const labels = {name: "名称", description: "说明", segment: "分段", literal: "关键词", enabled: "状态"};
+          const describe = (obj) => obj ? Object.entries(obj).map(([k, v]) => `${labels[k] || k}：${k === "enabled" ? (v ? "启用" : "停用") : v}`).join("；") : "无";
+          change.textContent = `创建时的规则：${describe(draft.before)}；建议：${describe(draft.after)}`;
+          const validation = document.createElement("p"); validation.textContent = draft.validation.scope;
+          const freshness = document.createElement("p");
+          freshness.textContent = !pack ? "当前无法核验原合同类型，请勿将此草稿用于发布。" :
+            pack.base_sha256 !== draft.base_sha256 ? "规则基线已变化：以上旧值为创建时内容，需重新创建并复核。" : "规则基线与创建时一致。";
+          const edit = document.createElement("button"); edit.type = "button"; edit.className = "secondary"; edit.textContent = "继续编辑";
+          edit.addEventListener("click", () => {
+            if (draftLoading || draftSaving || !draftCatalogReady) return;
+            if (cleanDraftSignature && draftSignature() !== cleanDraftSignature &&
+                !window.confirm("打开另一份草稿会覆盖当前未保存内容，是否继续？")) return;
+            editingDraft = draft; formBaseSha = draft.base_sha256; el("form").reset(); el("category").value = draft.category;
+            lastDraftCategory = draft.category;
+            el("category").disabled = true; el("operation").disabled = true;
+            el("operation").value = draft.operation; syncForm(false);
+            el("target").value = draft.item_id;
+            lastDraftOperation = draft.operation; lastDraftTarget = el("target").value;
+            ["name", "description", "segment", "literal", "positive", "negative", "reason"].forEach((key) => { el(key).value = draft[key] || ""; });
+            el("item-id").value = draft.item_id; el("save").textContent = "更新草稿"; syncForm(false);
+            cleanDraftSignature = draftSignature();
+            if (pack && pack.base_sha256 === formBaseSha) message("正在编辑已保存的草稿；合同类型和变更方式不可更改，规则基线变化时需要重新创建。");
+            el("operation").focus();
+          });
+          const remove = document.createElement("button"); remove.type = "button"; remove.className = "secondary"; remove.textContent = "删除草稿";
+          remove.addEventListener("click", async () => {
+            if (draftLoading || draftSaving || !draftCatalogReady) return;
+            if (!window.confirm("删除这份草稿？此操作不会改变正式规则。")) return;
+            try { await request(`/api/rule-drafts/${encodeURIComponent(draft.id)}?revision=${draft.revision}`, { method: "DELETE" }); if (editingDraft && editingDraft.id === draft.id) resetDraft(); await loadDrafts(); message("草稿已删除。"); }
+            catch (error) { message(error.message); }
+          });
+          card.append(title, change, freshness, validation, edit, remove); list.appendChild(card);
+        });
+        syncDraftDisabled();
+      } catch (error) { if (sequence === draftListSequence) list.textContent = error.message; }
+    };
+    fetch("/api/rule-drafts/capability")
+      .then((res) => res.ok ? res.json() : null)
+      .then((body) => { if (body && body.available === true) draftButton.classList.remove("hidden"); })
+      .catch(() => {});
+    draftButton.addEventListener("click", async () => {
+      const sequence = ++draftLoadSequence;
+      shellDrawer(false); draftDialog.showModal(); draftLoading = true; draftCatalogReady = false; syncDraftDisabled(); message("正在读取规则基线…");
+      try {
+        const data = await request("/api/rule-drafts/catalog");
+        if (sequence !== draftLoadSequence) return;
+        draftPacks = data.packs;
+        const previous = el("category").value;
+        el("category").textContent = ""; draftPacks.forEach((p) => option(el("category"), p.id, p.label));
+        if (draftPacks.some((p) => p.id === previous)) el("category").value = previous;
+        if (!draftPacks.length) { message("当前没有可管理的合同类型。"); return; }
+        if (!draftInitialized) { resetDraft(); draftInitialized = true; } else { message(""); syncForm(false); }
+        draftCatalogReady = true;
+        await loadDrafts();
+      } catch (error) { if (sequence === draftLoadSequence) message(error.message); }
+      finally { if (sequence === draftLoadSequence) { draftLoading = false; syncDraftDisabled(); } }
+    });
+    $("rule-drafts-close").addEventListener("click", () => draftDialog.close());
+    el("category").addEventListener("change", () => {
+      const selected = el("category").value;
+      const hasContent = ["item-id", "name", "description", "literal", "positive", "negative", "reason"].some((key) => el(key).value.trim());
+      if (hasContent && !window.confirm("切换合同类型会清空当前未保存内容，是否继续？")) { el("category").value = lastDraftCategory; return; }
+      resetDraft(selected); message("已切换合同类型，请填写新的草稿。");
+    });
+    el("operation").addEventListener("change", () => {
+      const selected = el("operation").value;
+      const hasContent = ["item-id", "name", "description", "literal", "positive", "negative", "reason"].some((key) => el(key).value.trim());
+      if (hasContent && !window.confirm("切换变更方式会清空当前未保存内容，是否继续？")) { el("operation").value = lastDraftOperation; return; }
+      ["item-id", "name", "description", "literal", "positive", "negative", "reason"].forEach((key) => { el(key).value = ""; });
+      el("target").value = ""; lastDraftTarget = ""; lastDraftOperation = selected; syncForm(true);
+    });
+    el("target").addEventListener("change", () => {
+      const selected = el("target").value;
+      const previous = currentPack() && currentPack().items.find((item) => item.id === lastDraftTarget);
+      const changed = el("operation").value === "edit" && previous &&
+        (el("name").value !== previous.name || el("description").value !== previous.description);
+      if (changed && !window.confirm("切换检查项会覆盖当前未保存的名称和说明，是否继续？")) { el("target").value = lastDraftTarget; return; }
+      lastDraftTarget = selected; syncForm(true);
+    });
+    el("segment").addEventListener("change", () => syncForm(false));
+    el("new").addEventListener("click", () => resetDraft(el("category").value));
+    el("form").addEventListener("submit", async (event) => {
+      event.preventDefault(); if (draftSaving || draftLoading || !draftCatalogReady) return;
+      const pack = currentPack(); if (!pack) { message("请先选择合同类型。"); return; }
+      const operation = el("operation").value;
+      const data = { category: pack.id, operation, item_id: operation === "add" ? el("item-id").value.trim() : el("target").value,
+        name: (operation === "add" || operation === "edit") ? el("name").value.trim() : "",
+        description: (operation === "add" || operation === "edit") ? el("description").value.trim() : "", reason: el("reason").value.trim(),
+        segment: operation === "add" ? el("segment").value : "", literal: operation === "add" ? el("literal").value : "",
+        positive: operation === "add" ? el("positive").value : "", negative: operation === "add" ? el("negative").value : "",
+        base_sha256: formBaseSha };
+      if (editingDraft) data.revision = editingDraft.revision;
+      draftSaving = true; syncDraftDisabled(); el("save").disabled = true; message("正在保存…");
+      try {
+        await request(editingDraft ? `/api/rule-drafts/${encodeURIComponent(editingDraft.id)}` : "/api/rule-drafts", {
+          method: editingDraft ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
+        });
+        resetDraft(pack.id); await loadDrafts(); message("草稿已保存，尚未生效。");
+      } catch (error) { message(error.message); }
+      finally { draftSaving = false; syncForm(false); syncDraftDisabled(); }
+    });
   }
 
   loadStanceMeta();

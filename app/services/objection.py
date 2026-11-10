@@ -26,6 +26,8 @@ docs/stage3-class-opinion.md 第五节）：
 """
 from __future__ import annotations
 
+from app.services.owned_llm_transport import OwnedTransportError, enabled as owned_llm_enabled
+
 import json
 import logging
 import os
@@ -462,6 +464,8 @@ def run_objections(
     document_version: str = "",
 ) -> dict[str, Any]:
     """异议层主入口。失败绝不 raise，失败矩阵见 ObjectionInfo.reason。"""
+    if owned_llm_enabled() and chat_fn is not None:
+        raise OwnedTransportError("账户模型模式不允许自定义发送器")
     if not is_objections_enabled():
         return outcome_unavailable(Reason.DISABLED.value)
     if not (text or "").strip():
@@ -511,6 +515,8 @@ def run_objections(
 
     try:
         raw = chat(system, user)
+    except OwnedTransportError:
+        raise
     except Exception:  # noqa: BLE001
         logger.exception("Objections LLM error")
         return outcome_unavailable(Reason.LLM_ERROR.value)
@@ -520,6 +526,8 @@ def run_objections(
             return outcome_unavailable(Reason.BUDGET_EXCEEDED.value)
         try:
             raw = chat(objection_prompts.build_retry_system_prompt(system), user)
+        except OwnedTransportError:
+            raise
         except Exception:  # noqa: BLE001
             logger.exception("Objections retry LLM error")
             return outcome_unavailable(Reason.LLM_ERROR.value)

@@ -47,6 +47,28 @@ def test_parse_bare_json_ok():
     assert outcome.result.confidence == "high"
 
 
+def test_precheck_uses_captured_categories_and_stance_during_retry(monkeypatch):
+    categories = [{"id": "lease", "label": "原租赁类别"}]
+    calls = []
+
+    def chat(system, user):
+        calls.append((system, user))
+        if len(calls) == 1:
+            categories[:] = [{"id": "procurement", "label": "后来改变的类别"}]
+            return "invalid json"
+        return json.dumps(GOOD)
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError("不应在已有快照时重新读取配置")
+
+    monkeypatch.setattr(precheck, "supported_category_ids", unexpected)
+    outcome = run_precheck("合同正文", "lease", chat_fn=chat, categories=categories, stance="lessee", stance_label="原承租方")
+    assert outcome.performed and outcome.result.suggested_category == "lease"
+    assert len(calls) == 2
+    assert all("原租赁类别" in system and "后来改变的类别" not in system for system, _ in calls)
+    assert all("原承租方" in user for _, user in calls)
+
+
 def test_parse_fenced_json_ok():
     fenced = "```json\n" + json.dumps(GOOD, ensure_ascii=False) + "\n```"
     outcome = run_precheck("合同正文", "lease", chat_fn=_chat_returns(fenced, []))

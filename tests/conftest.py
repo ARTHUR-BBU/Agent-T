@@ -11,7 +11,21 @@ teardown 清桶防止污染后续测试文件（阶段 0.5）。
 """
 from __future__ import annotations
 
+import os
+import tempfile
+from pathlib import Path
+
 import pytest
+
+# Collection imports application modules before fixtures run. Never let an
+# ordinary test run open the application's default persistent review store.
+# Explicit caller configuration remains supported for isolated subprocesses.
+_test_store_dir = None
+_store_path = os.environ.get("STORE_DB_PATH")
+if not _store_path or _store_path == os.environ.get("_AGENT_T_PYTEST_GENERATED_STORE"):
+    _test_store_dir = tempfile.TemporaryDirectory(prefix="agent-t-pytest-")
+    os.environ["STORE_DB_PATH"] = str(Path(_test_store_dir.name) / "reviews.sqlite")
+    os.environ["_AGENT_T_PYTEST_GENERATED_STORE"] = os.environ["STORE_DB_PATH"]
 
 
 @pytest.fixture(autouse=True)

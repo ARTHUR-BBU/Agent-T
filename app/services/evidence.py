@@ -836,6 +836,14 @@ _VERIFY_SOURCE_WHITELIST = frozenset({"quality_obs", "blind", "pending", "fact",
 _QUALITY_DIMENSION_WHITELIST = frozenset({"completeness", "consistency", "impact"})
 
 
+def rule_engine_version() -> str:
+    """Return the current on-disk engine fingerprint; deployment must keep code immutable."""
+    from pathlib import Path
+
+    engine_path = Path(__file__).resolve().parent / "checklist.py"
+    return hashlib.sha256(engine_path.read_bytes()).hexdigest()[:12]
+
+
 def rule_pack_versions(category: str) -> dict[str, str]:
     """规则包版本三元组的两个内容哈希（批 2b-② v1.8 字节级规范）。
 
@@ -855,11 +863,10 @@ def rule_pack_versions(category: str) -> dict[str, str]:
     if not config_path.exists():
         config_path = base / "checklist_procurement.yaml"
         resolved_category = "procurement"
-    engine_path = Path(__file__).resolve().parent / "checklist.py"
     return {
         "rule_pack_id": resolved_category,
         "rule_pack_content_version": hashlib.sha256(config_path.read_bytes()).hexdigest()[:12],
-        "rule_engine_version": hashlib.sha256(engine_path.read_bytes()).hexdigest()[:12],
+        "rule_engine_version": rule_engine_version(),
     }
 
 

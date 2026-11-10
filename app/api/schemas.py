@@ -379,11 +379,26 @@ class ObjectionInfo(BaseModel):
     coverage: Optional[dict[str, Any]] = None  # 外审批 2+三轮审计 D：candidate 维（eligible/sent/reviewed/candidate_limited）+ body 维（body_*/clauses_*/body_limited）
 
 
+class RuleProvenanceInfo(BaseModel):
+    source: Literal["local_file"]
+    category: str
+    content_sha256: str
+
+
+class TrialRuleProvenanceInfo(BaseModel):
+    source: Literal["database_test"]
+    category: str
+    content_sha256: str
+    version_id: str
+    generation: int
+
+
 class ReviewSummary(BaseModel):
     id: str
     filename: str
     category: str
     category_label: str
+    rule_provenance: Optional[RuleProvenanceInfo | TrialRuleProvenanceInfo] = None
     status: Literal["pending", "processing", "done", "error"] = "pending"
     # 阶段 0.2：进度段位 triage/scanning/scoring/done/error；旧记录为 None
     # （status 仍是唯一终态权威，前端对 None 退化单行文案）
@@ -403,6 +418,7 @@ class ReviewSummary(BaseModel):
     # 阶段 1.3：立场声明（元数据；declaration 由服务端单一来源生成，
     # 前端与 docx 只渲染不拼接）
     stance: str = "neutral"
+    stance_label: str = ""
     stance_declaration: str = ""
     # 阶段 2.1 质量层（旧记录为 None；不可用时 available=False 前端静默隐藏）
     quality: Optional[QualityInfo] = None
@@ -445,6 +461,7 @@ class UploadResponse(BaseModel):
     status: Literal["uploaded", "category_confirm"] = "uploaded"
     precheck: Optional[PrecheckInfo] = None
     suggested_category: Optional[str] = None
+    confirmation_token: Optional[str] = None
     # 阶段 1.3：元素含 stances 嵌套 dict（立场元数据随品类透传）
     supported_categories: list[dict[str, Any]] = Field(default_factory=list)
 
