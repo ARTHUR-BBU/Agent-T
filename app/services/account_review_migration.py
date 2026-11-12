@@ -168,6 +168,15 @@ def create_migrated_copy(account_path: Path, review_path: Path, target_path: Pat
              closing(_open(reference_account)) as ar, closing(_open(reference_review)) as rr:
             ao = _check_schema(ac, ar, _ACCOUNT_TABLES, {"account_users", "account_sessions"})
             ro = _check_schema(rc, rr, _REVIEW_TABLES, {"reviews"})
+            # codex 二轮 P1-4：验证三表（控制/任务/结果）必须**全有或全无**——
+            # 源库部分缺失（如控制表丢失而任务表仍在=风险闸状态已不完整）时
+            # 拒绝迁移：否则副本在目标库重建 blocked=0 的控制表，会把受阻的
+            # 安全闸恢复为可用（安全闸风险）。损坏库走离线迁移，不入副本。
+            _validation_tables = {"rule_validation_control", "rule_validation_jobs",
+                                  "rule_validation_results"} & {
+                name for kind, name in ao if kind == "table"}
+            if 0 < len(_validation_tables) < 3:
+                raise ValueError("规则验证控制/任务/结果表不完整，源库需离线迁移")
             if ac.execute("PRAGMA foreign_key_check").fetchone():
                 raise ValueError("账户或规则关联无效")
             if ("table", "rule_versions") in ao:

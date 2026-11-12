@@ -287,3 +287,137 @@ def test_ledger_orphan_pending_marked_unknown(jobs):  # noqa: F811
     with accounts._connect() as conn:
         outcome = conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id='orphan-x'").fetchone()[0]
     assert outcome == "unknown"
+
+
+# ---- codex 二轮审核（2026-11-12）：四条 P1 + 公平性 ----
+
+def test_orphan_job_with_ledger_evidence_is_kept_not_deleted(jobs, monkeypatch):  # noqa: F811
+    """codex 二轮 P1-1：孤儿任务带账本行（pending/unknown/已结算混合）→
+    任务行保留待离线迁移，绝不级联删除任何调用证据。"""
+    accounts, owned, service, admin, alice_user, alice, _ = jobs
+    from app.services.owned_llm_ledger import OwnedLLMLedger
+    ledger = OwnedLLMLedger(service)
+    rid, job, secret = service.create(alice, filename="带证据孤儿", category="procurement")
+    call_pending = ledger.begin(alice, job, secret, node="quality", provider="zhipu", model="glm-5.2")
+    call_settled = ledger.begin(alice, job, secret, node="ask", provider="zhipu", model="glm-5.2")
+    ledger.settle(alice, job, secret, call_settled, outcome="success", input_tokens=10, output_tokens=5)
+    accounts.set_active(admin, alice_user["id"], False)
+    # 制造孤儿：审查行消失（任务行+3 条账本行保留）
+    with accounts._connect() as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("DELETE FROM reviews WHERE id=?", (rid,))
+    monkeypatch.setattr(maintenance, "_database_path", lambda: accounts.path)
+    monkeypatch.setattr(maintenance, "ReviewStore", lambda _p: owned.reviews)
+    maintenance.recover_once()
+    with accounts._connect() as conn:
+        # 任务行保留（failed），账本证据一条不少；reconcile 先行把孤儿
+        # pending 收口为 unknown（时序：reconcile → reap_stale）
+        assert conn.execute("SELECT status FROM owned_review_jobs WHERE id=?", (job,)).fetchone()[0] == "failed"
+        rows = conn.execute("SELECT id,outcome FROM owned_llm_attempts WHERE job_id=?", (job,)).fetchall()
+        assert len(rows) == 2
+        outcomes = {r["id"]: r["outcome"] for r in rows}
+        assert outcomes[call_pending] == "unknown", "孤儿 pending 已被 reconcile 收口"
+        assert outcomes[call_settled] == "success", "已结算证据原样"
+    # 后续轮次幂等：不再产生变化
+    assert maintenance.recover_once() == (0, 0)
+    with accounts._connect() as conn:
+        rows = conn.execute("SELECT outcome FROM owned_llm_attempts WHERE job_id=?", (job,)).fetchall()
+        assert sorted(r[0] for r in rows) == ["success", "unknown"], "证据仍一条不少"
+
+
+def test_ownership_mismatch_job_quarantined_without_deletion(jobs):  # noqa: F811
+    """codex 二轮 P1-1：归属不匹配（审查存在但属他人）→ 置 failed 隔离，
+    不删任务行（无 FK 违例）且绝不触碰他人审查内容。"""
+    accounts, owned, service, admin, alice_user, alice, _ = jobs
+    rid, job, _ = service.create(alice, filename="归属漂移任务", category="procurement")
+    bobby_user = [u for u in accounts.list_users(admin) if u["username"] == "bobby"][0]
+    with accounts._connect() as conn:
+        conn.execute("UPDATE reviews SET owner_user_id=? WHERE id=?", (bobby_user["id"], rid))
+        before = conn.execute("SELECT data FROM reviews WHERE id=?", (rid,)).fetchone()[0]
+    accounts.set_active(admin, alice_user["id"], False)
+    assert service.reap_stale() == 0
+    with accounts._connect() as conn:
+        assert conn.execute("SELECT status FROM owned_review_jobs WHERE id=?", (job,)).fetchone()[0] == "failed"
+        assert conn.execute("SELECT data FROM reviews WHERE id=?", (rid,)).fetchone()[0] == before
+        assert conn.execute("SELECT owner_user_id FROM reviews WHERE id=?", (rid,)).fetchone()[0] == bobby_user["id"]
+
+
+def test_non_object_json_quarantined_batch_still_progresses(jobs, monkeypatch):  # noqa: F811
+    """codex 二轮 P1-2：合法但非对象的 JSON（null/[]）→ 显式识别隔离，
+    健康记录同批推进，二轮幂等；审查原文保留。"""
+    accounts, owned, service, admin, alice_user, alice, bob = jobs
+    bad_rid, bad_job, _ = service.create(alice, filename="null记录", category="procurement")
+    ok_rid, ok_job, _ = service.create(bob, filename="健康记录", category="procurement")
+    with accounts._connect() as conn:
+        conn.execute("UPDATE reviews SET data='null' WHERE id=?", (bad_rid,))
+    accounts.set_active(admin, alice_user["id"], False)
+    accounts.set_active(admin, [u for u in accounts.list_users(admin) if u["username"] == "bobby"][0]["id"], False)
+    monkeypatch.setattr(maintenance, "_database_path", lambda: accounts.path)
+    monkeypatch.setattr(maintenance, "ReviewStore", lambda _p: owned.reviews)
+    assert maintenance.recover_once() == (0, 1), "非对象 JSON 不得阻塞整批"
+    with accounts._connect() as conn:
+        assert conn.execute("SELECT status FROM owned_review_jobs WHERE id=?", (bad_job,)).fetchone()[0] == "failed"
+        assert conn.execute("SELECT data FROM reviews WHERE id=?", (bad_rid,)).fetchone()[0] == "null"
+    assert maintenance.recover_once() == (0, 0), "二轮幂等"
+
+
+def test_ledger_orphan_marks_unknown_but_upload_stays_blocked(jobs, monkeypatch):  # noqa: F811
+    """codex 二轮 P1-3：孤儿账本行收口 unknown 后，数据级 FK 违例仍在——
+    真实 recover_once 成功，但普通上传入口（严格构造）如实保持拦截
+    （证据保留优先于恢复上传；修复=离线迁移）。"""
+    accounts, owned, service, admin, alice_user, alice, _ = jobs
+    ledger = OwnedLLMLedger(service)
+    rid, job, secret = service.create(alice, filename="孤儿账本挡门", category="procurement")
+    call = ledger.begin(alice, job, secret, node="quality", provider="zhipu", model="glm-5.2")
+    with accounts._connect() as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("DELETE FROM owned_llm_attempts WHERE id=?", (call,))
+        conn.execute("INSERT INTO owned_llm_attempts (id,job_id,node,provider,model,outcome,started_at) "
+                     "VALUES ('orphan-block',?, 'quality','zhipu','glm-5.2','pending',1)", (job,))
+        conn.execute("DELETE FROM owned_review_jobs WHERE id=?", (job,))
+        conn.execute("DELETE FROM reviews WHERE id=?", (rid,))
+    monkeypatch.setattr(maintenance, "_database_path", lambda: accounts.path)
+    monkeypatch.setattr(maintenance, "ReviewStore", lambda _p: owned.reviews)
+    assert maintenance.recover_once() == (1, 0), "恢复入口正常（孤儿收口 unknown）"
+    with accounts._connect() as conn:
+        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id='orphan-block'").fetchone()[0] == "unknown"
+    import pytest as _pytest
+    # 严格拦截来自账本构造器（违例在 owned_llm_attempts 的外键）——
+    # 上传入口 _services 依次构造 jobs→ledger，ledger 抛错即上传被拦
+    OwnedReviewJobs(owned)  # 任务表本身无违例，构造通过（如实）
+    with _pytest.raises(RuntimeError, match="需要离线迁移"):
+        OwnedLLMLedger(service)  # 账本严格构造如实保持拦截
+
+
+def test_reconcile_orphans_fair_share_under_backlog(jobs):  # noqa: F811
+    """codex 二轮公平性：普通积压持续占满窗口时孤儿仍有预留份额
+    （1/4，至少 1），多轮后孤儿全部收口、不被饿死。"""
+    accounts, owned, service, admin, alice_user, alice, bob = jobs
+    ledger = OwnedLLMLedger(service)
+    orphans = []
+    for i in range(2):
+        rid, job, secret = service.create(alice, filename=f"孤儿{i}", category="procurement")
+        orphans.append(ledger.begin(alice, job, secret, node="quality", provider="zhipu", model="glm-5.2"))
+        with accounts._connect() as conn:
+            conn.execute("PRAGMA foreign_keys=OFF")
+            conn.execute("DELETE FROM owned_review_jobs WHERE id=?", (job,))
+            conn.execute("DELETE FROM reviews WHERE id=?", (rid,))
+    for i in range(4):
+        r, j, s = service.create(bob, filename=f"积压{i}", category="procurement")
+        ledger.begin(bob, j, s, node="quality", provider="zhipu", model="glm-5.2")
+    accounts.set_active(admin, alice_user["id"], False)
+    accounts.set_active(admin, [u for u in accounts.list_users(admin) if u["username"] == "bobby"][0]["id"], False)
+
+    def unknown_orphan_count() -> int:
+        with accounts._connect() as conn:
+            marks = ",".join("?" * len(orphans))
+            return conn.execute(
+                f"SELECT COUNT(*) FROM owned_llm_attempts WHERE id IN ({marks}) "
+                "AND outcome='unknown'", orphans).fetchone()[0]
+
+    # 多轮：每轮孤儿预留份额≥1，普通积压不再独占窗口
+    for _ in range(5):
+        ledger.reconcile(limit=4)
+        if unknown_orphan_count() == 2:
+            break
+    assert unknown_orphan_count() == 2, "多轮后孤儿必须全部收口（不被普通积压饿死）"

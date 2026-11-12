@@ -48,6 +48,19 @@ def recover_once() -> tuple[int, int]:
         ledger = None
     attempts = ledger.reconcile(limit=_LIMIT) if ledger is not None else 0
     stale = jobs.reap_stale(limit=_LIMIT)
+    # codex 二轮 P1-3：孤儿账本行标 unknown 不消除 FK 违例——普通上传的
+    # 严格检查仍会拦截该库。如实探测并报告（保留账本证据优先于恢复上传；
+    # 修复路径=离线迁移，本服务不做破坏性清理）
+    if ledger is not None:
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
+            orphan_attempts = conn.execute(
+                "SELECT COUNT(*) FROM owned_llm_attempts a WHERE NOT EXISTS ("
+                "SELECT 1 FROM owned_review_jobs j JOIN reviews r "
+                "ON r.id=j.review_id AND r.owner_user_id=j.owner_user_id "
+                "WHERE j.id=a.job_id)").fetchone()[0]
+        if orphan_attempts:
+            logger.error("账户任务恢复：账本存在 %d 行孤儿/不一致记录（证据保留）；"
+                         "该库上传暂受严格检查拦截，需离线迁移修复", orphan_attempts)
     return attempts, stale
 
 

@@ -87,32 +87,32 @@ class OwnedLLMLedger:
             now = time.time()
             ttl = self.jobs.owned.reviews.ttl_seconds
             cutoff = now - ttl if ttl else None
+            # codex 二轮公平性：孤儿（任务/审查行缺失或归属不一致）给预留
+            # 份额（1/4 窗口，至少 1）——普通积压持续占满窗口时孤儿不再
+            # 永远排不上；无孤儿时份额自然归还普通记录
+            orphan_budget = max(1, limit // 4)
+            orphans = conn.execute(
+                "SELECT a.id FROM owned_llm_attempts a WHERE a.outcome='pending' AND NOT EXISTS ("
+                "SELECT 1 FROM owned_review_jobs j JOIN reviews r "
+                "ON r.id=j.review_id AND r.owner_user_id=j.owner_user_id "
+                "WHERE j.id=a.job_id) ORDER BY a.started_at,a.id LIMIT ?",
+                (orphan_budget,)).fetchall()
+            marked = 0
+            for row in orphans:
+                conn.execute("UPDATE owned_llm_attempts SET outcome='unknown',finished_at=? "
+                             "WHERE id=? AND outcome='pending'", (now, row["id"]))
+                marked += 1
             rows = conn.execute("SELECT a.id FROM owned_llm_attempts a JOIN owned_review_jobs j ON j.id=a.job_id "
                                 "JOIN reviews r ON r.id=j.review_id AND r.owner_user_id=j.owner_user_id "
                                 "WHERE a.outcome='pending' AND (j.status!='running' OR j.lease_until<=? "
                                 "OR (? IS NOT NULL AND r.created_at<=?) OR NOT EXISTS (SELECT 1 FROM account_sessions s "
                                 "JOIN account_users u ON u.id=s.user_id WHERE s.token_hash=j.session_hash "
                                 "AND s.user_id=j.owner_user_id AND s.expires_at>? AND u.active=1 AND u.must_change_password=0)) "
-                                "ORDER BY a.started_at,a.id LIMIT ?", (now, cutoff, cutoff, now, limit)).fetchall()
-            marked = 0
+                                "ORDER BY a.started_at,a.id LIMIT ?", (now, cutoff, cutoff, now, limit - marked)).fetchall()
             for row in rows:
                 conn.execute("UPDATE owned_llm_attempts SET outcome='unknown',finished_at=? WHERE id=? AND outcome='pending'",
                              (now, row["id"]))
                 marked += 1
-            if marked < limit:
-                # 孤儿/不一致 pending（codex P1-2）：判据与上面健康 JOIN 完全
-                # 对偶——任务行缺失、审查行缺失、**归属不一致**（审查存在但
-                # owner 不同）三类都选不到健康 JOIN，这里统一收口为 unknown。
-                # 只动本账本行，绝不改写（可能属于其他账户的）审查内容。
-                orphans = conn.execute(
-                    "SELECT a.id FROM owned_llm_attempts a WHERE a.outcome='pending' AND NOT EXISTS ("
-                    "SELECT 1 FROM owned_review_jobs j JOIN reviews r "
-                    "ON r.id=j.review_id AND r.owner_user_id=j.owner_user_id "
-                    "WHERE j.id=a.job_id) LIMIT ?", (limit - marked,)).fetchall()
-                for row in orphans:
-                    conn.execute("UPDATE owned_llm_attempts SET outcome='unknown',finished_at=? "
-                                 "WHERE id=? AND outcome='pending'", (now, row["id"]))
-                    marked += 1
             return marked
 
     def settle_business(self, token: str, job_id: str, worker_secret: str, call_id: str, *, outcome: str) -> None:

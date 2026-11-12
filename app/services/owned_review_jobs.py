@@ -40,6 +40,10 @@ class _StatusMismatch(_QuarantinableRecord):
     pass
 
 
+class _OwnershipMismatch(_QuarantinableRecord):
+    pass
+
+
 _RESULT_FIELDS = frozenset({"items", "scorecard", "text", "text_preview", "policies", "completion", "error",
                             "document_version", "clause_index", "facts", "verify", "quality", "objections",
                             "blind_candidates", "blind_skipped_messages", "blind_skipped_reason", "blind_enabled",
@@ -204,10 +208,15 @@ class OwnedReviewJobs:
             for job in jobs:
                 conn.execute("SAVEPOINT reap_one")
                 try:
-                    row = conn.execute("SELECT created_at,data FROM reviews WHERE id=? AND owner_user_id=?",
-                                       (job["review_id"], job["owner_user_id"])).fetchone()
+                    # codex 二轮 P1-1：存在性（不带 owner）与归属分开判——
+                    # 「审查行缺失」和「审查存在但归属他人」是两种坏记录，
+                    # 处置不同（见下方 except 分支），混判会级联删账本
+                    row = conn.execute("SELECT created_at,data,owner_user_id FROM reviews WHERE id=?",
+                                       (job["review_id"],)).fetchone()
                     if row is None:
                         raise _OrphanJob()
+                    if row["owner_user_id"] != job["owner_user_id"]:
+                        raise _OwnershipMismatch()
                     if ttl and row["created_at"] + ttl <= now:
                         self.owned._remove_expired(conn, job["review_id"])
                         conn.execute("RELEASE SAVEPOINT reap_one")
@@ -218,6 +227,10 @@ class OwnedReviewJobs:
                         # 损坏行不可解析：绝不猜测改写审查内容——只隔离任务行
                         # 停止占窗，审查行原样留给离线迁移
                         raise _CorruptRecord()
+                    # codex 二轮 P1-2：null/[] 等合法但非对象的 JSON 也会在
+                    # .get() 上炸整批——显式识别为坏记录（保留原文、隔离任务）
+                    if not isinstance(data, dict):
+                        raise _CorruptRecord()
                     if data.get("id") != job["review_id"] or data.get("status") != "processing":
                         raise _StatusMismatch()
                     data.update(status="error", error="审查任务已中断，请重新提交")
@@ -226,16 +239,34 @@ class OwnedReviewJobs:
                     conn.execute("UPDATE owned_review_jobs SET status='failed' WHERE id=? AND status='running'", (job["id"],))
                     conn.execute("RELEASE SAVEPOINT reap_one")
                 except _QuarantinableRecord as exc:
-                    # 单条隔离（codex P1-3）：回滚本条改动后处置任务行。
-                    # 孤儿任务（审查行已消失）→ 删除任务行：死行无内容价值，
-                    # 删除后数据级 FK 违例消除，严格构造检查的上传路径随之
-                    # 恢复（日志留 id 供离线核查）；其余 → 置 failed 停止占窗。
+                    # 单条隔离：回滚本条改动后处置任务行。
+                    # codex 二轮 P1-1：孤儿任务（审查行缺失）若带调用账本行，
+                    # 删除任务行会 ON DELETE CASCADE 连坐账本证据（含已结算
+                    # 与 unknown）——绝不删除，只置 failed 并如实报告「该库
+                    # 上传暂受严格检查拦截，需离线迁移保留证据」；无账本行
+                    # 的死行才安全删除（消除 FK 违例，上传恢复）。
+                    # 归属不匹配/状态矛盾/损坏 → 置 failed（审查行存在，无
+                    # FK 违例，不影响上传），审查内容一律不触碰。
                     conn.execute("ROLLBACK TO SAVEPOINT reap_one")
                     if isinstance(exc, _OrphanJob):
-                        conn.execute("DELETE FROM owned_review_jobs WHERE id=? AND status='running'",
-                                     (job["id"],))
-                        logger.error("账户任务恢复：删除孤儿任务行 %s（审查行缺失，待离线核查）",
-                                     job["id"])
+                        # 账本表可能整个不存在（缺账本旧库）——无表=无证据
+                        _ledger_tbl = conn.execute(
+                            "SELECT 1 FROM sqlite_master WHERE type='table' "
+                            "AND name='owned_llm_attempts'").fetchone()
+                        has_attempts = bool(_ledger_tbl) and conn.execute(
+                            "SELECT 1 FROM owned_llm_attempts WHERE job_id=? LIMIT 1",
+                            (job["id"],)).fetchone() is not None
+                        if has_attempts:
+                            conn.execute("UPDATE owned_review_jobs SET status='failed' "
+                                         "WHERE id=? AND status='running'", (job["id"],))
+                            logger.error("账户任务恢复：孤儿任务 %s 带调用账本证据，"
+                                         "保留任务行待离线迁移；该库上传暂受严格检查拦截",
+                                         job["id"])
+                        else:
+                            conn.execute("DELETE FROM owned_review_jobs WHERE id=? AND status='running'",
+                                         (job["id"],))
+                            logger.error("账户任务恢复：删除无账本证据的孤儿任务行 %s（审查行缺失）",
+                                         job["id"])
                     else:
                         conn.execute("UPDATE owned_review_jobs SET status='failed' WHERE id=? AND status='running'",
                                      (job["id"],))

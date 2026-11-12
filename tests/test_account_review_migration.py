@@ -288,7 +288,9 @@ def test_migration_preserves_candidate_validation_review_and_guards(source_datab
     with sqlite3.connect(incomplete) as conn:
         conn.execute("DROP TABLE rule_validation_results")
     rejected_results = tmp_path / "missing-results-output.sqlite"
-    with pytest.raises(ValueError, match="任务与结果不一致"):
+    # codex 二轮 P1-4 后：验证三表不完整在更早的完整性检查点被拒（消息更新，
+    # 拒绝语义不变——「缺结果表」先命中三表齐全性闸，再到一致性核对）
+    with pytest.raises(ValueError, match="不完整"):
         create_migrated_copy(incomplete, review, rejected_results, maintenance_confirmed=True)
     assert not rejected_results.exists()
     bad_generation = tmp_path / "bad-generation-source.sqlite"
@@ -366,3 +368,37 @@ def test_reference_subprocess_does_not_execute_sitecustomize(tmp_path, monkeypat
     migration._reference(tmp_path / "reference-account.sqlite", tmp_path / "reference-review.sqlite", tmp_path)
     assert not marker.exists()
     assert "-I" in calls[0] and "-S" in calls[0] and "-B" in calls[0]
+
+
+def test_migration_rejects_partial_validation_tables(source_databases, tmp_path):
+    """codex 二轮 P1-4：验证三表（控制/任务/结果）部分缺失的源库拒绝迁移
+    ——否则副本重建 blocked=0 控制表会把受阻安全闸恢复为可用。"""
+    from app.services.rule_validation_service import RuleValidationService
+    account_path, review_path, token, _, _, _ = source_databases
+    RuleValidationService(AccountStore(account_path))  # 三表建全
+    with sqlite3.connect(account_path) as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("DROP TABLE rule_validation_control")  # 模拟损坏：只丢控制表
+    with pytest.raises(ValueError, match="不完整"):
+        create_migrated_copy(account_path, review_path, tmp_path / "new.sqlite",
+                             maintenance_confirmed=True)
+
+
+def test_migration_preserves_blocked_validation_gate(source_databases, tmp_path):
+    """codex 二轮 P1-4：正常迁移必须原样保留 blocked=1 的风险闸状态与
+    事件来源（控制/任务/结果行齐全的源库）。"""
+    from app.services.rule_validation_service import RuleValidationService
+    account_path, review_path, token, _, _, _ = source_databases
+    RuleValidationService(AccountStore(account_path))
+    with sqlite3.connect(account_path) as conn:
+        conn.execute("UPDATE rule_validation_control SET blocked=1, reason='synthetic incident', "
+                     "updated_at=1 WHERE id=1")
+    target = tmp_path / "new.sqlite"
+    create_migrated_copy(account_path, review_path, target, maintenance_confirmed=True)
+    with sqlite3.connect(target / "agent-t.sqlite") as conn:
+        row = conn.execute("SELECT blocked,reason FROM rule_validation_control WHERE id=1").fetchone()
+        assert row == (1, "synthetic incident"), "受阻安全闸必须原样保留"
+        # 防在线复位触发器随迁移重建（闸不能在副本里被改回）
+        with pytest.raises(sqlite3.IntegrityError, match="offline recovery"):
+            conn.execute("UPDATE rule_validation_control SET blocked=0 WHERE id=1")
+            conn.commit()
