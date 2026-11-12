@@ -523,7 +523,8 @@ def test_recovery_logs_distinguish_fk_violation_from_ownership(jobs, monkeypatch
     messages = [r.getMessage() for r in caplog.records
                 if r.name == "app.services.owned_review_maintenance"]
     joined = "\n".join(messages)
-    assert "上传暂受严格检查拦截" in joined, "真 FK 违例必须报上传受阻"
+    assert "上传相关检查将拒绝" in joined, "真 FK 违例必须报上传受阻（新口径）"
+    assert "数据库存在外键违例" in joined, "事实层（涉及表）单独成行"
     assert "不构成外键违例" in joined and "归属不一致" in joined, "归属不一致必须单独报需核查"
     # 同一条日志不得把两类混在一个结论里
     for line in messages:
@@ -551,15 +552,16 @@ def test_bad_started_at_text_does_not_abort_reconcile(jobs):  # noqa: F811
         with conn:
             conn.execute("DELETE FROM owned_review_jobs WHERE id=?", (j2,))
             conn.execute("DELETE FROM reviews WHERE id=?", (r2,))
-    # limit=1 双重验证：健康记录先推进（坏时间不炸批），坏记录随后收口
+    # limit=1 双重验证（预留份额语义，codex 五轮 P2-2）：损伤存量优先
+    # 清走——坏时间记录占预留份额先收口，健康记录随后推进；两类都不饿死
     assert ledger.reconcile(limit=1) == 1
     with accounts._connect() as conn:
-        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (healthy,)).fetchone()[0] == "unknown", \
-            "健康记录必须先推进（数值时间排序在前）"
-        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (bad_call,)).fetchone()[0] == "pending"
-    assert ledger.reconcile(limit=1) == 1, "坏记录排末尾但不饿死，随后收口"
+        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (bad_call,)).fetchone()[0] == "unknown", \
+            "坏时间记录占预留份额先收口（损伤存量有限，优先清走）"
+        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (healthy,)).fetchone()[0] == "pending"
+    assert ledger.reconcile(limit=1) == 1, "健康记录随后推进"
     with accounts._connect() as conn:
-        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (bad_call,)).fetchone()[0] == "unknown"
+        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (healthy,)).fetchone()[0] == "unknown"
 
 
 def test_null_owner_mismatch_is_reported(jobs, monkeypatch, caplog):  # noqa: F811
@@ -579,7 +581,7 @@ def test_null_owner_mismatch_is_reported(jobs, monkeypatch, caplog):  # noqa: F8
     joined = "\n".join(r.getMessage() for r in caplog.records
                        if r.name == "app.services.owned_review_maintenance")
     assert "归属不一致" in joined, "NULL owner 的归属不一致必须被报告（IS NOT 语义）"
-    assert "上传暂受严格检查拦截" not in joined, "NULL owner 不构成 FK 违例，不得报上传受阻"
+    assert "上传相关检查将拒绝" not in joined, "NULL owner 不构成 FK 违例，不得报上传受阻"
 
 
 def test_missing_account_violation_is_reported(jobs, monkeypatch, caplog):  # noqa: F811
@@ -600,7 +602,31 @@ def test_missing_account_violation_is_reported(jobs, monkeypatch, caplog):  # no
     joined = "\n".join(r.getMessage() for r in caplog.records
                        if r.name == "app.services.owned_review_maintenance")
     assert "外键违例" in joined, "缺账户的真实违例必须如实报告"
-    assert "上传暂受严格检查拦截" in joined, "真实违例必须如实提示上传受阻"
+    assert "上传相关检查将拒绝" in joined, "真实违例必须如实提示上传受阻（新口径）"
     for line in joined.splitlines():
         assert "违约金" not in line and "合同" not in line.replace("账户任务恢复：", ""), \
             "日志不得包含合同内容"
+
+
+def test_bad_time_orphan_closes_under_sustained_traffic(jobs):  # noqa: F811
+    """codex 五轮 P2-2 持续流量场景：每轮都有新的正常失效记录进入、
+    limit=1 逐条处理——坏时间孤儿靠预留份额在首轮即收口（损伤存量
+    有限、优先清走），不再被持续积压推到末尾饿死。"""
+    accounts, owned, service, admin, alice_user, alice, bob = jobs
+    ledger = OwnedLLMLedger(service)
+    r_bad, j_bad, s_bad = service.create(alice, filename="坏时间", category="procurement")
+    bad_call = ledger.begin(alice, j_bad, s_bad, node="quality", provider="zhipu", model="glm-5.2")
+    with accounts._connect() as conn:
+        conn.execute("UPDATE owned_llm_attempts SET started_at='bad' WHERE id=?", (bad_call,))
+    # 预置持续流量源：bob 的 3 条任务轮番失效进入
+    for i in range(3):
+        service.create(bob, filename=f"流量{i}", category="procurement")
+    accounts.set_active(admin, alice_user["id"], False)
+    accounts.set_active(admin, [u for u in accounts.list_users(admin) if u["username"] == "bobby"][0]["id"], False)
+    for _round in range(4):
+        ledger.reconcile(limit=1)
+        with accounts._connect() as conn:
+            state = conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (bad_call,)).fetchone()[0]
+        if state == "unknown":
+            break
+    assert state == "unknown", "持续积压下坏时间孤儿必须最终收口"

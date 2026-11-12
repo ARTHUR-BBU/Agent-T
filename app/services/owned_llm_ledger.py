@@ -88,11 +88,15 @@ class OwnedLLMLedger:
             now = time.time()
             ttl = self.jobs.owned.reviews.ttl_seconds
             cutoff = now - ttl if ttl else None
-            # codex 三轮 P2-3：全局排序公平——孤儿与普通两类候选各取窗口
-            # 上限，按 started_at 全局排序后截取 limit（双向公平：limit=1
-            # 时谁更老谁先处理，任何一类都无法靠持续积压饿死另一类）
+            # codex 三轮 P2-3 + 五轮 P2-2：两阶段公平——
+            # ①坏时间记录（REAL 列存入文本的历史损伤，有限存量）优先预留
+            #   份额（最多 1/4 窗口，至少 1）：保证持续正常流量下也能最终
+            #   收口为 unknown，同时不占满整个窗口饿死健康记录
+            # ②其余候选（数值时间）按 started_at 全局排序截取——limit=1
+            #   小窗口双向公平（谁更老谁先），持续积压无法饿死任何一类
+            # SQL 各自的 LIMIT 都取窗口上限（不预截），合并阶段统一截取
             orphans = conn.execute(
-                "SELECT a.id,a.started_at FROM owned_llm_attempts a WHERE a.outcome='pending' AND NOT EXISTS ("
+                "SELECT a.id,a.started_at,a.rowid FROM owned_llm_attempts a WHERE a.outcome='pending' AND NOT EXISTS ("
                 "SELECT 1 FROM owned_review_jobs j JOIN reviews r "
                 "ON r.id=j.review_id AND r.owner_user_id=j.owner_user_id "
                 "WHERE j.id=a.job_id) ORDER BY a.started_at,a.id LIMIT ?",
@@ -104,23 +108,30 @@ class OwnedLLMLedger:
                                 "JOIN account_users u ON u.id=s.user_id WHERE s.token_hash=j.session_hash "
                                 "AND s.user_id=j.owner_user_id AND s.expires_at>? AND u.active=1 AND u.must_change_password=0)) "
                                 "ORDER BY a.started_at,a.id LIMIT ?", (now, cutoff, cutoff, now, limit)).fetchall()
-            # codex 四轮 P1-2：REAL 列并非严格类型——历史损坏数据可能存入
-            # 文本，Python 直接比较 str 与 float 抛 TypeError 炸整批恢复。
-            # 排序键类型安全化：数值按浮点排前，非数值排末尾（坏记录仍会被
-            # 收口，只是排在健康记录之后）；绝不因坏字段回滚整批。
-            def _sort_key(pair: tuple[Any, Any]) -> tuple[int, float, str]:
-                started_at, call_id = pair
-                if isinstance(started_at, (int, float)) and not isinstance(started_at, bool):
-                    return (0, float(started_at), str(call_id))
-                return (1, 0.0, str(started_at))
 
-            merged = sorted(
-                [(r["started_at"], r["id"]) for r in rows]
-                + [(r["started_at"], r["id"]) for r in orphans], key=_sort_key)
+            def _is_bad_time(value: Any) -> bool:
+                return not isinstance(value, (int, float)) or isinstance(value, bool)
+
+            bad_candidates = sorted(
+                [r for r in orphans if _is_bad_time(r["started_at"])]
+                + [r for r in rows if _is_bad_time(r["started_at"])],
+                key=lambda r: (r["rowid"] if "rowid" in r.keys() else 0, r["id"]))
+            reserved = min(len(bad_candidates), max(1, (limit + 3) // 4))
+            take_bad = bad_candidates[:reserved]
+
+            numeric = sorted(
+                [(r["started_at"], r["id"]) for r in orphans + rows
+                 if not _is_bad_time(r["started_at"])])
+            take_rest = numeric[:limit - len(take_bad)]
+
             marked = 0
-            for _started_at, call_id in merged[:limit]:
+            for _, call_id in take_rest:
                 conn.execute("UPDATE owned_llm_attempts SET outcome='unknown',finished_at=? WHERE id=? AND outcome='pending'",
                              (now, call_id))
+                marked += 1
+            for r in take_bad:
+                conn.execute("UPDATE owned_llm_attempts SET outcome='unknown',finished_at=? WHERE id=? AND outcome='pending'",
+                             (now, r["id"]))
                 marked += 1
             return marked
 
