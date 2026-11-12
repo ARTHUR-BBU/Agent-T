@@ -532,3 +532,41 @@ def test_existing_control_incident_keeps_original_evidence(setup):
         service._arm_control(conn, "expired_job", "later", 99)
         row = conn.execute("SELECT reason, updated_at, last_job_id FROM rule_validation_control WHERE id=1").fetchone()
     assert tuple(row) == ("first", 42, "original")
+
+
+# ---- codex 三轮 P1-1：损坏库运行时初始化不得重置安全闸 ----
+
+def test_partial_missing_tables_fail_closed_on_init(setup):
+    """blocked=1 后控制表缺失（任务/结果仍在）→ 服务初始化 fail-closed，
+    绝不把安全闸重建为可用。"""
+    accounts, _, admin, _, _, _, _ = setup
+    with accounts._connect() as conn:
+        conn.execute("UPDATE rule_validation_control SET blocked=1, reason='synthetic incident' WHERE id=1")
+        conn.execute("DROP TABLE rule_validation_control")
+    with pytest.raises(RuntimeError, match="不完整"):
+        RuleValidationService(accounts)
+    # 阻断未被解除：任务表仍在、无新建控制行
+    with accounts._connect() as conn:
+        names = {r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'rule_validation_%'")}
+        assert "rule_validation_control" not in names
+
+
+def test_missing_control_row_gets_defensive_block_on_restart(setup):
+    """三表齐全但控制行丢失（数据损伤）→ 服务重启成功但保持阻断
+    （防御性 blocked=1，绝不自动补成可用）。"""
+    accounts, _, _, _, _, _, _ = setup
+    with accounts._connect() as conn:
+        conn.execute("DROP TRIGGER validation_control_no_delete")
+        conn.execute("DELETE FROM rule_validation_control WHERE id=1")
+    # 服务重启（两次构造 = 重启语义）
+    RuleValidationService(accounts)
+    RuleValidationService(accounts)
+    with accounts._connect() as conn:
+        row = conn.execute("SELECT blocked,reason FROM rule_validation_control WHERE id=1").fetchone()
+        assert row["blocked"] == 1, "控制行缺失必须防御阻断"
+        assert "防御阻断" in row["reason"]
+    # 守卫确认：审核通过被阻断
+    from app.services.rule_validation_guard import validation_blocked
+    with accounts._connect() as conn:
+        assert validation_blocked(conn) is True

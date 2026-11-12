@@ -48,19 +48,30 @@ def recover_once() -> tuple[int, int]:
         ledger = None
     attempts = ledger.reconcile(limit=_LIMIT) if ledger is not None else 0
     stale = jobs.reap_stale(limit=_LIMIT)
-    # codex 二轮 P1-3：孤儿账本行标 unknown 不消除 FK 违例——普通上传的
-    # 严格检查仍会拦截该库。如实探测并报告（保留账本证据优先于恢复上传；
-    # 修复路径=离线迁移，本服务不做破坏性清理）
+    # codex 二轮 P1-3 + 三轮 P2-5：两类残留分开报告——只有「任务行或
+    # 审查行确实缺失」才构成 SQLite 数据级 FK 违例（上传受阻）；归属
+    # 不一致（任务与审查都在但 owner 不同）不构成 FK 违例，上传不受阻，
+    # 只需核查。不给出未经验证的结论。
     if ledger is not None:
         with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
-            orphan_attempts = conn.execute(
+            _fk_orphans = conn.execute(
                 "SELECT COUNT(*) FROM owned_llm_attempts a WHERE NOT EXISTS ("
-                "SELECT 1 FROM owned_review_jobs j JOIN reviews r "
-                "ON r.id=j.review_id AND r.owner_user_id=j.owner_user_id "
-                "WHERE j.id=a.job_id)").fetchone()[0]
-        if orphan_attempts:
-            logger.error("账户任务恢复：账本存在 %d 行孤儿/不一致记录（证据保留）；"
-                         "该库上传暂受严格检查拦截，需离线迁移修复", orphan_attempts)
+                "SELECT 1 FROM owned_review_jobs j WHERE j.id=a.job_id) OR NOT EXISTS ("
+                "SELECT 1 FROM owned_review_jobs j2 JOIN reviews r ON r.id=j2.review_id "
+                "WHERE j2.id=a.job_id)").fetchone()[0]
+            _owner_mismatch = conn.execute(
+                "SELECT COUNT(*) FROM owned_llm_attempts a "
+                "JOIN owned_review_jobs j ON j.id=a.job_id "
+                "JOIN reviews r ON r.id=j.review_id "
+                "WHERE r.owner_user_id != j.owner_user_id").fetchone()[0]
+        if _fk_orphans:
+            logger.error("账户任务恢复：账本存在 %d 行孤儿记录（证据保留），"
+                         "数据级外键违例未消除——该库上传暂受严格检查拦截，"
+                         "需离线迁移修复", _fk_orphans)
+        if _owner_mismatch:
+            logger.error("账户任务恢复：账本存在 %d 行归属不一致记录（审查行在但"
+                         "属于其他账户），不构成外键违例、上传不受阻——建议离线核查",
+                         _owner_mismatch)
     return attempts, stale
 
 

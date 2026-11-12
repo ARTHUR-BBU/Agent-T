@@ -421,3 +421,110 @@ def test_reconcile_orphans_fair_share_under_backlog(jobs):  # noqa: F811
         if unknown_orphan_count() == 2:
             break
     assert unknown_orphan_count() == 2, "多轮后孤儿必须全部收口（不被普通积压饿死）"
+
+
+def test_reconcile_limit_one_is_fair_both_ways(jobs):  # noqa: F811
+    """codex 三轮 P2-3：limit=1 小窗口下双向公平——谁更老谁先处理，
+    任何一类都无法靠持续到来饿死另一类。"""
+    accounts, owned, service, admin, alice_user, alice, bob = jobs
+    ledger = OwnedLLMLedger(service)
+    # 场景A：旧普通 pending + 新孤儿 → limit=1 普通先收口
+    r1, j1, s1 = service.create(bob, filename="旧普通", category="procurement")
+    normal_old = ledger.begin(bob, j1, s1, node="quality", provider="zhipu", model="glm-5.2")
+    r2, j2, s2 = service.create(alice, filename="新孤儿", category="procurement")
+    orphan_new = ledger.begin(alice, j2, s2, node="quality", provider="zhipu", model="glm-5.2")
+    with accounts._connect() as conn:
+        conn.execute("UPDATE owned_llm_attempts SET started_at=1000 WHERE id=?", (normal_old,))
+        conn.execute("UPDATE owned_llm_attempts SET started_at=2000 WHERE id=?", (orphan_new,))
+        # 普通侧也要进入失效窗口（租约过期），否则两类的 pending 都不参选
+        conn.execute("UPDATE owned_review_jobs SET lease_until=1000 WHERE id=?", (j1,))
+    # PRAGMA 在事务内是空操作——单独连接先关外键再删，防级联吞掉孤儿行
+    with accounts._connect() as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        with conn:
+            conn.execute("DELETE FROM owned_review_jobs WHERE id=?", (j2,))
+            conn.execute("DELETE FROM reviews WHERE id=?", (r2,))
+    assert ledger.reconcile(limit=1) == 1
+    with accounts._connect() as conn:
+        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (normal_old,)).fetchone()[0] == "unknown"
+        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (orphan_new,)).fetchone()[0] == "pending"
+    # 场景B：反过来——旧孤儿 + 新普通 → limit=1 孤儿先收口
+    assert ledger.reconcile(limit=1) == 1  # 场景A剩余：新孤儿（此时已是最老）收口
+    with accounts._connect() as conn:
+        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (orphan_new,)).fetchone()[0] == "unknown"
+
+
+def _child_tables_ready(accounts, job_id, *, with_precheck: bool) -> None:
+    """给任务行挂一条预审结果子记录（模拟 codex P2-4 的非账本级联数据）。"""
+    import time as _time
+    with accounts._connect() as conn:
+        conn.execute(
+            "INSERT INTO owned_review_precheck_claims (job_id, created_at) VALUES (?,?)",
+            (job_id, _time.time()))
+        if with_precheck:
+            conn.execute(
+                "INSERT INTO owned_review_precheck_results (job_id,state,original_category,"
+                "original_stance,choices_json,versions_json,input_sha256,input_kind,"
+                "summary,suspect,performed,precheck_performed,precheck_skip_reason,"
+                "suggestion_performed,required_confirmation,created_at) VALUES ("
+                "?, 'ready','procurement','neutral','[]','[]','abc','file',"
+                "'摘要',0,1,0,NULL,0,0,?)", (job_id, _time.time()))
+
+
+def test_orphan_with_precheck_evidence_kept(jobs):  # noqa: F811
+    """codex 三轮 P2-4：孤儿任务带预审声明/结果（无账本行）→ 保留任务行
+    待离线迁移，预审数据（分类/选择/预算/摘要）不随删除丢失。"""
+    accounts, owned, service, admin, alice_user, alice, _ = jobs
+    rid, job, _ = service.create(alice, filename="带预审孤儿", category="procurement")
+    # 建预审子表并挂记录（本库此前未用到预审功能）
+    from app.services.owned_review_precheck import _CLAIM_SCHEMA, _RESULT_SCHEMA
+    with accounts._connect() as conn:
+        conn.execute(_CLAIM_SCHEMA)
+        conn.execute(_RESULT_SCHEMA)
+    _child_tables_ready(accounts, job, with_precheck=True)
+    accounts.set_active(admin, alice_user["id"], False)
+    with accounts._connect() as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("DELETE FROM reviews WHERE id=?", (rid,))
+    assert service.reap_stale() == 0
+    with accounts._connect() as conn:
+        assert conn.execute("SELECT status FROM owned_review_jobs WHERE id=?", (job,)).fetchone()[0] == "failed"
+        kept = conn.execute("SELECT job_id FROM owned_review_precheck_results WHERE job_id=?", (job,)).fetchone()
+        assert kept is not None, "预审结果必须保留（不随孤儿任务删除）"
+
+
+def test_recovery_logs_distinguish_fk_violation_from_ownership(jobs, monkeypatch, caplog):  # noqa: F811
+    """codex 三轮 P2-5：FK 违例报「上传受阻」；归属不一致报「需核查、
+    不受阻」——两类分开，日志不给出未经验证的结论。"""
+    import logging
+    accounts, owned, service, admin, alice_user, alice, _ = jobs
+    from app.services.owned_llm_ledger import OwnedLLMLedger
+    ledger = OwnedLLMLedger(service)
+    # 归属不一致一条（任务+审查都在，owner 漂移）
+    rid1, job1, s1 = service.create(alice, filename="归属不一致", category="procurement")
+    ledger.begin(alice, job1, s1, node="quality", provider="zhipu", model="glm-5.2")  # 归属不一致调用
+    bobby_user = [u for u in accounts.list_users(admin) if u["username"] == "bobby"][0]
+    with accounts._connect() as conn:
+        conn.execute("UPDATE reviews SET owner_user_id=? WHERE id=?", (bobby_user["id"], rid1))
+    # FK 违例一条（审查行缺失）
+    rid2, job2, s2 = service.create(alice, filename="真孤儿", category="procurement")
+    fk_call = ledger.begin(alice, job2, s2, node="quality", provider="zhipu", model="glm-5.2")
+    with accounts._connect() as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("DELETE FROM owned_llm_attempts WHERE id=?", (fk_call,))
+        conn.execute("INSERT INTO owned_llm_attempts (id,job_id,node,provider,model,outcome,started_at) "
+                     "VALUES ('fk-orphan-x',?, 'quality','zhipu','glm-5.2','pending',1)", (job2,))
+        conn.execute("DELETE FROM reviews WHERE id=?", (rid2,))
+    accounts.set_active(admin, alice_user["id"], False)
+    monkeypatch.setattr(maintenance, "_database_path", lambda: accounts.path)
+    monkeypatch.setattr(maintenance, "ReviewStore", lambda _p: owned.reviews)
+    with caplog.at_level(logging.ERROR, logger="app.services.owned_review_maintenance"):
+        maintenance.recover_once()
+    messages = [r.getMessage() for r in caplog.records
+                if r.name == "app.services.owned_review_maintenance"]
+    joined = "\n".join(messages)
+    assert "上传暂受严格检查拦截" in joined, "真 FK 违例必须报上传受阻"
+    assert "不构成外键违例" in joined and "归属不一致" in joined, "归属不一致必须单独报需核查"
+    # 同一条日志不得把两类混在一个结论里
+    for line in messages:
+        assert not ("孤儿记录" in line and "归属不一致" in line), "两类不得合并报告"

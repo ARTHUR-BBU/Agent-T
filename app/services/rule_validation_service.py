@@ -27,6 +27,14 @@ class RuleValidationService:
         self.accounts = accounts
         self.submissions = RuleSubmissionService(accounts)
         with closing(accounts._connect()) as conn, conn:
+            # codex 三轮 P1-1：区分「真新库」与「已有但不完整的验证结构」——
+            # 损坏库（三表部分缺失）不得借初始化把安全闸重建为可用（blocked=0）
+            _names = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+                "('rule_validation_control','rule_validation_jobs','rule_validation_results')")}
+            if _names and len(_names) < 3:
+                raise RuntimeError("规则验证结构不完整（控制/任务/结果表部分缺失），需要离线迁移")
+            _had_control = "rule_validation_control" in _names
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS rule_validation_results (
                     id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES rule_candidates(id),
@@ -44,7 +52,6 @@ class RuleValidationService:
                     id INTEGER PRIMARY KEY CHECK(id=1), blocked INTEGER NOT NULL CHECK(blocked IN (0,1)),
                     reason TEXT NOT NULL, updated_at REAL NOT NULL, last_job_id TEXT
                 );
-                INSERT OR IGNORE INTO rule_validation_control(id,blocked,reason,updated_at) VALUES (1,0,'',0);
                 CREATE TRIGGER IF NOT EXISTS validation_control_no_delete BEFORE DELETE ON rule_validation_control
                 BEGIN SELECT RAISE(ABORT, 'validation control is retained'); END;
                 CREATE TRIGGER IF NOT EXISTS validation_control_no_online_reset BEFORE UPDATE ON rule_validation_control
@@ -82,6 +89,18 @@ class RuleValidationService:
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(rule_validation_control)")}
             if "last_job_id" not in columns:
                 conn.execute("ALTER TABLE rule_validation_control ADD COLUMN last_job_id TEXT")
+            # codex 三轮 P1-1：默认控制行只对**真新库**插 blocked=0；已存在的
+            # 控制表若控制行缺失（数据损伤）→ 防御性插入 blocked=1（保持阻断，
+            # 不能自动补成可用）。防在线复位触发器只拦 UPDATE，拦不住这条
+            # INSERT——所以必须在这里显式守门。
+            if _had_control:
+                _row = conn.execute("SELECT blocked FROM rule_validation_control WHERE id=1").fetchone()
+                if _row is None:
+                    conn.execute("INSERT INTO rule_validation_control(id,blocked,reason,updated_at) "
+                                 "VALUES (1,1,'控制行缺失，防御阻断，需离线核查',?)", (time.time(),))
+            else:
+                conn.execute("INSERT OR IGNORE INTO rule_validation_control(id,blocked,reason,updated_at) "
+                             "VALUES (1,0,'',0)")
 
     def _candidate(self, conn: sqlite3.Connection, token: str, candidate_id: str, *, current: bool) -> tuple[sqlite3.Row, sqlite3.Row]:
         actor = self.accounts._session(conn, token)
@@ -175,7 +194,8 @@ class RuleValidationService:
                 if job["lease_until"] <= now:
                     # 收尾时发现本任务租约已过期：同一事务内先原子落闸再把任务置为 abandoned，
                     # 保证守卫阻断新任务、审核通过和发布，直至离线检查恢复
-                    self._arm_control(conn, "expired_job", job_id, now)
+                    # job 行存在 ⇒ job_id 必为非空（上方已拒绝 job is None）
+                    self._arm_control(conn, "expired_job", str(job_id), now)
                     conn.execute("UPDATE rule_validation_jobs SET status='abandoned' WHERE id=? AND status='running'", (job_id,))
                     lease_expired = True
                 else:

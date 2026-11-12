@@ -402,3 +402,21 @@ def test_migration_preserves_blocked_validation_gate(source_databases, tmp_path)
         with pytest.raises(sqlite3.IntegrityError, match="offline recovery"):
             conn.execute("UPDATE rule_validation_control SET blocked=0 WHERE id=1")
             conn.commit()
+
+
+def test_migration_rejects_missing_control_row(source_databases, tmp_path):
+    """codex 三轮 P1-2：三表齐全但控制行（id=1）缺失 → 拒绝迁移。"""
+    from app.services.rule_validation_service import RuleValidationService
+    account_path, review_path, token, _, _, _ = source_databases
+    RuleValidationService(AccountStore(account_path))
+    with sqlite3.connect(account_path) as conn:
+        # 结构全等模拟：摘触发器→删行→按原句重装触发器（_check_schema 的
+        # 触发器存在性核对通过，只缺控制行——精确命中控制行完整性检查）
+        trigger_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name='validation_control_no_delete'").fetchone()[0]
+        conn.execute("DROP TRIGGER validation_control_no_delete")
+        conn.execute("DELETE FROM rule_validation_control WHERE id=1")
+        conn.execute(trigger_sql)
+    with pytest.raises(ValueError, match="控制行缺失"):
+        create_migrated_copy(account_path, review_path, tmp_path / "new.sqlite",
+                             maintenance_confirmed=True)

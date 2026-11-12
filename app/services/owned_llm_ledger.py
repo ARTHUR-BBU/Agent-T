@@ -87,31 +87,29 @@ class OwnedLLMLedger:
             now = time.time()
             ttl = self.jobs.owned.reviews.ttl_seconds
             cutoff = now - ttl if ttl else None
-            # codex 二轮公平性：孤儿（任务/审查行缺失或归属不一致）给预留
-            # 份额（1/4 窗口，至少 1）——普通积压持续占满窗口时孤儿不再
-            # 永远排不上；无孤儿时份额自然归还普通记录
-            orphan_budget = max(1, limit // 4)
+            # codex 三轮 P2-3：全局排序公平——孤儿与普通两类候选各取窗口
+            # 上限，按 started_at 全局排序后截取 limit（双向公平：limit=1
+            # 时谁更老谁先处理，任何一类都无法靠持续积压饿死另一类）
             orphans = conn.execute(
-                "SELECT a.id FROM owned_llm_attempts a WHERE a.outcome='pending' AND NOT EXISTS ("
+                "SELECT a.id,a.started_at FROM owned_llm_attempts a WHERE a.outcome='pending' AND NOT EXISTS ("
                 "SELECT 1 FROM owned_review_jobs j JOIN reviews r "
                 "ON r.id=j.review_id AND r.owner_user_id=j.owner_user_id "
                 "WHERE j.id=a.job_id) ORDER BY a.started_at,a.id LIMIT ?",
-                (orphan_budget,)).fetchall()
-            marked = 0
-            for row in orphans:
-                conn.execute("UPDATE owned_llm_attempts SET outcome='unknown',finished_at=? "
-                             "WHERE id=? AND outcome='pending'", (now, row["id"]))
-                marked += 1
-            rows = conn.execute("SELECT a.id FROM owned_llm_attempts a JOIN owned_review_jobs j ON j.id=a.job_id "
+                (limit,)).fetchall()
+            rows = conn.execute("SELECT a.id,a.started_at FROM owned_llm_attempts a JOIN owned_review_jobs j ON j.id=a.job_id "
                                 "JOIN reviews r ON r.id=j.review_id AND r.owner_user_id=j.owner_user_id "
                                 "WHERE a.outcome='pending' AND (j.status!='running' OR j.lease_until<=? "
                                 "OR (? IS NOT NULL AND r.created_at<=?) OR NOT EXISTS (SELECT 1 FROM account_sessions s "
                                 "JOIN account_users u ON u.id=s.user_id WHERE s.token_hash=j.session_hash "
                                 "AND s.user_id=j.owner_user_id AND s.expires_at>? AND u.active=1 AND u.must_change_password=0)) "
-                                "ORDER BY a.started_at,a.id LIMIT ?", (now, cutoff, cutoff, now, limit - marked)).fetchall()
-            for row in rows:
+                                "ORDER BY a.started_at,a.id LIMIT ?", (now, cutoff, cutoff, now, limit)).fetchall()
+            merged = sorted(
+                [(r["started_at"], r["id"]) for r in rows]
+                + [(r["started_at"], r["id"]) for r in orphans])
+            marked = 0
+            for _started_at, call_id in merged[:limit]:
                 conn.execute("UPDATE owned_llm_attempts SET outcome='unknown',finished_at=? WHERE id=? AND outcome='pending'",
-                             (now, row["id"]))
+                             (now, call_id))
                 marked += 1
             return marked
 

@@ -44,6 +44,15 @@ class _OwnershipMismatch(_QuarantinableRecord):
     pass
 
 
+# 孤儿任务删除前必须核对的级联子表（全部 REFERENCES owned_review_jobs
+# ON DELETE CASCADE）——codex 三轮 P2-4：预审声明/结果与 worker 声明
+# 同样是要保留的数据（分类/选择/预算/摘要），「没有调用账本」不等于
+# 「没有任何需要保留的信息」
+_ORPHAN_CHILD_TABLES = ("owned_llm_attempts", "owned_review_precheck_claims",
+                        "owned_review_precheck_results", "owned_review_worker_claims")
+_ORPHAN_CHILD_QUOTED = {name: '"' + name + '"' for name in _ORPHAN_CHILD_TABLES}
+
+
 _RESULT_FIELDS = frozenset({"items", "scorecard", "text", "text_preview", "policies", "completion", "error",
                             "document_version", "clause_index", "facts", "verify", "quality", "objections",
                             "blind_candidates", "blind_skipped_messages", "blind_skipped_reason", "blind_enabled",
@@ -249,14 +258,20 @@ class OwnedReviewJobs:
                     # FK 违例，不影响上传），审查内容一律不触碰。
                     conn.execute("ROLLBACK TO SAVEPOINT reap_one")
                     if isinstance(exc, _OrphanJob):
-                        # 账本表可能整个不存在（缺账本旧库）——无表=无证据
-                        _ledger_tbl = conn.execute(
-                            "SELECT 1 FROM sqlite_master WHERE type='table' "
-                            "AND name='owned_llm_attempts'").fetchone()
-                        has_attempts = bool(_ledger_tbl) and conn.execute(
-                            "SELECT 1 FROM owned_llm_attempts WHERE job_id=? LIMIT 1",
-                            (job["id"],)).fetchone() is not None
-                        if has_attempts:
+                        # codex 三轮 P2-4：核对全部级联子表（子表本身可能不
+                        # 存在——旧库无该功能；无表=无证据）。任一子表有行
+                        # → 保留任务行待离线迁移；全空才安全删除
+                        has_child_rows = False
+                        for child in _ORPHAN_CHILD_TABLES:
+                            _tbl = conn.execute(
+                                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                                (child,)).fetchone()
+                            if _tbl and conn.execute(
+                                f"SELECT 1 FROM {_ORPHAN_CHILD_QUOTED[child]} WHERE job_id=? LIMIT 1",
+                                (job["id"],)).fetchone() is not None:
+                                has_child_rows = True
+                                break
+                        if has_child_rows:
                             conn.execute("UPDATE owned_review_jobs SET status='failed' "
                                          "WHERE id=? AND status='running'", (job["id"],))
                             logger.error("账户任务恢复：孤儿任务 %s 带调用账本证据，"

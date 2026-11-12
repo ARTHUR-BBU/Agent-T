@@ -177,6 +177,11 @@ def create_migrated_copy(account_path: Path, review_path: Path, target_path: Pat
                 name for kind, name in ao if kind == "table"}
             if 0 < len(_validation_tables) < 3:
                 raise ValueError("规则验证控制/任务/结果表不完整，源库需离线迁移")
+            if "rule_validation_control" in _validation_tables:
+                # codex 三轮 P1-2：三表齐全但控制行（id=1）丢失同样拒绝——
+                # 目标库初始化会补出默认未阻断行，等同复活安全闸
+                if ac.execute("SELECT 1 FROM rule_validation_control WHERE id=1").fetchone() is None:
+                    raise ValueError("规则验证控制行缺失，源库需离线迁移")
             if ac.execute("PRAGMA foreign_key_check").fetchone():
                 raise ValueError("账户或规则关联无效")
             if ("table", "rule_versions") in ao:
