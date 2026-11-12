@@ -48,30 +48,35 @@ def recover_once() -> tuple[int, int]:
         ledger = None
     attempts = ledger.reconcile(limit=_LIMIT) if ledger is not None else 0
     stale = jobs.reap_stale(limit=_LIMIT)
-    # codex 二轮 P1-3 + 三轮 P2-5：两类残留分开报告——只有「任务行或
-    # 审查行确实缺失」才构成 SQLite 数据级 FK 违例（上传受阻）；归属
-    # 不一致（任务与审查都在但 owner 不同）不构成 FK 违例，上传不受阻，
-    # 只需核查。不给出未经验证的结论。
-    if ledger is not None:
-        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
-            _fk_orphans = conn.execute(
-                "SELECT COUNT(*) FROM owned_llm_attempts a WHERE NOT EXISTS ("
-                "SELECT 1 FROM owned_review_jobs j WHERE j.id=a.job_id) OR NOT EXISTS ("
-                "SELECT 1 FROM owned_review_jobs j2 JOIN reviews r ON r.id=j2.review_id "
-                "WHERE j2.id=a.job_id)").fetchone()[0]
+    # codex 二轮 P1-3 + 三轮 P2-5 + 四轮 P2-3/P2-4：报告三分类，不给未经
+    # 验证的结论——
+    # ① 真实外键违例（PRAGMA foreign_key_check 全表扫描：任务行缺失/审查行
+    #    缺失/**任务引用的账户已删除**等一切实际违例）→ 上传受阻，需离线迁移
+    # ② 账本归属不一致（任务与审查都在但 owner 不同，含 owner 为 NULL——
+    #    NULL 比较必须用 IS NOT，!= 会漏报）→ 不阻塞上传，需核查
+    # ③ 日志只记数量与类型，不含合同内容/凭证
+    # codex 四轮 P2-4：外键巡检不依赖账本是否存在——任务引用的账户被删
+    # 等违例发生在无账本行的库上同样要如实报告（这正是上版的漏报面）
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
+        _fk_violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        _has_ledger = "owned_llm_attempts" in {
+            row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        _owner_mismatch = 0
+        if _has_ledger:
             _owner_mismatch = conn.execute(
                 "SELECT COUNT(*) FROM owned_llm_attempts a "
                 "JOIN owned_review_jobs j ON j.id=a.job_id "
                 "JOIN reviews r ON r.id=j.review_id "
-                "WHERE r.owner_user_id != j.owner_user_id").fetchone()[0]
-        if _fk_orphans:
-            logger.error("账户任务恢复：账本存在 %d 行孤儿记录（证据保留），"
-                         "数据级外键违例未消除——该库上传暂受严格检查拦截，"
-                         "需离线迁移修复", _fk_orphans)
-        if _owner_mismatch:
-            logger.error("账户任务恢复：账本存在 %d 行归属不一致记录（审查行在但"
-                         "属于其他账户），不构成外键违例、上传不受阻——建议离线核查",
-                         _owner_mismatch)
+                "WHERE r.owner_user_id IS NOT j.owner_user_id").fetchone()[0]
+    _violation_tables = sorted({row[0] for row in _fk_violations})
+    if _violation_tables:
+        logger.error("账户任务恢复：数据级外键违例未消除（涉及表：%s）——"
+                     "该库上传暂受严格检查拦截，需离线迁移修复",
+                     ",".join(_violation_tables))
+    if _owner_mismatch:
+        logger.error("账户任务恢复：账本存在 %d 行归属不一致记录（含 owner 为空的"
+                     "情况），不构成外键违例、上传不受阻——建议离线核查",
+                     _owner_mismatch)
     return attempts, stale
 
 

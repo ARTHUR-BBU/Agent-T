@@ -570,3 +570,31 @@ def test_missing_control_row_gets_defensive_block_on_restart(setup):
     from app.services.rule_validation_guard import validation_blocked
     with accounts._connect() as conn:
         assert validation_blocked(conn) is True
+
+
+def test_concurrent_new_database_init_never_permanently_blocks(tmp_path):
+    """codex 四轮 P1-1：两个服务并发初始化真新库——原子事务串行化后
+    不得出现「blocked=1 防御行误插入→新库永久阻断」。"""
+    import threading
+
+    path = tmp_path / "accounts.sqlite"
+    AccountStore(path).bootstrap_admin("admin", "管理员", "testing-password-123")
+    barrier = threading.Barrier(2)
+    errors: list[Exception] = []
+
+    def build():
+        barrier.wait()
+        try:
+            RuleValidationService(AccountStore(path))
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    threads = [threading.Thread(target=build), threading.Thread(target=build)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert not errors, errors
+    with AccountStore(path)._connect() as conn:
+        row = conn.execute("SELECT blocked FROM rule_validation_control WHERE id=1").fetchone()
+        assert row is not None and row[0] == 0, "新库并发初始化不得永久误阻断"

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from typing import Any
 from contextlib import closing
 
 from app.services.account_store import AuthorizationError
@@ -103,9 +104,19 @@ class OwnedLLMLedger:
                                 "JOIN account_users u ON u.id=s.user_id WHERE s.token_hash=j.session_hash "
                                 "AND s.user_id=j.owner_user_id AND s.expires_at>? AND u.active=1 AND u.must_change_password=0)) "
                                 "ORDER BY a.started_at,a.id LIMIT ?", (now, cutoff, cutoff, now, limit)).fetchall()
+            # codex 四轮 P1-2：REAL 列并非严格类型——历史损坏数据可能存入
+            # 文本，Python 直接比较 str 与 float 抛 TypeError 炸整批恢复。
+            # 排序键类型安全化：数值按浮点排前，非数值排末尾（坏记录仍会被
+            # 收口，只是排在健康记录之后）；绝不因坏字段回滚整批。
+            def _sort_key(pair: tuple[Any, Any]) -> tuple[int, float, str]:
+                started_at, call_id = pair
+                if isinstance(started_at, (int, float)) and not isinstance(started_at, bool):
+                    return (0, float(started_at), str(call_id))
+                return (1, 0.0, str(started_at))
+
             merged = sorted(
                 [(r["started_at"], r["id"]) for r in rows]
-                + [(r["started_at"], r["id"]) for r in orphans])
+                + [(r["started_at"], r["id"]) for r in orphans], key=_sort_key)
             marked = 0
             for _started_at, call_id in merged[:limit]:
                 conn.execute("UPDATE owned_llm_attempts SET outcome='unknown',finished_at=? WHERE id=? AND outcome='pending'",

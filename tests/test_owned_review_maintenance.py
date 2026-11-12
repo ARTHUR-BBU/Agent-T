@@ -528,3 +528,79 @@ def test_recovery_logs_distinguish_fk_violation_from_ownership(jobs, monkeypatch
     # 同一条日志不得把两类混在一个结论里
     for line in messages:
         assert not ("孤儿记录" in line and "归属不一致" in line), "两类不得合并报告"
+
+
+def test_bad_started_at_text_does_not_abort_reconcile(jobs):  # noqa: F811
+    """codex 四轮 P1-2：REAL 列中的文本型 started_at（历史损坏）不得让
+    Python 排序抛 TypeError 炸整批——健康记录继续推进，坏记录排末尾
+    随后收口（外发结果未知语义不变）。"""
+    accounts, owned, service, admin, alice_user, alice, bob = jobs
+    ledger = OwnedLLMLedger(service)
+    r1, j1, s1 = service.create(bob, filename="健康记录", category="procurement")
+    healthy = ledger.begin(bob, j1, s1, node="quality", provider="zhipu", model="glm-5.2")
+    r2, j2, s2 = service.create(alice, filename="坏时间孤儿", category="procurement")
+    bad_call = ledger.begin(alice, j2, s2, node="quality", provider="zhipu", model="glm-5.2")
+    with accounts._connect() as conn:
+        conn.execute("UPDATE owned_llm_attempts SET started_at='bad' WHERE id=?", (bad_call,))
+        # 普通侧进入失效窗口
+        conn.execute("UPDATE owned_review_jobs SET lease_until=1 WHERE id=?", (j1,))
+    # PRAGMA 在已有事务的连接上是空操作——单独连接先关外键再删，
+    # 防级联吞掉孤儿任务行的调用记录
+    with accounts._connect() as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        with conn:
+            conn.execute("DELETE FROM owned_review_jobs WHERE id=?", (j2,))
+            conn.execute("DELETE FROM reviews WHERE id=?", (r2,))
+    # limit=1 双重验证：健康记录先推进（坏时间不炸批），坏记录随后收口
+    assert ledger.reconcile(limit=1) == 1
+    with accounts._connect() as conn:
+        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (healthy,)).fetchone()[0] == "unknown", \
+            "健康记录必须先推进（数值时间排序在前）"
+        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (bad_call,)).fetchone()[0] == "pending"
+    assert ledger.reconcile(limit=1) == 1, "坏记录排末尾但不饿死，随后收口"
+    with accounts._connect() as conn:
+        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (bad_call,)).fetchone()[0] == "unknown"
+
+
+def test_null_owner_mismatch_is_reported(jobs, monkeypatch, caplog):  # noqa: F811
+    """codex 四轮 P2-3：审查行 owner 为 NULL 时，归属不一致（IS NOT 语义）
+    必须被报告（!= 会漏报 NULL）；且不构成 FK 违例——不得报上传受阻。"""
+    import logging
+    accounts, owned, service, admin, alice_user, alice, _ = jobs
+    ledger = OwnedLLMLedger(service)
+    rid, job, secret = service.create(alice, filename="NULL归属", category="procurement")
+    ledger.begin(alice, job, secret, node="quality", provider="zhipu", model="glm-5.2")
+    with accounts._connect() as conn:
+        conn.execute("UPDATE reviews SET owner_user_id=NULL WHERE id=?", (rid,))
+    monkeypatch.setattr(maintenance, "_database_path", lambda: accounts.path)
+    monkeypatch.setattr(maintenance, "ReviewStore", lambda _p: owned.reviews)
+    with caplog.at_level(logging.ERROR, logger="app.services.owned_review_maintenance"):
+        maintenance.recover_once()
+    joined = "\n".join(r.getMessage() for r in caplog.records
+                       if r.name == "app.services.owned_review_maintenance")
+    assert "归属不一致" in joined, "NULL owner 的归属不一致必须被报告（IS NOT 语义）"
+    assert "上传暂受严格检查拦截" not in joined, "NULL owner 不构成 FK 违例，不得报上传受阻"
+
+
+def test_missing_account_violation_is_reported(jobs, monkeypatch, caplog):  # noqa: F811
+    """codex 四轮 P2-4：任务引用的账户行消失（任务/审查 owner 相同但账户
+    已不在）→ 真实外键违例必须如实报告上传受阻（日志只含表名，不含
+    合同内容/凭证）。"""
+    import logging
+    accounts, owned, service, admin, alice_user, alice, _ = jobs
+    rid, job, _ = service.create(alice, filename="账户缺失", category="procurement")
+    with accounts._connect() as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        with conn:
+            conn.execute("DELETE FROM account_users WHERE id=?", (alice_user["id"],))
+    monkeypatch.setattr(maintenance, "_database_path", lambda: accounts.path)
+    monkeypatch.setattr(maintenance, "ReviewStore", lambda _p: owned.reviews)
+    with caplog.at_level(logging.ERROR, logger="app.services.owned_review_maintenance"):
+        maintenance.recover_once()  # 恢复正常完成；违例经 foreign_key_check 探测进日志
+    joined = "\n".join(r.getMessage() for r in caplog.records
+                       if r.name == "app.services.owned_review_maintenance")
+    assert "外键违例" in joined, "缺账户的真实违例必须如实报告"
+    assert "上传暂受严格检查拦截" in joined, "真实违例必须如实提示上传受阻"
+    for line in joined.splitlines():
+        assert "违约金" not in line and "合同" not in line.replace("账户任务恢复：", ""), \
+            "日志不得包含合同内容"

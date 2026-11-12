@@ -22,70 +22,79 @@ from app.services.rule_submission import RuleSubmissionService
 _VALIDATION_SLOTS = threading.BoundedSemaphore(1)
 
 
+_VALIDATION_DDL = (
+    """CREATE TABLE IF NOT EXISTS rule_validation_results (
+        id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES rule_candidates(id),
+        candidate_sha256 TEXT NOT NULL, base_generation INTEGER NOT NULL,
+        actor_id TEXT NOT NULL REFERENCES account_users(id), created_at REAL NOT NULL,
+        result_json TEXT NOT NULL
+    )""",
+    """CREATE TABLE IF NOT EXISTS rule_validation_jobs (
+        id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES rule_candidates(id),
+        actor_id TEXT NOT NULL REFERENCES account_users(id), status TEXT NOT NULL,
+        started_at REAL NOT NULL, lease_until REAL NOT NULL, result_id TEXT,
+        CHECK(status IN ('running','completed','failed','abandoned'))
+    )""",
+    """CREATE TABLE IF NOT EXISTS rule_validation_control (
+        id INTEGER PRIMARY KEY CHECK(id=1), blocked INTEGER NOT NULL CHECK(blocked IN (0,1)),
+        reason TEXT NOT NULL, updated_at REAL NOT NULL, last_job_id TEXT
+    )""",
+    """CREATE TRIGGER IF NOT EXISTS validation_control_no_delete BEFORE DELETE ON rule_validation_control
+    BEGIN SELECT RAISE(ABORT, 'validation control is retained'); END""",
+    """CREATE TRIGGER IF NOT EXISTS validation_control_no_online_reset BEFORE UPDATE ON rule_validation_control
+    WHEN OLD.blocked=1 AND NEW.blocked=0
+    BEGIN SELECT RAISE(ABORT, 'validation control requires offline recovery'); END""",
+    """CREATE UNIQUE INDEX IF NOT EXISTS one_running_rule_validation
+        ON rule_validation_jobs ((1)) WHERE status='running'""",
+    """CREATE TRIGGER IF NOT EXISTS validation_job_no_delete BEFORE DELETE ON rule_validation_jobs
+    BEGIN SELECT RAISE(ABORT, 'validation jobs are retained'); END""",
+    """CREATE TRIGGER IF NOT EXISTS validation_job_no_replace BEFORE INSERT ON rule_validation_jobs
+    WHEN EXISTS (SELECT 1 FROM rule_validation_jobs WHERE id=NEW.id)
+    BEGIN SELECT RAISE(ABORT, 'validation jobs are retained'); END""",
+    """CREATE TRIGGER IF NOT EXISTS validation_job_valid_insert BEFORE INSERT ON rule_validation_jobs
+    WHEN NEW.status != 'running' OR NEW.result_id IS NOT NULL OR
+         EXISTS (SELECT 1 FROM rule_validation_jobs WHERE status='running')
+    BEGIN SELECT RAISE(ABORT, 'invalid or concurrent validation job'); END""",
+    """CREATE TRIGGER IF NOT EXISTS validation_job_transition BEFORE UPDATE ON rule_validation_jobs
+    WHEN OLD.status != 'running' OR NEW.status NOT IN ('completed','failed','abandoned') OR
+         NEW.id != OLD.id OR NEW.candidate_id != OLD.candidate_id OR NEW.actor_id != OLD.actor_id OR
+         NEW.started_at != OLD.started_at OR NEW.lease_until != OLD.lease_until OR
+         (NEW.status = 'completed' AND (NEW.result_id IS NULL OR NOT EXISTS (
+             SELECT 1 FROM rule_validation_results WHERE id=NEW.result_id AND candidate_id=NEW.candidate_id
+         ))) OR
+         (NEW.status != 'completed' AND NEW.result_id IS NOT NULL)
+    BEGIN SELECT RAISE(ABORT, 'invalid validation job transition'); END""",
+    """CREATE TRIGGER IF NOT EXISTS validation_no_update BEFORE UPDATE ON rule_validation_results
+    BEGIN SELECT RAISE(ABORT, 'validation results are append-only'); END""",
+    """CREATE TRIGGER IF NOT EXISTS validation_no_delete BEFORE DELETE ON rule_validation_results
+    BEGIN SELECT RAISE(ABORT, 'validation results are append-only'); END""",
+    """CREATE TRIGGER IF NOT EXISTS validation_no_replace BEFORE INSERT ON rule_validation_results
+    WHEN EXISTS (SELECT 1 FROM rule_validation_results WHERE id=NEW.id)
+    BEGIN SELECT RAISE(ABORT, 'validation results are append-only'); END""",
+)
+
+
+
 class RuleValidationService:
     def __init__(self, accounts: AccountStore) -> None:
         self.accounts = accounts
         self.submissions = RuleSubmissionService(accounts)
         with closing(accounts._connect()) as conn, conn:
-            # codex 三轮 P1-1：区分「真新库」与「已有但不完整的验证结构」——
-            # 损坏库（三表部分缺失）不得借初始化把安全闸重建为可用（blocked=0）
+            # codex 三轮 P1-1 + 四轮 P1-1：初始检查、建表、控制行建立必须在
+            # **同一个写事务**内（BEGIN IMMEDIATE 串行化并发构造）——此前
+            # executescript 隐式提交拆散了事务：并发构造者 A 建完表未插控制行
+            # 时，B 看到「表齐全但控制行缺失」插入 blocked=1，新库被永久误阻断。
+            # executescript 会隐式提交不能包事务，改为逐条 execute（_VALIDATION_DDL）。
+            # 损坏库（三表部分缺失）仍 fail-closed 拒绝，绝不把安全闸补成可用。
+            conn.execute("BEGIN IMMEDIATE")
             _names = {row[0] for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
                 "('rule_validation_control','rule_validation_jobs','rule_validation_results')")}
             if _names and len(_names) < 3:
                 raise RuntimeError("规则验证结构不完整（控制/任务/结果表部分缺失），需要离线迁移")
             _had_control = "rule_validation_control" in _names
-            conn.executescript("""
-                CREATE TABLE IF NOT EXISTS rule_validation_results (
-                    id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES rule_candidates(id),
-                    candidate_sha256 TEXT NOT NULL, base_generation INTEGER NOT NULL,
-                    actor_id TEXT NOT NULL REFERENCES account_users(id), created_at REAL NOT NULL,
-                    result_json TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS rule_validation_jobs (
-                    id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES rule_candidates(id),
-                    actor_id TEXT NOT NULL REFERENCES account_users(id), status TEXT NOT NULL,
-                    started_at REAL NOT NULL, lease_until REAL NOT NULL, result_id TEXT,
-                    CHECK(status IN ('running','completed','failed','abandoned'))
-                );
-                CREATE TABLE IF NOT EXISTS rule_validation_control (
-                    id INTEGER PRIMARY KEY CHECK(id=1), blocked INTEGER NOT NULL CHECK(blocked IN (0,1)),
-                    reason TEXT NOT NULL, updated_at REAL NOT NULL, last_job_id TEXT
-                );
-                CREATE TRIGGER IF NOT EXISTS validation_control_no_delete BEFORE DELETE ON rule_validation_control
-                BEGIN SELECT RAISE(ABORT, 'validation control is retained'); END;
-                CREATE TRIGGER IF NOT EXISTS validation_control_no_online_reset BEFORE UPDATE ON rule_validation_control
-                WHEN OLD.blocked=1 AND NEW.blocked=0
-                BEGIN SELECT RAISE(ABORT, 'validation control requires offline recovery'); END;
-                CREATE UNIQUE INDEX IF NOT EXISTS one_running_rule_validation
-                    ON rule_validation_jobs ((1)) WHERE status='running';
-                CREATE TRIGGER IF NOT EXISTS validation_job_no_delete BEFORE DELETE ON rule_validation_jobs
-                BEGIN SELECT RAISE(ABORT, 'validation jobs are retained'); END;
-                CREATE TRIGGER IF NOT EXISTS validation_job_no_replace BEFORE INSERT ON rule_validation_jobs
-                WHEN EXISTS (SELECT 1 FROM rule_validation_jobs WHERE id=NEW.id)
-                BEGIN SELECT RAISE(ABORT, 'validation jobs are retained'); END;
-                CREATE TRIGGER IF NOT EXISTS validation_job_valid_insert BEFORE INSERT ON rule_validation_jobs
-                WHEN NEW.status != 'running' OR NEW.result_id IS NOT NULL OR
-                     EXISTS (SELECT 1 FROM rule_validation_jobs WHERE status='running')
-                BEGIN SELECT RAISE(ABORT, 'invalid or concurrent validation job'); END;
-                CREATE TRIGGER IF NOT EXISTS validation_job_transition BEFORE UPDATE ON rule_validation_jobs
-                WHEN OLD.status != 'running' OR NEW.status NOT IN ('completed','failed','abandoned') OR
-                     NEW.id != OLD.id OR NEW.candidate_id != OLD.candidate_id OR NEW.actor_id != OLD.actor_id OR
-                     NEW.started_at != OLD.started_at OR NEW.lease_until != OLD.lease_until OR
-                     (NEW.status = 'completed' AND (NEW.result_id IS NULL OR NOT EXISTS (
-                         SELECT 1 FROM rule_validation_results WHERE id=NEW.result_id AND candidate_id=NEW.candidate_id
-                     ))) OR
-                     (NEW.status != 'completed' AND NEW.result_id IS NOT NULL)
-                BEGIN SELECT RAISE(ABORT, 'invalid validation job transition'); END;
-                CREATE TRIGGER IF NOT EXISTS validation_no_update BEFORE UPDATE ON rule_validation_results
-                BEGIN SELECT RAISE(ABORT, 'validation results are append-only'); END;
-                CREATE TRIGGER IF NOT EXISTS validation_no_delete BEFORE DELETE ON rule_validation_results
-                BEGIN SELECT RAISE(ABORT, 'validation results are append-only'); END;
-                CREATE TRIGGER IF NOT EXISTS validation_no_replace BEFORE INSERT ON rule_validation_results
-                WHEN EXISTS (SELECT 1 FROM rule_validation_results WHERE id=NEW.id)
-                BEGIN SELECT RAISE(ABORT, 'validation results are append-only'); END;
-            """)
-            conn.execute("BEGIN IMMEDIATE")
+            for _ddl in _VALIDATION_DDL:
+                conn.execute(_ddl)
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(rule_validation_control)")}
             if "last_job_id" not in columns:
                 conn.execute("ALTER TABLE rule_validation_control ADD COLUMN last_job_id TEXT")
