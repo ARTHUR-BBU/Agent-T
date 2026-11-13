@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Any
 from contextlib import closing
 
 from app.services.account_store import AuthorizationError
@@ -88,51 +87,56 @@ class OwnedLLMLedger:
             now = time.time()
             ttl = self.jobs.owned.reviews.ttl_seconds
             cutoff = now - ttl if ttl else None
-            # codex 三轮 P2-3 + 五轮 P2-2：两阶段公平——
-            # ①坏时间记录（REAL 列存入文本的历史损伤，有限存量）优先预留
-            #   份额（最多 1/4 窗口，至少 1）：保证持续正常流量下也能最终
-            #   收口为 unknown，同时不占满整个窗口饿死健康记录
-            # ②其余候选（数值时间）按 started_at 全局排序截取——limit=1
-            #   小窗口双向公平（谁更老谁先），持续积压无法饿死任何一类
-            # SQL 各自的 LIMIT 都取窗口上限（不预截），合并阶段统一截取
-            orphans = conn.execute(
-                "SELECT a.id,a.started_at,a.rowid FROM owned_llm_attempts a WHERE a.outcome='pending' AND NOT EXISTS ("
-                "SELECT 1 FROM owned_review_jobs j JOIN reviews r "
-                "ON r.id=j.review_id AND r.owner_user_id=j.owner_user_id "
-                "WHERE j.id=a.job_id) ORDER BY a.started_at,a.id LIMIT ?",
-                (limit,)).fetchall()
-            rows = conn.execute("SELECT a.id,a.started_at FROM owned_llm_attempts a JOIN owned_review_jobs j ON j.id=a.job_id "
-                                "JOIN reviews r ON r.id=j.review_id AND r.owner_user_id=j.owner_user_id "
-                                "WHERE a.outcome='pending' AND (j.status!='running' OR j.lease_until<=? "
-                                "OR (? IS NOT NULL AND r.created_at<=?) OR NOT EXISTS (SELECT 1 FROM account_sessions s "
-                                "JOIN account_users u ON u.id=s.user_id WHERE s.token_hash=j.session_hash "
-                                "AND s.user_id=j.owner_user_id AND s.expires_at>? AND u.active=1 AND u.must_change_password=0)) "
-                                "ORDER BY a.started_at,a.id LIMIT ?", (now, cutoff, cutoff, now, limit)).fetchall()
-
-            def _is_bad_time(value: Any) -> bool:
-                return not isinstance(value, (int, float)) or isinstance(value, bool)
-
-            bad_candidates = sorted(
-                [r for r in orphans if _is_bad_time(r["started_at"])]
-                + [r for r in rows if _is_bad_time(r["started_at"])],
-                key=lambda r: (r["rowid"] if "rowid" in r.keys() else 0, r["id"]))
-            reserved = min(len(bad_candidates), max(1, (limit + 3) // 4))
-            take_bad = bad_candidates[:reserved]
-
-            numeric = sorted(
-                [(r["started_at"], r["id"]) for r in orphans + rows
-                 if not _is_bad_time(r["started_at"])])
-            take_rest = numeric[:limit - len(take_bad)]
-
+            # codex 三轮 P2-3 + 五轮 P2-2 + 六轮 P1：公平必须在 **SQL 截断
+            # 之前**保证——此前两路查询按 started_at 排序加 LIMIT，SQLite 把
+            # 数值排在文本之前，同分支正常记录足够多时坏时间行根本进不了
+            # Python 候选集，预留名额形同虚设（六轮复现）。现在三路独立
+            # 选取，各自不受其他类别干扰：
+            # ①坏时间候选（typeof 非 real，两分支合并）独立预留份额
+            #   （1/4 窗口至少 1）——损伤存量有限，优先清走；
+            # ②数值孤儿与 ③数值普通失效各自 LIMIT 剩余窗口，合并按时间
+            #   全局排序截取——小窗口双向公平。
+            _reserved_share = max(1, (limit + 3) // 4)
+            _HEALTHY_JOIN = ("SELECT 1 FROM owned_review_jobs j JOIN reviews r "
+                             "ON r.id=j.review_id AND r.owner_user_id=j.owner_user_id "
+                             "WHERE j.id=a.job_id")
+            _STALE_COND = ("(j2.status!='running' OR j2.lease_until<=? OR (? IS NOT NULL AND r2.created_at<=?) "
+                           "OR NOT EXISTS (SELECT 1 FROM account_sessions s JOIN account_users u ON u.id=s.user_id "
+                           "WHERE s.token_hash=j2.session_hash AND s.user_id=j2.owner_user_id AND s.expires_at>? "
+                           "AND u.active=1 AND u.must_change_password=0))")
+            bad_rows = conn.execute(
+                "SELECT a.id,a.rowid FROM owned_llm_attempts a WHERE a.outcome='pending' "
+                "AND typeof(a.started_at) NOT IN ('integer','real') AND ("
+                "NOT EXISTS (" + _HEALTHY_JOIN + ") OR EXISTS ("
+                "SELECT 1 FROM owned_review_jobs j2 JOIN reviews r2 "
+                "ON r2.id=j2.review_id AND r2.owner_user_id=j2.owner_user_id "
+                "WHERE j2.id=a.job_id AND " + _STALE_COND + ")) "
+                "ORDER BY a.rowid LIMIT ?", (now, cutoff, cutoff, now, _reserved_share)).fetchall()
+            take_bad = bad_rows[:_reserved_share]
+            remaining = limit - len(take_bad)
             marked = 0
-            for _, call_id in take_rest:
-                conn.execute("UPDATE owned_llm_attempts SET outcome='unknown',finished_at=? WHERE id=? AND outcome='pending'",
-                             (now, call_id))
-                marked += 1
             for r in take_bad:
                 conn.execute("UPDATE owned_llm_attempts SET outcome='unknown',finished_at=? WHERE id=? AND outcome='pending'",
                              (now, r["id"]))
                 marked += 1
+            if remaining > 0:
+                numeric_orphans = conn.execute(
+                    "SELECT a.id,a.started_at FROM owned_llm_attempts a WHERE a.outcome='pending' "
+                    "AND typeof(a.started_at) IN ('integer','real') AND NOT EXISTS ("
+                    + _HEALTHY_JOIN + ") ORDER BY a.started_at,a.id LIMIT ?", (remaining,)).fetchall()
+                numeric_normal = conn.execute(
+                    "SELECT a.id,a.started_at FROM owned_llm_attempts a JOIN owned_review_jobs j ON j.id=a.job_id "
+                    "JOIN reviews r ON r.id=j.review_id AND r.owner_user_id=j.owner_user_id "
+                    "WHERE a.outcome='pending' AND typeof(a.started_at) IN ('integer','real') AND (j.status!='running' "
+                    "OR j.lease_until<=? OR (? IS NOT NULL AND r.created_at<=?) OR NOT EXISTS (SELECT 1 FROM account_sessions s "
+                    "JOIN account_users u ON u.id=s.user_id WHERE s.token_hash=j.session_hash "
+                    "AND s.user_id=j.owner_user_id AND s.expires_at>? AND u.active=1 AND u.must_change_password=0)) "
+                    "ORDER BY a.started_at,a.id LIMIT ?", (now, cutoff, cutoff, now, remaining)).fetchall()
+                numeric = sorted([(r["started_at"], r["id"]) for r in numeric_orphans + numeric_normal])
+                for _, call_id in numeric[:remaining]:
+                    conn.execute("UPDATE owned_llm_attempts SET outcome='unknown',finished_at=? WHERE id=? AND outcome='pending'",
+                                 (now, call_id))
+                    marked += 1
             return marked
 
     def settle_business(self, token: str, job_id: str, worker_secret: str, call_id: str, *, outcome: str) -> None:

@@ -420,3 +420,25 @@ def test_migration_rejects_missing_control_row(source_databases, tmp_path):
     with pytest.raises(ValueError, match="控制行缺失"):
         create_migrated_copy(account_path, review_path, tmp_path / "new.sqlite",
                              maintenance_confirmed=True)
+
+
+def test_intermediate_ddl_format_is_rejected_boundary(source_databases, tmp_path):
+    """codex 六轮 P2-3 边界声明：38fcd55 中间实验版 DDL（空白格式不同的
+    等价结构）**不在迁移支持范围**——严格逐字比对如实拒绝，需离线按
+    当前文本重建后再迁移。本测试锁定该边界（拒绝而非静默放行）。"""
+    account_path, review_path, token, _, _, _ = source_databases
+    from app.services.rule_validation_service import RuleValidationService
+    RuleValidationService(AccountStore(account_path))  # 三表建全（当前文本）
+    with sqlite3.connect(account_path) as conn:
+        # 用空白格式不同的等价 DDL 重建控制表（模拟 38fcd55 中间实验版格式）
+        conn.execute("DROP TABLE rule_validation_control")
+        conn.execute(
+            "CREATE TABLE rule_validation_control (id INTEGER PRIMARY KEY CHECK(id=1),"
+            "blocked INTEGER NOT NULL CHECK(blocked IN (0, 1)),reason TEXT NOT NULL,"
+            "updated_at REAL NOT NULL,last_job_id TEXT)")
+        conn.execute("INSERT INTO rule_validation_control (id,blocked,reason,updated_at) "
+                     "VALUES (1,0,'',0)")
+    target = tmp_path / "new.sqlite"
+    with pytest.raises(ValueError, match="源数据库结构不受支持"):
+        create_migrated_copy(account_path, review_path, target, maintenance_confirmed=True)
+    assert not target.exists()

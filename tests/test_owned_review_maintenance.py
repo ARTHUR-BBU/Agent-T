@@ -608,6 +608,224 @@ def test_missing_account_violation_is_reported(jobs, monkeypatch, caplog):  # no
             "日志不得包含合同内容"
 
 
+def test_bad_time_candidate_survives_sql_cutoff_both_branches(jobs):  # noqa: F811
+    """codex 六轮 P1：SQL 截断前单独选取坏时间候选——同一分支持续加入
+    真实 begin() 的正常 pending（占满 SQL 排序窗口）时，坏时间记录仍按
+    预留份额收口；普通分支与孤儿分支分别验证。"""
+    accounts, owned, service, admin, alice_user, alice, bob = jobs
+    ledger = OwnedLLMLedger(service)
+
+    def mark_unknown(call_id: str) -> bool:
+        with accounts._connect() as conn:
+            row = conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?",
+                               (call_id,)).fetchone()
+        return row is not None and row[0] == "unknown"
+
+    # ── 场景A：普通分支——坏时间 attempt 挂在租约过期的任务上（审查行在），
+    # 同分支每轮持续加入真实 begin() 的正常 pending 占满 SQL 窗口
+    ra, ja, sa = service.create(bob, filename="普通分支坏时间", category="procurement")
+    bad_normal = ledger.begin(bob, ja, sa, node="quality", provider="zhipu", model="glm-5.2")
+    with accounts._connect() as conn:
+        conn.execute("UPDATE owned_llm_attempts SET started_at='bad' WHERE id=?", (bad_normal,))
+        conn.execute("UPDATE owned_review_jobs SET lease_until=1 WHERE id=?", (ja,))
+    for _round in range(3):
+        r, j, s = service.create(bob, filename=f"普通流量{ _round }", category="procurement")
+        ledger.begin(bob, j, s, node="quality", provider="zhipu", model="glm-5.2")
+        conn_ts = 100000 + _round
+        with accounts._connect() as conn:
+            conn.execute("UPDATE owned_llm_attempts SET started_at=? WHERE job_id=?",
+                         (conn_ts, j))
+            conn.execute("UPDATE owned_review_jobs SET lease_until=1 WHERE id=?", (j,))
+        ledger.reconcile(limit=1)
+        if mark_unknown(bad_normal):
+            break
+    assert mark_unknown(bad_normal), "普通分支：持续正常 pending 下坏时间仍须按预留份额收口"
+
+    # ── 场景B：孤儿分支——坏时间 attempt 的任务行已消失，同分支持续加入
+    # 数值时间的孤儿 pending 占满 SQL 窗口
+    ro, jo, so = service.create(alice, filename="孤儿分支坏时间", category="procurement")
+    bad_orphan = ledger.begin(alice, jo, so, node="quality", provider="zhipu", model="glm-5.2")
+    # 制造真孤儿：任务行+审查行消失（attempt 行保留且 started_at 为文本）
+    with accounts._connect() as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        with conn:
+            conn.execute("DELETE FROM owned_review_jobs WHERE id=?", (jo,))
+            conn.execute("DELETE FROM reviews WHERE id=?", (ro,))
+    with accounts._connect() as conn:
+        conn.execute("UPDATE owned_llm_attempts SET started_at='bad' WHERE id=?", (bad_orphan,))
+    for _round in range(3):
+        r, j, s = service.create(alice, filename=f"孤儿流量{ _round }", category="procurement")
+        ledger.begin(alice, j, s, node="quality", provider="zhipu", model="glm-5.2")
+        with accounts._connect() as conn:
+            conn.execute("UPDATE owned_llm_attempts SET started_at=? WHERE job_id=?",
+                         (200000 + _round, j))
+        # PRAGMA 在已有事务的连接上是空操作——单独连接先关外键再删
+        with accounts._connect() as conn:
+            conn.execute("PRAGMA foreign_keys=OFF")
+            with conn:
+                conn.execute("DELETE FROM owned_review_jobs WHERE id=?", (j,))
+                conn.execute("DELETE FROM reviews WHERE id=?", (r,))
+        ledger.reconcile(limit=1)
+        if mark_unknown(bad_orphan):
+            break
+    assert mark_unknown(bad_orphan), "孤儿分支：持续孤儿 pending 下坏时间仍须按预留份额收口"
+
+
+
+def _child_tables_ready(accounts, job_id, *, with_precheck: bool) -> None:
+    """给任务行挂一条预审结果子记录（模拟 codex P2-4 的非账本级联数据）。"""
+    import time as _time
+    with accounts._connect() as conn:
+        conn.execute(
+            "INSERT INTO owned_review_precheck_claims (job_id, created_at) VALUES (?,?)",
+            (job_id, _time.time()))
+        if with_precheck:
+            conn.execute(
+                "INSERT INTO owned_review_precheck_results (job_id,state,original_category,"
+                "original_stance,choices_json,versions_json,input_sha256,input_kind,"
+                "summary,suspect,performed,precheck_performed,precheck_skip_reason,"
+                "suggestion_performed,required_confirmation,created_at) VALUES ("
+                "?, 'ready','procurement','neutral','[]','[]','abc','file',"
+                "'摘要',0,1,0,NULL,0,0,?)", (job_id, _time.time()))
+
+
+def test_orphan_with_precheck_evidence_kept(jobs):  # noqa: F811
+    """codex 三轮 P2-4：孤儿任务带预审声明/结果（无账本行）→ 保留任务行
+    待离线迁移，预审数据（分类/选择/预算/摘要）不随删除丢失。"""
+    accounts, owned, service, admin, alice_user, alice, _ = jobs
+    rid, job, _ = service.create(alice, filename="带预审孤儿", category="procurement")
+    # 建预审子表并挂记录（本库此前未用到预审功能）
+    from app.services.owned_review_precheck import _CLAIM_SCHEMA, _RESULT_SCHEMA
+    with accounts._connect() as conn:
+        conn.execute(_CLAIM_SCHEMA)
+        conn.execute(_RESULT_SCHEMA)
+    _child_tables_ready(accounts, job, with_precheck=True)
+    accounts.set_active(admin, alice_user["id"], False)
+    with accounts._connect() as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("DELETE FROM reviews WHERE id=?", (rid,))
+    assert service.reap_stale() == 0
+    with accounts._connect() as conn:
+        assert conn.execute("SELECT status FROM owned_review_jobs WHERE id=?", (job,)).fetchone()[0] == "failed"
+        kept = conn.execute("SELECT job_id FROM owned_review_precheck_results WHERE job_id=?", (job,)).fetchone()
+        assert kept is not None, "预审结果必须保留（不随孤儿任务删除）"
+
+
+def test_recovery_logs_distinguish_fk_violation_from_ownership(jobs, monkeypatch, caplog):  # noqa: F811
+    """codex 三轮 P2-5：FK 违例报「上传受阻」；归属不一致报「需核查、
+    不受阻」——两类分开，日志不给出未经验证的结论。"""
+    import logging
+    accounts, owned, service, admin, alice_user, alice, _ = jobs
+    from app.services.owned_llm_ledger import OwnedLLMLedger
+    ledger = OwnedLLMLedger(service)
+    # 归属不一致一条（任务+审查都在，owner 漂移）
+    rid1, job1, s1 = service.create(alice, filename="归属不一致", category="procurement")
+    ledger.begin(alice, job1, s1, node="quality", provider="zhipu", model="glm-5.2")  # 归属不一致调用
+    bobby_user = [u for u in accounts.list_users(admin) if u["username"] == "bobby"][0]
+    with accounts._connect() as conn:
+        conn.execute("UPDATE reviews SET owner_user_id=? WHERE id=?", (bobby_user["id"], rid1))
+    # FK 违例一条（审查行缺失）
+    rid2, job2, s2 = service.create(alice, filename="真孤儿", category="procurement")
+    fk_call = ledger.begin(alice, job2, s2, node="quality", provider="zhipu", model="glm-5.2")
+    with accounts._connect() as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("DELETE FROM owned_llm_attempts WHERE id=?", (fk_call,))
+        conn.execute("INSERT INTO owned_llm_attempts (id,job_id,node,provider,model,outcome,started_at) "
+                     "VALUES ('fk-orphan-x',?, 'quality','zhipu','glm-5.2','pending',1)", (job2,))
+        conn.execute("DELETE FROM reviews WHERE id=?", (rid2,))
+    accounts.set_active(admin, alice_user["id"], False)
+    monkeypatch.setattr(maintenance, "_database_path", lambda: accounts.path)
+    monkeypatch.setattr(maintenance, "ReviewStore", lambda _p: owned.reviews)
+    with caplog.at_level(logging.ERROR, logger="app.services.owned_review_maintenance"):
+        maintenance.recover_once()
+    messages = [r.getMessage() for r in caplog.records
+                if r.name == "app.services.owned_review_maintenance"]
+    joined = "\n".join(messages)
+    assert "上传相关检查将拒绝" in joined, "真 FK 违例必须报上传受阻（新口径）"
+    assert "数据库存在外键违例" in joined, "事实层（涉及表）单独成行"
+    assert "不构成外键违例" in joined and "归属不一致" in joined, "归属不一致必须单独报需核查"
+    # 同一条日志不得把两类混在一个结论里
+    for line in messages:
+        assert not ("孤儿记录" in line and "归属不一致" in line), "两类不得合并报告"
+
+
+def test_bad_started_at_text_does_not_abort_reconcile(jobs):  # noqa: F811
+    """codex 四轮 P1-2：REAL 列中的文本型 started_at（历史损坏）不得让
+    Python 排序抛 TypeError 炸整批——健康记录继续推进，坏记录排末尾
+    随后收口（外发结果未知语义不变）。"""
+    accounts, owned, service, admin, alice_user, alice, bob = jobs
+    ledger = OwnedLLMLedger(service)
+    r1, j1, s1 = service.create(bob, filename="健康记录", category="procurement")
+    healthy = ledger.begin(bob, j1, s1, node="quality", provider="zhipu", model="glm-5.2")
+    r2, j2, s2 = service.create(alice, filename="坏时间孤儿", category="procurement")
+    bad_call = ledger.begin(alice, j2, s2, node="quality", provider="zhipu", model="glm-5.2")
+    with accounts._connect() as conn:
+        conn.execute("UPDATE owned_llm_attempts SET started_at='bad' WHERE id=?", (bad_call,))
+        # 普通侧进入失效窗口
+        conn.execute("UPDATE owned_review_jobs SET lease_until=1 WHERE id=?", (j1,))
+    # PRAGMA 在已有事务的连接上是空操作——单独连接先关外键再删，
+    # 防级联吞掉孤儿任务行的调用记录
+    with accounts._connect() as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        with conn:
+            conn.execute("DELETE FROM owned_review_jobs WHERE id=?", (j2,))
+            conn.execute("DELETE FROM reviews WHERE id=?", (r2,))
+    # limit=1 双重验证（预留份额语义，codex 五轮 P2-2）：损伤存量优先
+    # 清走——坏时间记录占预留份额先收口，健康记录随后推进；两类都不饿死
+    assert ledger.reconcile(limit=1) == 1
+    with accounts._connect() as conn:
+        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (bad_call,)).fetchone()[0] == "unknown", \
+            "坏时间记录占预留份额先收口（损伤存量有限，优先清走）"
+        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (healthy,)).fetchone()[0] == "pending"
+    assert ledger.reconcile(limit=1) == 1, "健康记录随后推进"
+    with accounts._connect() as conn:
+        assert conn.execute("SELECT outcome FROM owned_llm_attempts WHERE id=?", (healthy,)).fetchone()[0] == "unknown"
+
+
+def test_null_owner_mismatch_is_reported(jobs, monkeypatch, caplog):  # noqa: F811
+    """codex 四轮 P2-3：审查行 owner 为 NULL 时，归属不一致（IS NOT 语义）
+    必须被报告（!= 会漏报 NULL）；且不构成 FK 违例——不得报上传受阻。"""
+    import logging
+    accounts, owned, service, admin, alice_user, alice, _ = jobs
+    ledger = OwnedLLMLedger(service)
+    rid, job, secret = service.create(alice, filename="NULL归属", category="procurement")
+    ledger.begin(alice, job, secret, node="quality", provider="zhipu", model="glm-5.2")
+    with accounts._connect() as conn:
+        conn.execute("UPDATE reviews SET owner_user_id=NULL WHERE id=?", (rid,))
+    monkeypatch.setattr(maintenance, "_database_path", lambda: accounts.path)
+    monkeypatch.setattr(maintenance, "ReviewStore", lambda _p: owned.reviews)
+    with caplog.at_level(logging.ERROR, logger="app.services.owned_review_maintenance"):
+        maintenance.recover_once()
+    joined = "\n".join(r.getMessage() for r in caplog.records
+                       if r.name == "app.services.owned_review_maintenance")
+    assert "归属不一致" in joined, "NULL owner 的归属不一致必须被报告（IS NOT 语义）"
+    assert "上传相关检查将拒绝" not in joined, "NULL owner 不构成 FK 违例，不得报上传受阻"
+
+
+def test_missing_account_violation_is_reported(jobs, monkeypatch, caplog):  # noqa: F811
+    """codex 四轮 P2-4：任务引用的账户行消失（任务/审查 owner 相同但账户
+    已不在）→ 真实外键违例必须如实报告上传受阻（日志只含表名，不含
+    合同内容/凭证）。"""
+    import logging
+    accounts, owned, service, admin, alice_user, alice, _ = jobs
+    rid, job, _ = service.create(alice, filename="账户缺失", category="procurement")
+    with accounts._connect() as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")
+        with conn:
+            conn.execute("DELETE FROM account_users WHERE id=?", (alice_user["id"],))
+    monkeypatch.setattr(maintenance, "_database_path", lambda: accounts.path)
+    monkeypatch.setattr(maintenance, "ReviewStore", lambda _p: owned.reviews)
+    with caplog.at_level(logging.ERROR, logger="app.services.owned_review_maintenance"):
+        maintenance.recover_once()  # 恢复正常完成；违例经 foreign_key_check 探测进日志
+    joined = "\n".join(r.getMessage() for r in caplog.records
+                       if r.name == "app.services.owned_review_maintenance")
+    assert "外键违例" in joined, "缺账户的真实违例必须如实报告"
+    assert "上传相关检查将拒绝" in joined, "真实违例必须如实提示上传受阻（新口径）"
+    for line in joined.splitlines():
+        assert "违约金" not in line and "合同" not in line.replace("账户任务恢复：", ""), \
+            "日志不得包含合同内容"
+
+
 def test_bad_time_orphan_closes_under_sustained_traffic(jobs):  # noqa: F811
     """codex 五轮 P2-2 持续流量场景：每轮都有新的正常失效记录进入、
     limit=1 逐条处理——坏时间孤儿靠预留份额在首轮即收口（损伤存量

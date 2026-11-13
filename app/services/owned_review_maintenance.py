@@ -48,18 +48,35 @@ def recover_once() -> tuple[int, int]:
         ledger = None
     attempts = ledger.reconcile(limit=_LIMIT) if ledger is not None else 0
     stale = jobs.reap_stale(limit=_LIMIT)
-    # codex 二轮 P1-3 + 三轮 P2-5 + 四轮 P2-3/P2-4 + 五轮 P2-3/P2-4：报告
-    # 三分类，不给未经结论支撑的断言——
-    # ① 事实层：「数据库存在外键违例」（PRAGMA foreign_key_check 有界扫描）
-    # ② 影响层：仅当违例涉及**上传相关表**（owned_review_jobs/owned_llm_
-    #    attempts——普通上传入口的严格构造检查对象）才报「上传相关检查
-    #    将拒绝」；其他扩展表的违例不据此断言上传受阻
-    # ③ 归属不一致（含 owner 为 NULL，IS NOT 比较）→ 「本身不构成外键
-    #    违例，上传状态另见外键告警」
-    # 扫描有界：fetchmany 分批累计，超上限停止并如实报告截断；
-    # 巡检不依赖账本是否存在——无账本行的库同样要如实报告（上版漏报面）
-    _UPLOAD_CRITICAL_TABLES = {"owned_review_jobs", "owned_llm_attempts"}
+    # codex 二轮 P1-3 + 三轮 P2-5 + 四轮 P2-3/P2-4 + 五轮 P2-3/P2-4 + 六轮
+    # P2-2/P2-4：按真实调用链分类报告，不给未经结论支撑的断言——
+    # ① 事实层：「数据库存在外键违例」（有界扫描，超限如实报截断）
+    # ② 影响层按真实调用链分三类（六轮 P2-2）：
+    #    上传入口 _services 构造 jobs+ledger+worker → 严格检查覆盖
+    #    owned_review_jobs / owned_llm_attempts / owned_review_worker_claims；
+    #    后续预审路径检查 owned_review_precheck_claims / _results。
+    #    各表独立有界探测（PRAGMA foreign_key_check(表名)），不受全库
+    #    截断影响——截断时相关表影响如实标「未知」而非「正常」
+    # ③ 归属不一致（含 owner 为 NULL，IS NOT 比较）→ 本身不构成外键
+    #    违例，上传状态另见外键告警
+    _UPLOAD_CRITICAL_TABLES = ("owned_review_jobs", "owned_llm_attempts",
+                               "owned_review_worker_claims")
+    _PRECHECK_TABLES = ("owned_review_precheck_claims", "owned_review_precheck_results")
     with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as conn:
+        # 关键表逐表有界探测（不受全库截断影响，结果确定）；表可能不存在
+        # （缺账本/预审旧库）——不存在即无行，跳过
+        _existing_tables = {row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        _critical_hits: list[str] = []
+        for _table in _UPLOAD_CRITICAL_TABLES + _PRECHECK_TABLES:
+            if _table not in _existing_tables:
+                continue
+            _cursor = conn.execute(f"PRAGMA foreign_key_check({_table})")
+            _found = _cursor.fetchmany(50)
+            if _found:
+                _critical_hits.append(_table)
+        # 其余全库违例（事实层）：有界扫描，超限如实报截断——截断后
+        # 未扫到的表影响**未知**，不断言其正常
         _fk_violations: list[tuple] = []
         _fk_truncated = False
         _cursor = conn.execute("PRAGMA foreign_key_check")
@@ -72,10 +89,11 @@ def recover_once() -> tuple[int, int]:
                 _fk_truncated = True
                 break
         _violation_tables = {row[0] for row in _fk_violations}
-        _upload_hit = bool(_violation_tables & _UPLOAD_CRITICAL_TABLES)
+        _upload_hit = bool(set(_critical_hits) & set(_UPLOAD_CRITICAL_TABLES))
+        _precheck_hit = bool(set(_critical_hits) & set(_PRECHECK_TABLES))
+        _owner_mismatch = 0
         _has_ledger = "owned_llm_attempts" in {
             row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        _owner_mismatch = 0
         if _has_ledger:
             _owner_mismatch = conn.execute(
                 "SELECT COUNT(*) FROM owned_llm_attempts a "
@@ -84,12 +102,17 @@ def recover_once() -> tuple[int, int]:
                 "WHERE r.owner_user_id IS NOT j.owner_user_id").fetchone()[0]
     if _violation_tables:
         logger.error("账户任务恢复：数据库存在外键违例（涉及表：%s%s）",
-                     ",".join(_violation_tables),
-                     "；违例行数较多，扫描结果已截断" if _fk_truncated else "")
+                     ",".join(sorted(_violation_tables)),
+                     "；违例行数较多，全库扫描已截断——未扫到相关表的表，"
+                     "影响状态未知" if _fk_truncated else "")
     if _upload_hit:
-        logger.error("账户任务恢复：外键违例涉及账户任务/调用账本相关表"
+        logger.error("账户任务恢复：外键违例涉及上传入口严格检查的表"
                      "（%s）——上传相关检查将拒绝，需离线迁移修复",
-                     ",".join(sorted(_violation_tables & _UPLOAD_CRITICAL_TABLES)))
+                     ",".join(sorted(set(_critical_hits) & set(_UPLOAD_CRITICAL_TABLES))))
+    if _precheck_hit:
+        logger.error("账户任务恢复：外键违例涉及预审路径的表（%s）——"
+                     "后续预审相关检查将拒绝，需离线迁移修复",
+                     ",".join(sorted(set(_critical_hits) & set(_PRECHECK_TABLES))))
     if _owner_mismatch:
         logger.error("账户任务恢复：账本存在 %d 行归属不一致记录（含 owner 为空的"
                      "情况）；该归属问题本身不构成外键违例，上传状态另见外键告警",
