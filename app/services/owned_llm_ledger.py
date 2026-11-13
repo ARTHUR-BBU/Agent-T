@@ -96,6 +96,13 @@ class OwnedLLMLedger:
             #   （1/4 窗口至少 1）——损伤存量有限，优先清走；
             # ②数值孤儿与 ③数值普通失效各自 LIMIT 剩余窗口，合并按时间
             #   全局排序截取——小窗口双向公平。
+            # codex 七轮 P2-1：非有限数（±inf）在 SQLite 里也是 real 类型，
+            # typeof 判据拦不住——正无穷排序在有限时间之后，持续正常积压
+            # 下同样饿死。SQL 截断前把「非有限数」一并纳入异常时间：
+            # ±9e307 之外的 real 一律视为异常（任何真实纪元时间都远小于它；
+            # NaN 在 SQLite 中存为 NULL，已被 typeof 分支覆盖）。
+            # 取舍假设如实声明：坏记录按**有限历史存量**处理（损伤优先）；
+            # 若坏记录持续产生，limit 小窗口时损伤优先是有意取舍而非双向公平。
             _reserved_share = max(1, (limit + 3) // 4)
             _HEALTHY_JOIN = ("SELECT 1 FROM owned_review_jobs j JOIN reviews r "
                              "ON r.id=j.review_id AND r.owner_user_id=j.owner_user_id "
@@ -106,7 +113,8 @@ class OwnedLLMLedger:
                            "AND u.active=1 AND u.must_change_password=0))")
             bad_rows = conn.execute(
                 "SELECT a.id,a.rowid FROM owned_llm_attempts a WHERE a.outcome='pending' "
-                "AND typeof(a.started_at) NOT IN ('integer','real') AND ("
+                "AND (typeof(a.started_at) NOT IN ('integer','real') "
+                "OR a.started_at >= 9e307 OR a.started_at <= -9e307) AND ("
                 "NOT EXISTS (" + _HEALTHY_JOIN + ") OR EXISTS ("
                 "SELECT 1 FROM owned_review_jobs j2 JOIN reviews r2 "
                 "ON r2.id=j2.review_id AND r2.owner_user_id=j2.owner_user_id "
@@ -122,12 +130,14 @@ class OwnedLLMLedger:
             if remaining > 0:
                 numeric_orphans = conn.execute(
                     "SELECT a.id,a.started_at FROM owned_llm_attempts a WHERE a.outcome='pending' "
-                    "AND typeof(a.started_at) IN ('integer','real') AND NOT EXISTS ("
+                    "AND typeof(a.started_at) IN ('integer','real') "
+                    "AND a.started_at < 9e307 AND a.started_at > -9e307 AND NOT EXISTS ("
                     + _HEALTHY_JOIN + ") ORDER BY a.started_at,a.id LIMIT ?", (remaining,)).fetchall()
                 numeric_normal = conn.execute(
                     "SELECT a.id,a.started_at FROM owned_llm_attempts a JOIN owned_review_jobs j ON j.id=a.job_id "
                     "JOIN reviews r ON r.id=j.review_id AND r.owner_user_id=j.owner_user_id "
-                    "WHERE a.outcome='pending' AND typeof(a.started_at) IN ('integer','real') AND (j.status!='running' "
+                    "WHERE a.outcome='pending' AND typeof(a.started_at) IN ('integer','real') "
+                    "AND a.started_at < 9e307 AND a.started_at > -9e307 AND (j.status!='running' "
                     "OR j.lease_until<=? OR (? IS NOT NULL AND r.created_at<=?) OR NOT EXISTS (SELECT 1 FROM account_sessions s "
                     "JOIN account_users u ON u.id=s.user_id WHERE s.token_hash=j.session_hash "
                     "AND s.user_id=j.owner_user_id AND s.expires_at>? AND u.active=1 AND u.must_change_password=0)) "

@@ -442,3 +442,79 @@ def test_intermediate_ddl_format_is_rejected_boundary(source_databases, tmp_path
     with pytest.raises(ValueError, match="源数据库结构不受支持"):
         create_migrated_copy(account_path, review_path, target, maintenance_confirmed=True)
     assert not target.exists()
+
+
+# 38fcd55 提交的真实建库脚本（中间实验版 DDL，逐字摘自该提交的
+# _VALIDATION_DDL 清单按运行时"逐条 execute+分号连接"语义拼合——
+# codex 七轮 P2-2 要求用真实中间版完整 DDL 而非手写格式差异）
+_INTERMEDIATE_38FCD55_SCRIPT = """CREATE TABLE IF NOT EXISTS rule_validation_results (
+        id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES rule_candidates(id),
+        candidate_sha256 TEXT NOT NULL, base_generation INTEGER NOT NULL,
+        actor_id TEXT NOT NULL REFERENCES account_users(id), created_at REAL NOT NULL,
+        result_json TEXT NOT NULL
+    );
+CREATE TABLE IF NOT EXISTS rule_validation_jobs (
+        id TEXT PRIMARY KEY, candidate_id TEXT NOT NULL REFERENCES rule_candidates(id),
+        actor_id TEXT NOT NULL REFERENCES account_users(id), status TEXT NOT NULL,
+        started_at REAL NOT NULL, lease_until REAL NOT NULL, result_id TEXT,
+        CHECK(status IN ('running','completed','failed','abandoned'))
+    );
+CREATE TABLE IF NOT EXISTS rule_validation_control (
+        id INTEGER PRIMARY KEY CHECK(id=1), blocked INTEGER NOT NULL CHECK(blocked IN (0,1)),
+        reason TEXT NOT NULL, updated_at REAL NOT NULL, last_job_id TEXT
+    );
+CREATE TRIGGER IF NOT EXISTS validation_control_no_delete BEFORE DELETE ON rule_validation_control
+    BEGIN SELECT RAISE(ABORT, 'validation control is retained'); END;
+CREATE TRIGGER IF NOT EXISTS validation_control_no_online_reset BEFORE UPDATE ON rule_validation_control
+    WHEN OLD.blocked=1 AND NEW.blocked=0
+    BEGIN SELECT RAISE(ABORT, 'validation control requires offline recovery'); END;
+CREATE UNIQUE INDEX IF NOT EXISTS one_running_rule_validation
+        ON rule_validation_jobs ((1)) WHERE status='running';
+CREATE TRIGGER IF NOT EXISTS validation_job_no_delete BEFORE DELETE ON rule_validation_jobs
+    BEGIN SELECT RAISE(ABORT, 'validation jobs are retained'); END;
+CREATE TRIGGER IF NOT EXISTS validation_job_no_replace BEFORE INSERT ON rule_validation_jobs
+    WHEN EXISTS (SELECT 1 FROM rule_validation_jobs WHERE id=NEW.id)
+    BEGIN SELECT RAISE(ABORT, 'validation jobs are retained'); END;
+CREATE TRIGGER IF NOT EXISTS validation_job_valid_insert BEFORE INSERT ON rule_validation_jobs
+    WHEN NEW.status != 'running' OR NEW.result_id IS NOT NULL OR
+         EXISTS (SELECT 1 FROM rule_validation_jobs WHERE status='running')
+    BEGIN SELECT RAISE(ABORT, 'invalid or concurrent validation job'); END;
+CREATE TRIGGER IF NOT EXISTS validation_job_transition BEFORE UPDATE ON rule_validation_jobs
+    WHEN OLD.status != 'running' OR NEW.status NOT IN ('completed','failed','abandoned') OR
+         NEW.id != OLD.id OR NEW.candidate_id != OLD.candidate_id OR NEW.actor_id != OLD.actor_id OR
+         NEW.started_at != OLD.started_at OR NEW.lease_until != OLD.lease_until OR
+         (NEW.status = 'completed' AND (NEW.result_id IS NULL OR NOT EXISTS (
+             SELECT 1 FROM rule_validation_results WHERE id=NEW.result_id AND candidate_id=NEW.candidate_id
+         ))) OR
+         (NEW.status != 'completed' AND NEW.result_id IS NOT NULL)
+    BEGIN SELECT RAISE(ABORT, 'invalid validation job transition'); END;
+CREATE TRIGGER IF NOT EXISTS validation_no_update BEFORE UPDATE ON rule_validation_results
+    BEGIN SELECT RAISE(ABORT, 'validation results are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS validation_no_delete BEFORE DELETE ON rule_validation_results
+    BEGIN SELECT RAISE(ABORT, 'validation results are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS validation_no_replace BEFORE INSERT ON rule_validation_results
+    WHEN EXISTS (SELECT 1 FROM rule_validation_results WHERE id=NEW.id)
+    BEGIN SELECT RAISE(ABORT, 'validation results are append-only'); END;"""
+
+
+def test_migration_rejects_real_intermediate_38fcd55_ddl(source_databases, tmp_path):
+    """codex 七轮 P2-2：用 38fcd55 提交的**真实完整 DDL**（而非手写差异）
+    建合成源库 → 迁移必须拒绝，且源库逐字节不变。"""
+    account_path, review_path, token, rid, _, _ = source_databases
+    with sqlite3.connect(account_path) as conn:
+        conn.executescript(_INTERMEDIATE_38FCD55_SCRIPT)
+    with sqlite3.connect(review_path) as conn:
+        before_reviews = conn.execute("SELECT id,data FROM reviews ORDER BY id").fetchall()
+    with sqlite3.connect(account_path) as conn:
+        before_jobs = conn.execute(
+            "SELECT rowid,id,status FROM rule_validation_jobs ORDER BY rowid").fetchall()
+    target = tmp_path / "new.sqlite"
+    with pytest.raises(ValueError, match="源数据库结构不受支持"):
+        create_migrated_copy(account_path, review_path, target, maintenance_confirmed=True)
+    assert not target.exists()
+    # 拒绝迁移后源库必须原样（两库：审查行在 review 库、验证任务历史在 account 库）
+    with sqlite3.connect(review_path) as conn:
+        assert conn.execute("SELECT id,data FROM reviews ORDER BY id").fetchall() == before_reviews, "源库 reviews 必须原样"
+    with sqlite3.connect(account_path) as conn:
+        assert conn.execute(
+            "SELECT rowid,id,status FROM rule_validation_jobs ORDER BY rowid").fetchall() == before_jobs, "源库验证任务历史必须原样"

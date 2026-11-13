@@ -166,13 +166,17 @@ def create_migrated_copy(account_path: Path, review_path: Path, target_path: Pat
         _reference(reference_account, reference_review, temp)
         with closing(_open(account_snapshot)) as ac, closing(_open(review_snapshot)) as rc, \
              closing(_open(reference_account)) as ar, closing(_open(reference_review)) as rr:
-            # 结构边界（codex 六轮 P2-3，如实声明）：_check_schema 逐字比较
-            # sqlite_master.sql——验证结构只认**当前代码建库文本**（与历史
-            # 3a57bad 版逐字一致，见 rule_validation_service._VALIDATION_SCHEMA_SQL）。
-            # 提交 38fcd55 曾用另一组空白格式的等价 DDL（中间实验版，仅存在于
-            # 2026-11-12 前后的临时试验库）：用它初始化过的本机账户库**不在
-            # 迁移支持范围**，需离线按当前文本重建验证结构后再迁移。此处
-            # 不做模糊比较放行（空白压缩绕过已被审核否决）。
+            # 结构边界（codex 六轮 P2-3 + 七轮 P2-2，如实声明）：
+            # _check_schema 逐字比较 sqlite_master.sql——验证结构只认**当前
+            # 代码建库文本**（与历史 3a57bad 版逐字一致，见
+            # rule_validation_service._VALIDATION_SCHEMA_SQL）。
+            # 提交 38fcd55 曾用另一组空白格式的等价 DDL（中间实验版）：
+            # **是否存在由该版本初始化的持久库，尚未确认**（ codex 七轮：
+            # 无证据支持"仅存在于临时试验库"的断言）。用它初始化过的
+            # 本机账户库**不在迁移支持范围**（有测试锁定拒绝），需离线
+            # 重建后再迁移；重建**必须保留安全闸状态、任务与测试历史**，
+            # 不能简单删表重建。此处不做模糊比较放行（空白压缩绕过已被
+            # 审核否决）。
             ao = _check_schema(ac, ar, _ACCOUNT_TABLES, {"account_users", "account_sessions"})
             ro = _check_schema(rc, rr, _REVIEW_TABLES, {"reviews"})
             # codex 二轮 P1-4：验证三表（控制/任务/结果）必须**全有或全无**——

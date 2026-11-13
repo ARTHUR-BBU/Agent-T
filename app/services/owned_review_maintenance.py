@@ -59,6 +59,9 @@ def recover_once() -> tuple[int, int]:
     #    截断影响——截断时相关表影响如实标「未知」而非「正常」
     # ③ 归属不一致（含 owner 为 NULL，IS NOT 比较）→ 本身不构成外键
     #    违例，上传状态另见外键告警
+    # 扫描边界如实口径（codex 七轮 P2-3）：返回行数受限（每批 200、
+    # 累计上限 500，超出部分丢弃并如实报告截断）；**数据库扫描时长
+    # 未限制、大库行为未验证**——不能声称整轮巡检运行时间有界
     _UPLOAD_CRITICAL_TABLES = ("owned_review_jobs", "owned_llm_attempts",
                                "owned_review_worker_claims")
     _PRECHECK_TABLES = ("owned_review_precheck_claims", "owned_review_precheck_results")
@@ -84,8 +87,12 @@ def recover_once() -> tuple[int, int]:
             _batch = _cursor.fetchmany(200)
             if not _batch:
                 break
-            _fk_violations.extend(_batch)
-            if len(_fk_violations) >= 500:
+            _room = 500 - len(_fk_violations)
+            if _room <= 0:
+                _fk_truncated = True
+                break
+            _fk_violations.extend(_batch[:_room])
+            if len(_batch) > _room:
                 _fk_truncated = True
                 break
         _violation_tables = {row[0] for row in _fk_violations}
