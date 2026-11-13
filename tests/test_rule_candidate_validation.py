@@ -4,11 +4,28 @@ import os
 import subprocess
 import time
 
+import threading
+
 import pytest
 
+from app.services import rule_candidate_validation
 from app.services.rule_candidate_builder import build_candidate
 from app.services.rule_candidate_validation import current_input_manifest, run_gold_checks
 from app.services.rule_snapshot import capture_rule_snapshot
+
+
+@pytest.fixture(autouse=True)
+def _fresh_process_control_gate(monkeypatch):
+    """测试隔离（2026-11-13 全量回归暴露）：_PROCESS_CONTROL_UNCERTAIN 是
+    模块级 Event——同进程里任何更早测试的金标清理失败/超时都会置位并
+    粘住，后续金标测试全部被「上次清理状态未知」拒绝（跨测试干扰：
+    全量跑批 3 failed 复现；本文件单独运行 9/9 通过）。生产粘住语义不动：
+    服务进程内真实事故仍全程拦截；这里只给测试进程每例换新 Event。"""
+    event = threading.Event()
+    monkeypatch.setattr(rule_candidate_validation,
+                        "_PROCESS_CONTROL_UNCERTAIN", event)
+    yield
+    event.set()  # 测试内故意置位的用例结束后不再泄漏给其他文件
 
 
 def test_gold_runner_checks_candidate_in_isolated_process():
