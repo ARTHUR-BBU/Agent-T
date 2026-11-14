@@ -69,9 +69,9 @@ DISCLAIMER = "以上都是机器给的参考意见，签之前建议找懂行的
 _forbidden_cache: Optional[dict[str, list[str]]] = None
 
 
-def load_scorecard_config(category: str) -> dict[str, Any]:
+def load_scorecard_config(category: str, *, configuration: dict[str, Any] | None = None) -> dict[str, Any]:
     """Read `scorecard:` block (segments/weights) from the category checklist YAML."""
-    cfg = load_checklist(category)
+    cfg = configuration if configuration is not None else load_checklist(category)
     sc = cfg.get("scorecard") or {}
     segments = [
         {

@@ -15,6 +15,8 @@ docs/m7/cost-memo-b7-1.md。
 """
 from __future__ import annotations
 
+from app.services.owned_llm_transport import OwnedTransportError
+
 import json
 import logging
 import os
@@ -292,6 +294,8 @@ def _settle_business(trace_id: str, degraded: Optional[_Degraded],
             llm_call_log.settle(call_id, "parse_failed",
                                 error_detail=f"revision:{degraded.reason}")
         # llm_error：transport 终态（provider_error/timeout），不可也不应结算
+    except OwnedTransportError:
+        raise
     except Exception:  # noqa: BLE001
         logger.warning("revision settle failed (non-fatal)", exc_info=True)
 
@@ -375,6 +379,8 @@ def generate_revision(
                         break
         except _Degraded as exc:
             degraded = exc
+        except OwnedTransportError:
+            raise
         except Exception as exc:  # 网络/供应商异常：诚实降级（transport 已落账）
             logger.warning("revision llm error: %s", exc)
             degraded = _Degraded("llm_error")

@@ -11,7 +11,7 @@ import time
 
 import httpx
 
-from app.services import llm_call_log
+from app.services import llm_call_log, owned_llm_transport
 
 
 # 按节点的输出上限（max_tokens，真水龙头——M6.5 收官回测费用闸要求）。
@@ -30,6 +30,8 @@ NODE_MAX_OUTPUT_TOKENS: dict[str, int] = {
     # （#138 同款流程）。
     "revision": 16000,
     "impact": 8000,
+    # B7-6c：分段核查可能多次调用；上限先按保守值登记，后续凭账单校准。
+    "remediate": 6000,
 }
 DEFAULT_MAX_OUTPUT_TOKENS = 16000
 
@@ -51,6 +53,14 @@ def chat_completion(
     reasoning_content——content 为空时回退读取（智谱专用，行为保持）。
     输出上限按节点强制（NODE_MAX_OUTPUT_TOKENS，费用闸真水龙头）。
     """
+    if owned_llm_transport.enabled():
+        node = llm_call_log.current_node()
+        payload = {"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                   "temperature": temperature, "max_tokens": NODE_MAX_OUTPUT_TOKENS.get(node or "", DEFAULT_MAX_OUTPUT_TOKENS)}
+        _, content = owned_llm_transport.execute(url=url, model=model, api_key=api_key, payload=payload, timeout=timeout,
+                                                node=node, review_id=llm_call_log.current_review_id(), decision=False,
+                                                fallback_reasoning=fallback_reasoning)
+        return content
     # 宪法 P0-D1：transport 是全部 LLM 调用的单点，调用账本在此记录
     # （provider/model/latency/outcome/usage 天然可得；node/review_id 由
     # 调用点经 record_node 注入）。账本故障绝不影响调用本身。
@@ -193,6 +203,11 @@ def decision_judgment(
     （HTTP/协议层坏=provider_error，超时=timeout）；业务解析成败由调用方拿
     call_id 走 llm_call_log.settle 终态结算（success/parse_failed）。
     """
+    if owned_llm_transport.enabled():
+        payload = {"state": state, "model": model, "questions": {"category": {"type": "choice",
+                   "instructions": instructions, "criteria": criteria}}}
+        return owned_llm_transport.execute(url=url, model=model, api_key=api_key, payload=payload, timeout=timeout,
+                                           node=llm_call_log.current_node(), review_id=llm_call_log.current_review_id(), decision=True)
     _t0 = time.monotonic()
     provider = "cloudflare" if "cloudflare" in url or "/ai/run/" in url else "typesafe"
     _rec = llm_call_log.LLMCallRecord(

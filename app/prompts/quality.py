@@ -39,9 +39,10 @@ def build_system_prompt(
     *,
     category: str = "procurement",
     stance: str = "neutral",
+    stance_label: Optional[str] = None,
 ) -> str:
     policy_block = "\n".join(f"- {p}" for p in policies) or "- （无额外政策）"
-    stance_block = stance_service.prompt_guidance(category, stance)
+    stance_block = stance_service.prompt_guidance(category, stance, label=stance_label)
     prompt = f"""你是合同审查「{SYSTEM_MARKER}」助手。规则引擎已对合同逐项打标（通过/需关注/未找到/本类不适用）；你的任务是在规则清单之外，从三个维度补充规则词表覆盖不到的参考观察。
 
 三个维度（dimension 取值严格三选一）：
@@ -81,11 +82,12 @@ def build_user_prompt(
     *,
     category: str = "procurement",
     stance: str = "neutral",
+    stance_label: Optional[str] = None,
 ) -> str:
     """主调用 user prompt：立场短行 + 规则打标块 + 条款目录 + 合同全文。"""
     catalog = _clause_catalog(clause_index)
     catalog_block = f"条款目录（clause_id 供引用）：\n{catalog}\n\n" if catalog else ""
-    stance_line = stance_service.prompt_stance_line(category, stance)
+    stance_line = stance_service.prompt_stance_line(category, stance, label=stance_label)
     return f"""{stance_line}
 
 规则引擎打标结果：

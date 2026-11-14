@@ -25,7 +25,7 @@ def _mock_precheck(monkeypatch, **kw):
     # 签名对齐真实 run_precheck（阶段 0.5 起第 4 参为 budget 对象）
     monkeypatch.setattr(
         "app.api.routes.precheck_service.run_precheck",
-        lambda t, c, chat_fn=None, budget=None, stance="neutral": outcome,
+        lambda t, c, chat_fn=None, budget=None, stance="neutral", categories=None, stance_label=None: outcome,
     )
 
 
@@ -55,7 +55,7 @@ def test_unsupported_branch_no_review_id(monkeypatch):
     assert body["status"] == "category_confirm"
     assert body["review_id"] is None, "confirm 分支绝不能开审"
     assert body["precheck"]["detected_type"] == "委托创作服务合同"
-    assert {c["id"] for c in body["supported_categories"]} == {"lease", "procurement", "nda"}
+    assert {c["id"] for c in body["supported_categories"]} == {"lease", "procurement", "nda", "technical_service"}
 
 
 def test_mismatch_branch_suggests_switch(monkeypatch):
@@ -128,7 +128,7 @@ def test_no_key_degrades_to_normal_upload(monkeypatch):
     _enable(monkeypatch)
     monkeypatch.setattr(
         "app.api.routes.precheck_service.run_precheck",
-        lambda t, c, chat_fn=None, budget=None, stance="neutral": PrecheckOutcome(skip_reason="no_llm_key"),
+        lambda t, c, chat_fn=None, budget=None, stance="neutral", categories=None, stance_label=None: PrecheckOutcome(skip_reason="no_llm_key"),
     )
     review = upload_and_wait(client, str(PROC_FIXTURE), category="procurement")
     assert review["status"] == "done"

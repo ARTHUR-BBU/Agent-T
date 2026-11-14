@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>合同审查 · 本机账户试用</title>
+  <link rel="stylesheet" href="/static/styles.css"><link rel="stylesheet" href="/static/owned_workspace.css">
+</head>
+<body class="owned-body">
+  <header class="owned-header"><strong>审 <span>合同审查</span></strong><span>本机账户试用</span><a href="/account-management">账户与规则管理</a><button id="logout" class="secondary hidden" type="button">退出</button></header>
+  <main class="owned-layout">
+    <aside class="owned-sidebar"><h2>我的审查</h2><button id="new-review" class="primary" type="button">＋ 新审查</button><div id="identity" class="owned-muted"></div><div id="history" aria-live="polite"></div></aside>
+    <section class="owned-content">
+      <p class="owned-notice">本机试验，仅使用虚构合同。规则为试验版本，导出、问答和修改建议尚未接入账户模式。</p>
+      <p id="message" role="status" aria-live="polite"></p>
+      <form id="login" class="owned-form"><h1>登录账户</h1><label>账号<input id="username" autocomplete="username" required></label><label>密码<input id="password" type="password" autocomplete="current-password" required></label><button class="primary" type="submit" disabled>登录</button><p>首次登录需在“账户与规则管理”修改临时密码。</p></form>
+      <div id="workspace" class="hidden">
+        <form id="upload-form" class="owned-form"><h1>开始审查</h1><p class="owned-muted">选择文件或粘贴正文，两者选一。</p>
+          <label>合同文件<input id="file" type="file" accept=".txt,.md,.text,.pdf,.docx,.doc"></label>
+          <label>合同正文<textarea id="text" rows="9" maxlength="200000" placeholder="粘贴虚构合同正文"></textarea></label>
+          <div class="owned-fields"><label>合同类型<select id="category" required></select></label><label>我代表哪一方<select id="stance" required></select></label></div>
+          <button id="submit" class="primary" type="submit">开始审查</button>
+        </form>
+        <section id="detail" class="hidden"><h1 id="detail-title"></h1><p id="detail-status" role="status"></p><p id="detail-precheck" class="owned-muted"></p><div id="items"></div></section>
+      </div>
+    </section>
+  </main>
+  <dialog id="confirm" aria-labelledby="confirm-title"><h2 id="confirm-title">请确认合同类型</h2><p id="confirm-summary"></p><p>请选择使用哪类规则审查。</p><div class="owned-actions"><button id="confirm-switch" class="primary" type="button">使用建议类型</button><button id="confirm-keep" class="secondary" type="button">保留原类型</button><button id="confirm-cancel" class="secondary" type="button">取消</button></div></dialog>
+  <script src="/static/owned_workspace.js"></script>
+</body>
+</html>

@@ -16,13 +16,29 @@ OUTPUT_FIELDS = ["detected_type", "is_supported", "suggested_category", "confide
 
 def build_system_prompt(supported_categories: list[dict[str, str]]) -> str:
     cats = "、".join(f"{c['label']}（{c['id']}）" for c in supported_categories)
+    tech = any(c.get("id") == "technical_service" for c in supported_categories)
+    order = "NDA → 租赁 → 技术服务 → 采购 → 其他（不支持）" if tech else "NDA → 租赁 → 采购 → 其他（不支持）"
+    service_boundary = (
+        "标的为具体技术问题的技术服务、系统集成或运维等，且验收和技术成果等风险骨架适配技术服务清单，归技术服务；"
+        "以研发新技术成果为主的技术开发、委托创作、一般设计、推广、咨询、劳务派遣、技术转让/许可及风险骨架不明确的合同不因此归为技术服务。"
+        if tech else "标的写成「方案/作品/系统/成片」、有知识产权归属条款（委托创作/定制开发/设计/咨询）→ 服务合同，不支持。"
+    )
+    technical_section = (
+        "\n四、技术服务合同（technical_service）\n"
+        "- 以技术知识解决具体技术问题，依据服务内容、技术交付物和验收机制判断；"
+        "系统集成或运维须以清单是否覆盖实际风险骨架为准。\n"
+        "- 以研发新技术成果为主的技术开发、一般咨询、品牌推广、劳务派遣、技术转让或许可，"
+        "以及数据服务/能源托管等边界不明合同，不得默认套技术服务清单；"
+        "开发与服务混合时按主要给付义务判断，主次不清时判不支持，交用户确认。\n" if tech else ""
+    )
+    supported_ids = "/".join(c["id"] for c in supported_categories)
     return f"""你是合同分类预审助手。你的唯一职责是判断这份文件是什么类型的合同、我方是否支持审查该类型。你只回答「这是什么」，绝不回答「这样好不好」——风险评判由后续规则引擎负责，与你无关。
 
 我方支持审查的品类（白名单，共 {len(supported_categories)} 类）：{cats}
 
-【判定顺序固定：NDA → 租赁 → 采购 → 其他（不支持）。前者特征更特异优先判定；采购是兜底桶放最后。】
+【判定顺序固定：{order}。前者特征更特异优先判定；采购是兜底桶放最后。】
 
-三大品类构成要件：
+白名单品类构成要件：
 
 一、NDA（保密协议）
 - 主给付义务是对保密信息承担不披露、不滥用义务，对价不是货、不是使用权。
@@ -37,9 +53,10 @@ def build_system_prompt(supported_categories: list[dict[str, str]]) -> str:
 三、采购合同
 - 买方支付价款，换取货物或标准化服务的交付与验收。
 - 构成要件：① 买方/卖方角色；② 标的物及数量/规格/配置；③ 价款与支付安排；④ 交付+验收+质保框架。
-- 「服务采购」（归采购）与「服务合同」（不支持）的分界式：标的能写成「型号/数量/规格参数」、按客观标准验收（保洁/打印/标准运维/按 SLA 交付）→ 采购；标的写成「方案/作品/系统/成片」、有知识产权归属条款（委托创作/定制开发/设计/咨询）→ 服务合同，不支持。
+- 「服务采购」与其他服务合同的分界式：标的能写成「型号/数量/规格参数」、按客观标准验收（保洁/打印/标准运维/按 SLA 交付）→ 采购；{service_boundary}
 - 「销售合同（卖方视角起草）」与「采购合同」的分界（重要，防兜底桶误吞）——同一份买卖，看纸张站在谁那边：标题为「产品销售合同/供货合同/购销合同（以销方为主）」、或条款明显以卖方立场起草（密集出现卖方保护条款：卖方赔偿责任上限、定金没收、EXW/出库交货、卖方所在地管辖、买方最低采购承诺、异议期极短且逾期视为合格等）→ 判为「销售合同（卖方视角）」，is_supported=true、suggested_category=procurement（见下方视角规则修订）。反之，标题为「采购合同」或以买方的验收权利与卖方义务为中心起草 → 归采购。
 - 同理，租赁合同若明显以出租方立场起草 → 判为「租赁合同（出租方视角）」，is_supported=true、suggested_category=lease。
+{technical_section}
 
 【视角规则修订（法务老钱裁决 2026-09-09，立场输入已上线）】用户已声明立场（见文末「用户声明立场」）。检出对方视角起草的合同：
 - 用户立场=我方基准视角（采购+买方 / 租赁+承租方）→ **可审，照常审**——对方格式合同恰是基准视角用户最需要被点名的场景；
@@ -51,12 +68,12 @@ def build_system_prompt(supported_categories: list[dict[str, str]]) -> str:
 
 {UNTRUSTED_DOCUMENT_INSTRUCTION} 只依据合同的实质权利义务分类。
 
-【输出自洽检查——提交前必须核对】is_supported=true 时，suggested_category 必须与 detected_type 描述的实质类型一致：detected_type 含「买卖/服务/劳动/借款/转让所有权」等非白名单实质字样时，禁止 is_supported=true、禁止 suggested_category=lease/procurement/nda。唯一例外：带视角标记的「销售合同（卖方视角）」「租赁合同（出租方视角）」实质就是买卖/租赁，允许 is_supported=true 且 suggested_category=procurement/lease。类型名说得对、支持性给得矛盾 = 无效输出。
+【输出自洽检查——提交前必须核对】is_supported=true 时，suggested_category 必须与 detected_type 描述的实质类型一致；一般咨询、劳动、借款、转让所有权等非白名单类型不能强行归入白名单。带视角标记的「销售合同（卖方视角）」「租赁合同（出租方视角）」实质就是买卖/租赁，可对应 procurement/lease。类型名说得对、支持性给得矛盾 = 无效输出。
 
 输出 JSON 对象，字段严格为：
 - detected_type：字符串，判断出的合同类型中文名（如「房屋租赁合同」「委托创作服务合同」「劳动合同」）
 - is_supported：布尔，是否落在白名单内
-- suggested_category：is_supported 为 true 时填白名单 id（lease/procurement/nda 之一），否则填 null
+- suggested_category：is_supported 为 true 时填白名单 id（{supported_ids} 之一），否则填 null
 - confidence：「high」「medium」「low」三选一
 - summary：一句话（≤60 字）概括判断依据，只描述类型特征，禁止出现「没问题」「无风险」等任何评价性、背书性用语——你不做风险评判
 
@@ -69,9 +86,9 @@ def build_retry_system_prompt(system: str) -> str:
     return system + "\n\n【再次提醒】上一轮输出不是合法 JSON 或字段缺失。重新输出，严格只输出一个 JSON 对象，字段为：detected_type / is_supported / suggested_category / confidence / summary。"
 
 
-def build_user_prompt(text: str, selected_category: str, stance: str = "neutral") -> str:
+def build_user_prompt(text: str, selected_category: str, stance: str = "neutral", *, stance_label: str | None = None) -> str:
     stance_line = (
-        f"用户声明立场：{stance_service.stance_label(selected_category, stance)}"
+        f"用户声明立场：{stance_label if stance_label is not None else stance_service.stance_label(selected_category, stance)}"
         if stance
         else "用户声明立场：中性（未声明）"
     )

@@ -87,6 +87,15 @@ def test_report_cover_and_default_disclaimer():
     assert DEFAULT_DISCLAIMER in text, "免责句是必备项，缺失时必须兜底"
 
 
+def test_report_distinguishes_saved_rule_digest_from_legacy_unknown():
+    row = _full_row()
+    assert "规则文件版本：未知" in _doc_text(build_report_docx(row))
+    row["rule_provenance"] = {"source": "local_file", "category": "procurement", "content_sha256": "a" * 64}
+    text = _doc_text(build_report_docx(row))
+    assert "选定规则文件 SHA-256：" + "a" * 64 in text
+    assert "不代表规则已执行或完整运行环境" in text
+
+
 def test_report_scorecard_available_shows_total_and_caps():
     """评分卡可用时展示总分/档位/封顶说明，并用卡内免责句替代默认句."""
     row = _full_row()

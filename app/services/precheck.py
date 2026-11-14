@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+from app.services.owned_llm_transport import OwnedTransportError, enabled as owned_llm_enabled
+
 import json
 import logging
 import os
@@ -104,7 +106,8 @@ def _default_chat_fn() -> Optional[ChatFn]:
     return None
 
 
-def _parse_payload(raw: str, inconsistent_as_unsupported: bool = False) -> Optional[PrecheckResult]:
+def _parse_payload(raw: str, inconsistent_as_unsupported: bool = False,
+                   supported_categories: Optional[set[str]] = None) -> Optional[PrecheckResult]:
     text = (raw or "").strip()
     fence = re.match(r"^```(?:json)?\s*([\s\S]*?)\s*```$", text)
     if fence:
@@ -124,7 +127,7 @@ def _parse_payload(raw: str, inconsistent_as_unsupported: bool = False) -> Optio
     # 自洽性防线（小智娘门禁 P2-2）：is_supported=true 却给不出合法 suggested
     # 属于自相矛盾输出——首轮视为解析失败走重试；重试仍矛盾则按不支持处理
     # （保守死路优于开错尺子）
-    supported = supported_category_ids()
+    supported = supported_categories if supported_categories is not None else supported_category_ids()
     suggested_raw = obj.get("suggested_category")
     suggested = str(suggested_raw).strip() if suggested_raw else None
     if suggested not in supported:
@@ -158,6 +161,8 @@ def run_precheck(
     chat_fn: Optional[ChatFn] = None,
     budget: Optional[Any] = None,
     stance: str = "neutral",
+    categories: Optional[list[dict[str, Any]]] = None,
+    stance_label: Optional[str] = None,
 ) -> PrecheckOutcome:
     """分类预审。任何失败都降级为 skip（照旧开审），绝不阻断主流程。
 
@@ -167,6 +172,8 @@ def run_precheck(
     stance（阶段 1.3）：只进 prompt 供可审性判定（老钱视角规则修订），
     预审输出仍然只有分类字段，永不触碰档位。
     """
+    if owned_llm_enabled() and chat_fn is not None:
+        raise OwnedTransportError("账户模型模式不允许自定义发送器")
     if not is_precheck_enabled():
         return PrecheckOutcome(skip_reason=Reason.DISABLED.value)
 
@@ -183,9 +190,12 @@ def run_precheck(
     try:
         from app.services.checklist import list_categories
 
-        system = precheck_prompts.build_system_prompt(list_categories())
+        source_categories = categories if categories is not None else list_categories()
+        captured_categories = [{"id": item["id"], "label": item["label"]} for item in source_categories]
+        supported_ids = {c["id"] for c in captured_categories}
+        system = precheck_prompts.build_system_prompt(captured_categories)
         user = precheck_prompts.build_user_prompt(
-            _clip_for_precheck(text or ""), selected_category, stance=stance
+            _clip_for_precheck(text or ""), selected_category, stance=stance, stance_label=stance_label
         )
 
         for attempt in (1, 2):
@@ -194,13 +204,15 @@ def run_precheck(
                 return PrecheckOutcome(skip_reason=Reason.BUDGET_EXCEEDED.value)
             try:
                 raw = chat(system, user)
+            except OwnedTransportError:
+                raise
             except Exception:  # noqa: BLE001
                 # 异常详情只进日志（对齐 llm_ask 信息泄露防线），降级 skip
                 logger.exception("Precheck LLM call failed (attempt %s)", attempt)
                 return PrecheckOutcome(skip_reason=Reason.LLM_ERROR.value)
 
             result = _parse_payload(
-                raw, inconsistent_as_unsupported=(attempt == 2)
+                raw, inconsistent_as_unsupported=(attempt == 2), supported_categories=supported_ids
             )
             if result is not None:
                 sent = min(len(text or ""), MAX_PRECHECK_CHARS)
@@ -212,7 +224,7 @@ def run_precheck(
                 )
             logger.warning("Precheck payload parse failed (attempt %s)", attempt)
             system = precheck_prompts.build_retry_system_prompt(
-                precheck_prompts.build_system_prompt(list_categories())
+                precheck_prompts.build_system_prompt(captured_categories)
             )
 
         return PrecheckOutcome(skip_reason=Reason.PARSE_FAILED.value)

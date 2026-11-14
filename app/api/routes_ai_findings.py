@@ -37,11 +37,16 @@ def set_ai_finding_status(review_id: str, body: AiFindingStatusRequest):
          if f["finding_key"] == body.finding_key), None)
     if finding is None:
         return AiFindingStatusResponse(ok=False, error="finding_not_found")
+    if (body.status == "confirmed" and not finding.get("fact_type")
+            and not ai_findings_service.has_verified_anchor(finding, norm_row)):
+        return AiFindingStatusResponse(ok=False, error="观点缺少可核对的合同原文锚点")
 
-    # 仅事实类派生发现走 confirm 决定链（codex 五轮 P2）：观点争议只是
-    # 反馈、不产生 claim 决定记录——观点全部走状态表权威，恢复已阅才能
-    # 盖过问题行旧态
-    if finding.get("question_id") and finding.get("fact_type") \
+    # 走 confirm 决定链的判据（B7-6b 老钱复议 1.1）：fact_type 或有原文
+    # 锚点（引句/坐标）——有引句的观点确认后同走决定链物化；无引句观点
+    # 仍只走状态表权威（恢复已阅可盖过问题行旧态，不产生 claim 决定记录）
+    if finding.get("question_id") \
+            and (finding.get("fact_type")
+                 or finding.get("quote") or finding.get("clause_id")) \
             and body.status in ("confirmed", "disputed"):
         # codex 六轮 P1：确认决定+状态保存+检查项更新放进**同一次**持锁
         # ——确认/争议两条请求交错时整体串行，不再出现「决定已争议、

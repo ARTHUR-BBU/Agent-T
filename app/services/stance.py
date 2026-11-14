@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import yaml
+
 from app.services.checklist import load_checklist
 
 DEFAULT_STANCES: dict[str, Any] = {
@@ -57,6 +59,18 @@ _DECLARATIONS: dict[tuple[str, str], str] = {
         "您未声明代表方：本报告按通用风险核查，不预设立场；"
         "方向性条款（如保密义务、知识产权归属）会在说明中注明偏向哪一方。"
     ),
+    ("technical_service", "neutral"): (
+        "您未声明代表方：本报告按通用规则核查，并提示方向性条款对各方的影响；"
+        "核查口径不因立场改变，本报告不构成法律意见。"
+    ),
+    ("technical_service", "client"): (
+        "您声明代表委托方：AI 解释将结合委托方视角说明条款影响；"
+        "核查口径不因立场改变，本报告不构成法律意见。"
+    ),
+    ("technical_service", "vendor"): (
+        "您声明代表受托方：AI 解释将结合受托方视角说明条款影响；"
+        "核查口径不因立场改变，本报告不构成法律意见。"
+    ),
 }
 
 # 分支 C 知情提示（非阻断，老钱裁决书第二节；检出对方视角起草 + 中性立场时
@@ -73,9 +87,9 @@ _COUNTERPARTY_VIEW_MARKERS = {
 }
 
 
-def get_stances(category: str) -> dict[str, Any]:
+def get_stances(category: str, *, configuration: dict[str, Any] | None = None) -> dict[str, Any]:
     """品类立场元数据（YAML stances 块，缺失回默认）。"""
-    cfg = load_checklist(category)
+    cfg = configuration if configuration is not None else load_checklist(category)
     stances = cfg.get("stances")
     if not isinstance(stances, dict) or not stances.get("allowed"):
         return dict(DEFAULT_STANCES)
@@ -87,19 +101,19 @@ def get_stances(category: str) -> dict[str, Any]:
     }
 
 
-def is_allowed(category: str, stance: str) -> bool:
-    return stance in get_stances(category)["allowed"]
+def is_allowed(category: str, stance: str, *, configuration: dict[str, Any] | None = None) -> bool:
+    return stance in get_stances(category, configuration=configuration)["allowed"]
 
 
-def stance_label(category: str, stance: str) -> str:
-    labels = get_stances(category)["labels"]
+def stance_label(category: str, stance: str, *, configuration: dict[str, Any] | None = None) -> str:
+    labels = get_stances(category, configuration=configuration)["labels"]
     return labels.get(stance) or stance
 
 
-def view_label(category: str) -> str:
+def view_label(category: str, *, configuration: dict[str, Any] | None = None) -> str:
     """清单内建视角的中文标签（如 采购→买方（采购方））；NDA 无内建视角返回空。"""
-    view = get_stances(category)["view"]
-    return stance_label(category, view) if view else ""
+    view = get_stances(category, configuration=configuration)["view"]
+    return stance_label(category, view, configuration=configuration) if view else ""
 
 
 def declaration(category: str, stance: str) -> str:
@@ -112,14 +126,43 @@ def declaration(category: str, stance: str) -> str:
     )
 
 
-def counterparty_view_notice(category: str) -> str:
+def counterparty_view_notice(category: str, *, configuration: dict[str, Any] | None = None) -> str:
     """分支 C 知情提示文案；该品类无对方视角标记词时返回空。"""
     marker = _COUNTERPARTY_VIEW_MARKERS.get(category)
     if not marker:
         return ""
     other = marker[1]
-    view = view_label(category)
+    view = view_label(category, configuration=configuration)
     return STANCE_NOTICE.format(other=other, view=view or "默认")
+
+
+def review_label(row: dict[str, Any]) -> str:
+    """Use the recorded label; make legacy reconstruction explicit."""
+    saved = row.get("stance_label_at_review")
+    if isinstance(saved, str) and saved:
+        return saved
+    try:
+        label = stance_label(row.get("category") or "", row.get("stance") or NEUTRAL)
+    except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError):
+        return "未知（历史标签未留存）"
+    return label + "（按当前配置显示，历史标签未留存）"
+
+
+def review_declaration(row: dict[str, Any]) -> str:
+    saved = row.get("stance_declaration_at_review")
+    if isinstance(saved, str) and saved:
+        return saved
+    return "历史立场说明未留存，以下为当前说明：" + declaration(row.get("category") or "", row.get("stance") or NEUTRAL)
+
+
+def review_notice(row: dict[str, Any]) -> str:
+    if isinstance(row.get("stance_notice_at_review"), str):
+        return row["stance_notice_at_review"]
+    try:
+        notice = counterparty_view_notice(row.get("category") or "")
+    except (OSError, ValueError, TypeError, KeyError, yaml.YAMLError):
+        return "历史立场提示未留存，当前配置不可用。"
+    return "历史立场提示未留存，以下为当前提示：" + notice if notice else "历史立场提示未留存。"
 
 
 def has_counterparty_view_marker(category: str, detected_type: str) -> bool:
@@ -130,14 +173,14 @@ def has_counterparty_view_marker(category: str, detected_type: str) -> bool:
     return bool(detected_type) and marker[0] in detected_type
 
 
-def prompt_guidance(category: str, stance: str = NEUTRAL) -> str:
+def prompt_guidance(category: str, stance: str = NEUTRAL, *, label: str | None = None) -> str:
     """A4：注入 quality / ask 的立场指导块（单一来源）。
 
     Design B：块内明确「规则档位与核查口径不因立场而改变」；
     立场只约束 AI 解释的利害读向（谁受益 / 谁承担义务）。
     """
     st = stance or NEUTRAL
-    label = stance_label(category, st)
+    label = label if label is not None else stance_label(category, st)
     lines = [
         f"【用户声明立场】{label}",
         "立场只指导 AI 解释的利害读向，绝不改变规则引擎档位或核查口径（规则清单与立场无关）。",
@@ -166,8 +209,8 @@ def prompt_guidance(category: str, stance: str = NEUTRAL) -> str:
     return "\n".join(lines)
 
 
-def prompt_stance_line(category: str, stance: str = NEUTRAL) -> str:
+def prompt_stance_line(category: str, stance: str = NEUTRAL, *, label: str | None = None) -> str:
     """短行：user prompt 头部「用户声明立场：…」（与预审同构）。"""
     st = stance or NEUTRAL
-    return f"用户声明立场：{stance_label(category, st)}"
+    return f"用户声明立场：{label if label is not None else stance_label(category, st)}"
 

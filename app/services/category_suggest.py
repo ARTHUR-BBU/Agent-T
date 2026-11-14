@@ -17,6 +17,8 @@
 """
 from __future__ import annotations
 
+from app.services.owned_llm_transport import OwnedTransportError
+
 import json
 import os
 import re
@@ -207,6 +209,8 @@ def suggest_category(
                 return _budget_reject(outcome, budget, model)
             attempt = 2  # 瞬态：重试一次
             continue
+        except OwnedTransportError:
+            raise
         except Exception as e:  # 永久性拒绝（401/400/451 等）：不重试
             last_err = e
             outcome.skip_reason = f"llm_error: {type(e).__name__}"
@@ -225,6 +229,8 @@ def suggest_category(
     # 解析终态结算——白名单外/结构坏=parse_failed，账本不留 success 假绿
     try:
         parsed = _parse_verdict(raw)
+    except OwnedTransportError:
+        raise
     except Exception:  # noqa: BLE001  解析器自身异常同归 parse_failed
         parsed = None
     if parsed is None or call_id is None:

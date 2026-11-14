@@ -307,6 +307,11 @@ def list_categories(include_hidden: bool = False) -> list[dict[str, Any]]:
     cats = []
     for path in sorted(CONFIG_DIR.glob("checklist_*.yaml")):
         data = _load_yaml(path)
+        expected_id = path.stem.removeprefix("checklist_")
+        category_id = data.get("category", expected_id)
+        if (not isinstance(category_id, str) or category_id != expected_id
+                or not re.fullmatch(r"[a-z0-9_]+", category_id)):
+            raise ValueError(f"invalid checklist category in {path}")
         # 功能开关（B2 v1.1.1 外审复批）：hidden 品类对用户不可见——
         # 「先盖好房子再开门」，半成品不接真实合同；引擎测试入口照常
         # （load_checklist 不受影响）。B2-2 金标锁定后移除 hidden 开放。
@@ -314,7 +319,7 @@ def list_categories(include_hidden: bool = False) -> list[dict[str, Any]]:
             continue
         cats.append(
             {
-                "id": data.get("category", path.stem.replace("checklist_", "")),
+                "id": category_id,
                 "label": data.get("label", path.stem),
                 # 阶段 1.3：立场元数据透传（前端 segmented 数据源；缺失时
                 # 上层 stance.get_stances 会回默认，这里原样透出）
@@ -449,11 +454,13 @@ def _validate_segment_mapping(cfg: dict[str, Any], category: str) -> None:
         )
 
 
-def run_checklist(text: str, category: str = "procurement") -> dict[str, Any]:
-    cfg = load_checklist(category)
+def run_checklist(text: str, category: str = "procurement", *,
+                  configuration: dict[str, Any] | None = None) -> dict[str, Any]:
+    cfg = configuration if configuration is not None else load_checklist(category)
     items_out: list[dict[str, Any]] = []
     for item in cfg.get("items", []):
-        items_out.append(_eval_item(text, item))
+        if item.get("enabled", True) is not False:
+            items_out.append(_eval_item(text, item))
     return {
         "category": cfg.get("category", category),
         "category_label": cfg.get("label", category),
@@ -483,6 +490,14 @@ def validate_checklist_configs() -> None:
         )
 
 
+def _contains_hardline(value: Any) -> bool:
+    if isinstance(value, dict):
+        return str(value.get("class") or "").strip().lower() == "hardline" or any(
+            _contains_hardline(child) for child in value.values()
+        )
+    return isinstance(value, list) and any(_contains_hardline(child) for child in value)
+
+
 def _validate_category_config(category: str, cfg: dict[str, Any]) -> None:
     """单品类完整校验（外部审计二轮 PR-D 合一入口）：
 
@@ -492,8 +507,19 @@ def _validate_category_config(category: str, cfg: dict[str, Any]) -> None:
     启动/CI 同源，规则写坏在任何入口都 fail-closed。"""
     problems: list[str] = []
     seen_ids: set[str] = set()
+    disabled_segments: set[str] = set()
+    enabled_segments: set[str] = set()
     for item in cfg.get("items", []):
         iid = str(item.get("id") or "")
+        enabled = item.get("enabled", True)
+        if not isinstance(enabled, bool):
+            problems.append(f"{category}/{iid}: enabled 必须为布尔值")
+        elif not enabled:
+            if _contains_hardline(item):
+                problems.append(f"{category}/{iid}: 硬性规则不能停用")
+            disabled_segments.add(str(item.get("segment") or ""))
+        elif not item.get("na") and not item.get("signal_gate"):
+            enabled_segments.add(str(item.get("segment") or ""))
         if not iid:
             problems.append(f"{category}: 存在无 id 的 item")
             continue
@@ -505,6 +531,10 @@ def _validate_category_config(category: str, cfg: dict[str, Any]) -> None:
         for phase in ("need_attention", "pass"):
             for rule in (item.get("rules") or {}).get(phase) or []:
                 problems.extend(_regex_problems(category, iid, rule))
+    if (cfg.get("scorecard") or {}).get("segments"):
+        empty_segments = (disabled_segments - enabled_segments) - {""}
+        if empty_segments:
+            problems.append(f"{category}: 评分分段必须保留至少一项始终参与检查的项目 {sorted(empty_segments)}")
     if problems:
         raise ValueError("\n".join(problems))
     _validate_segment_mapping(cfg, category)
@@ -557,7 +587,12 @@ def _regex_problems(category: str, item_id: str, rule: dict[str, Any]) -> list[s
 
 def _load_yaml(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        data = yaml.safe_load(f)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError(f"checklist root must be a mapping: {path}")
+    return data
 
 
 _VALID_RULE_CLASSES = {"hardline", "existence", "heuristic"}

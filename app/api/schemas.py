@@ -379,11 +379,26 @@ class ObjectionInfo(BaseModel):
     coverage: Optional[dict[str, Any]] = None  # 外审批 2+三轮审计 D：candidate 维（eligible/sent/reviewed/candidate_limited）+ body 维（body_*/clauses_*/body_limited）
 
 
+class RuleProvenanceInfo(BaseModel):
+    source: Literal["local_file"]
+    category: str
+    content_sha256: str
+
+
+class TrialRuleProvenanceInfo(BaseModel):
+    source: Literal["database_test"]
+    category: str
+    content_sha256: str
+    version_id: str
+    generation: int
+
+
 class ReviewSummary(BaseModel):
     id: str
     filename: str
     category: str
     category_label: str
+    rule_provenance: Optional[RuleProvenanceInfo | TrialRuleProvenanceInfo] = None
     status: Literal["pending", "processing", "done", "error"] = "pending"
     # 阶段 0.2：进度段位 triage/scanning/scoring/done/error；旧记录为 None
     # （status 仍是唯一终态权威，前端对 None 退化单行文案）
@@ -403,6 +418,7 @@ class ReviewSummary(BaseModel):
     # 阶段 1.3：立场声明（元数据；declaration 由服务端单一来源生成，
     # 前端与 docx 只渲染不拼接）
     stance: str = "neutral"
+    stance_label: str = ""
     stance_declaration: str = ""
     # 阶段 2.1 质量层（旧记录为 None；不可用时 available=False 前端静默隐藏）
     quality: Optional[QualityInfo] = None
@@ -422,6 +438,8 @@ class ReviewSummary(BaseModel):
     ai_findings: Optional[dict[str, Any]] = None
     # B7-6 对话工作台：共享对话流（持久化；旧记录/异常路径为 None）
     ask_thread: Optional[dict[str, Any]] = None
+    # B7-6c：补写建议随单存取（item_id → {mode, elsewhere, draft, adopted,...}）
+    remediations: Optional[dict[str, Any]] = None
     # 证据法批 2a：证据登记簿概览（纯读路径派生视图，每次响应即时重建；
     # 旧记录/异常路径为 None，前端零感知）
     evidence_registry: Optional[EvidenceRegistryInfo] = None
@@ -443,6 +461,7 @@ class UploadResponse(BaseModel):
     status: Literal["uploaded", "category_confirm"] = "uploaded"
     precheck: Optional[PrecheckInfo] = None
     suggested_category: Optional[str] = None
+    confirmation_token: Optional[str] = None
     # 阶段 1.3：元素含 stances 嵌套 dict（立场元数据随品类透传）
     supported_categories: list[dict[str, Any]] = Field(default_factory=list)
 
@@ -467,3 +486,47 @@ class AskResponse(BaseModel):
     # B7-6：本轮对话序号；deduped=True=同 request_id 命中已有轮次（未再调模型）
     turn_no: Optional[int] = None
     deduped: bool = False
+
+
+# ---- B7-6c「看看怎么补」（老钱裁定：示范文本，中性，不改档位） ----
+
+class RemediateRequest(BaseModel):
+    """无请求体也合法（预留扩展位）；条目从路径参数解析。"""
+    pass
+
+
+class RemediateEditRequest(BaseModel):
+    clause_draft: str = Field(min_length=1, max_length=6000)
+    expected_draft: str = Field(max_length=6000)
+
+
+class RemediateResponse(BaseModel):
+    ok: bool
+    item_id: str
+    item_name: str
+    # guidance=负清单类目（零模型，行动指引）；elsewhere=写在别处；
+    # draft=确缺失已出草稿；error=失败（error 字段给原因）
+    mode: Literal["guidance", "elsewhere", "draft", "error"] = "error"
+    guidance: Optional[str] = None
+    elsewhere: Optional[dict[str, Any]] = None
+    draft: Optional[dict[str, Any]] = None
+    quote_verified: Optional[bool] = None
+    adopted: bool = False
+    user_edited: bool = False
+    error: Optional[str] = None
+
+
+class RemediateAdoptResponse(BaseModel):
+    ok: bool
+    item_id: str
+    adopted: bool = False
+    error: Optional[str] = None
+
+
+class RemediateContextResponse(BaseModel):
+    status: Literal["verified", "ambiguous", "missing"]
+    heading: str = ""
+    before: str = ""
+    match: str = ""
+    after: str = ""
+    truncated: bool = False

@@ -8,6 +8,8 @@ Uses langgraph as a library only — not LangGraph Platform.
 """
 from __future__ import annotations
 
+from app.services.owned_llm_transport import OwnedTransportError
+
 import logging
 from typing import Any, Callable, TypedDict, cast
 
@@ -19,6 +21,7 @@ from app.services.llm_call_log import record_node
 from app.services import scorecard_prompts
 from app.services.reason_codes import Reason
 from app.services import quality as quality_service
+from app.services import stance as stance_service
 from app.services import objection as objection_service
 from app.services.blind_spot import annotate_rule_items
 from app.services.checklist import run_checklist
@@ -28,6 +31,7 @@ from app.services import facts as facts_service
 from app.services import verify as verify_service
 from app.services.extract import ExtractionError, extract_text
 from app.services.model_review import run_model_review
+from app.services.rule_snapshot import RuleSnapshot, capture_rule_snapshot
 
 
 class ReviewState(TypedDict, total=False):
@@ -67,6 +71,8 @@ class ReviewState(TypedDict, total=False):
     parsed_text: str
     document_version: str
     completion: str
+    rule_snapshot: RuleSnapshot
+    rule_pack: dict[str, str]
     # A6 有界主动核验状态
     verify: dict[str, Any]
 
@@ -78,6 +84,8 @@ def _emit_stage(state: ReviewState, stage: str) -> None:
         return
     try:
         cb(stage)
+    except OwnedTransportError:
+        raise
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).warning("on_stage callback failed for stage=%s", stage, exc_info=True)
 
@@ -89,6 +97,8 @@ def _emit_partial(state: ReviewState, completion: str, **fields: Any) -> None:
         return
     try:
         cb(completion, fields)
+    except OwnedTransportError:
+        raise
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).warning(
             "on_partial callback failed for completion=%s", completion, exc_info=True
@@ -115,6 +125,8 @@ def node_parse(state: ReviewState) -> ReviewState:
         })
     except ExtractionError as exc:
         return {"text": "", "error": str(exc)}
+    except OwnedTransportError:
+        raise
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("Unhandled extraction failure")
         return {"text": "", "error": "文档解析失败，请重新上传或转换格式后再试"}
@@ -124,7 +136,9 @@ def node_checklist(state: ReviewState) -> ReviewState:
     if state.get("error"):
         return {}
     text = state.get("text") or ""
-    result = run_checklist(text, state.get("category") or "procurement")
+    snapshot = state.get("rule_snapshot")
+    result = run_checklist(text, state.get("category") or "procurement",
+                           configuration=snapshot.configuration() if snapshot else None)
     items = annotate_rule_items(result["items"])
     clause_index = state.get("clause_index") or {}
     if clause_index:
@@ -155,6 +169,7 @@ def node_checklist(state: ReviewState) -> ReviewState:
         text=text,
         clause_index=clause_index,
         document_version=doc_ver,
+        rule_pack=state.get("rule_pack"),
         text_preview=text[:500]
     )
     return cast(ReviewState, out)
@@ -165,6 +180,7 @@ def node_model_review(state: ReviewState) -> ReviewState:
 
     Additive only — never mutates rule item statuses; score is advisory.
     """
+    snapshot = state.get("rule_snapshot")
     _emit_stage(state, "scoring")
     if state.get("error"):
         return cast(ReviewState, {
@@ -185,7 +201,10 @@ def node_model_review(state: ReviewState) -> ReviewState:
                 category=state.get("category") or "procurement",
                 clause_index=state.get("clause_index"),
                 budget=state.get("budget"),
+                rule_config=snapshot.configuration() if snapshot else None,
             )
+    except OwnedTransportError:
+        raise
     except Exception:  # noqa: BLE001 — F03：模型坏输出不得抹掉已完成规则结果
         logging.getLogger(__name__).exception("Model review failed; keeping rule items")
         return {
@@ -250,9 +269,14 @@ def node_quality(state: ReviewState) -> ReviewState:
                 policies=state.get("policies") or [],
                 category=state.get("category") or "procurement",
                 stance=state.get("stance") or "neutral",
+                stance_label=stance_service.stance_label(
+                    state.get("category") or "procurement", state.get("stance") or "neutral",
+                    configuration=state["rule_snapshot"].configuration() if state.get("rule_snapshot") else None),
                 clause_index=state.get("clause_index"),
                 budget=state.get("budget"),
             )
+    except OwnedTransportError:
+        raise
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("Quality pass failed")
         out = quality_service.outcome_unavailable(Reason.ERROR.value)
@@ -279,6 +303,8 @@ def node_quality(state: ReviewState) -> ReviewState:
             document_version=state.get("document_version") or "",
             prior=None,
         )
+    except OwnedTransportError:
+        raise
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("Bounded verify failed")
         verify_out = verify_service.empty_verify(
@@ -320,6 +346,8 @@ def node_objection(state: ReviewState) -> ReviewState:
                 budget=state.get("budget"),
                 document_version=state.get("document_version") or "",
             )
+    except OwnedTransportError:
+        raise
     except Exception:  # noqa: BLE001
         logging.getLogger(__name__).exception("Objection pass failed")
         out = objection_service.outcome_unavailable(Reason.ERROR.value)
@@ -369,7 +397,18 @@ def run_review(
     parsed_text: str | None = None,
     stance: str = "neutral",
     review_id: str | None = None,
+    rule_snapshot: RuleSnapshot | None = None,
 ) -> dict[str, Any]:
+    from app.services.evidence import rule_engine_version
+
+    snapshot = rule_snapshot or capture_rule_snapshot(category or "procurement")
+    if snapshot.category != (category or "procurement"):
+        raise ValueError("snapshot category does not match review category")
+    rule_pack = {
+        "rule_pack_id": snapshot.category,
+        "rule_pack_content_version": snapshot.content_version,
+        "rule_engine_version": rule_engine_version(),
+    }
     graph = get_graph()
     final = cast(ReviewState, graph.invoke(
         cast(ReviewState, {
@@ -382,6 +421,8 @@ def run_review(
             "on_stage": on_stage,
             "on_partial": on_partial,
             "parsed_text": parsed_text or "",
+            "rule_snapshot": snapshot,
+            "rule_pack": rule_pack,
         })
     ))
     # 批 2b-①：落库前做一次读路径同源归一化（canonical 化：坐标校验 +
@@ -392,7 +433,6 @@ def run_review(
         annotate_review_claims,
         normalize_review_evidence,
         rebuild_evidence_index,
-        rule_pack_versions,
     )
     _normalized = normalize_review_evidence({
         "text": final.get("text") or "",
@@ -405,7 +445,7 @@ def run_review(
     })
     # 批 2b-②：主张标注（claim_id/content_hash/evidence_refs）——在规范化
     # 之后执行（编号派生自已收敛票据，约束 2 顺序），scope 取 rule_pack
-    _normalized["rule_pack"] = rule_pack_versions(final.get("category") or category)
+    _normalized["rule_pack"] = rule_pack
     annotate_review_claims(_normalized)
     _index = rebuild_evidence_index(_normalized)
     return {

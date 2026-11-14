@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import sqlite3
 import tempfile
 import time
@@ -39,6 +40,29 @@ _SEP = "\x1f"  # 键内分隔符：防字段拼接歧义（codex #173 二轮）
 
 def _sha(s: str) -> str:
     return hashlib.sha1(s.encode("utf-8")).hexdigest()[:16]
+
+
+def has_verified_quote(finding: dict[str, Any], row: dict[str, Any]) -> bool:
+    text = str(row.get("text") or "")
+    quote = re.sub(r"\s+", "", str(finding.get("quote") or ""))
+    return bool(quote and quote in re.sub(r"\s+", "", text))
+
+
+def has_verified_anchor(finding: dict[str, Any], row: dict[str, Any]) -> bool:
+    """观点锚点须能在本合同中核对，不能仅凭模型给出的非空字符串。"""
+    text = str(row.get("text") or "")
+    if has_verified_quote(finding, row):
+        return True
+    cid = finding.get("clause_id")
+    index = row.get("clause_index") or {}
+    clauses = index.get("clauses") if isinstance(index, dict) else []
+    for clause in clauses or []:
+        if not isinstance(clause, dict) or clause.get("id") != cid or not cid:
+            continue
+        start, end = clause.get("start"), clause.get("end")
+        if isinstance(start, int) and isinstance(end, int) and 0 <= start < end <= len(text):
+            return True
+    return False
 
 
 def _obs_key(dim: str, title: str, clause_id: str, quote: str) -> str:
@@ -99,10 +123,10 @@ def _save_status(review_id: str, key: str, status: str) -> None:
 
 
 def _rule_labels(row: dict[str, Any]) -> list[tuple[str, str]]:
-    """规则需关注条目 (名, id)（跨源关联标注候选；B7-5b C3 补 id 供前端跳转）。"""
+    """需关注或未找到的规则条目，供同主题提示与双向跳转。"""
     return [(str(i.get("name") or ""), str(i.get("id") or ""))
             for i in (row.get("items") or [])
-            if isinstance(i, dict) and i.get("status") == "需关注" and i.get("name")]
+            if isinstance(i, dict) and i.get("status") in ("需关注", "未找到") and i.get("name")]
 
 
 def _rule_link(title: str, comment: str,
@@ -241,6 +265,8 @@ def review_findings(row: dict[str, Any]) -> dict[str, Any]:
             entry["verification"] = str(derived.get("verification") or "") or None
             if ev_obj is None and isinstance(derived.get("evidence"), dict):
                 entry["evidence"] = derived.get("evidence")
+        if not fact_type:
+            entry["anchor_verified"] = has_verified_anchor(entry, row)
         findings.append(entry)
 
     # 独立疑点（pack_verify 源，非观察派生）
@@ -342,14 +368,17 @@ def set_status_locked(store: Any, review_id: str, *, finding_key: str,
     if finding is None:
         return {"status": "error", "error": "finding_not_found"}
 
-    # spec §四.2：无原文引句且无坐标的事实类不可物化（清单条目必须有
-    # 原文依据）——如实拒绝；观点类本就不物化，无此限制
-    if status == "confirmed" and finding["fact_type"] \
-            and not (finding.get("quote") or finding.get("clause_id")):
+    # spec §四.2：无原文引句且无坐标不可物化（清单条目必须有原文依据）——
+    # 如实拒绝。B7-6b（老钱复议 1.1）：物化判据=**有无原文锚点**（引句/
+    # 坐标），不是 fact_type——有引句的观点确认后同走物化通道（复用 B7-5a
+    # 管线，零新机制）；无引句观点继续只存状态表（改写/物化锁死）
+    _anchored = (bool(finding.get("quote") or finding.get("clause_id")) if finding["fact_type"]
+                 else has_verified_anchor(finding, norm_row))
+    if status == "confirmed" and not _anchored:
         return {"status": "error",
                 "error": "该发现无原文引句与坐标，不能作为清单条目（无原文依据）"}
     # 统一落表（codex 四轮 P2-3）：观点类的已阅/争议同样持久化——此前只在
-    # 事实类分支保存，观点争议刷新即回「已阅」。观点仍不可物化（下方守卫）
+    # 事实类分支保存，观点争议刷新即回「已阅」
     _save_status(review_id, finding_key, status)
 
     items = list(row.get("items") or [])
@@ -358,11 +387,12 @@ def set_status_locked(store: Any, review_id: str, *, finding_key: str,
                      and i.get("tag_source") == "ai_finding"), None)
     item_id = (existing or {}).get("id")
 
-    if status == "confirmed" and finding["fact_type"]:
+    if status == "confirmed" and (finding["fact_type"] or _anchored):
         if existing is None:
             new_item = materialize(
                 finding_key=finding_key,
-                quote=finding.get("quote") or "",
+                quote=(finding.get("quote") or "") if finding["fact_type"]
+                or has_verified_quote(finding, norm_row) else "",
                 evidence=finding.get("evidence"),
                 clause_id=finding.get("clause_id") or "",
                 note=finding.get("comment") or "",
