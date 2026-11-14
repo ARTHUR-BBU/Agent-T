@@ -19,8 +19,8 @@ _ACCOUNT_TABLES = {
     "rule_versions", "rule_active_versions", "rule_candidates", "rule_candidate_reviews", "rule_candidate_details",
     "rule_submission_requests", "rule_validation_results", "rule_validation_jobs", "rule_full_regression_results",
     "rule_release_events", "rule_validation_control",
-    # 施工卡-20261114-2：恢复代次账本两表（追加式；见 rule_validation_service）
-    "rule_validation_recovery_log", "rule_evidence_generations",
+    # 施工卡-20261114-2：恢复代次账本两表+启用标记（追加式；见 rule_validation_service）
+    "rule_validation_recovery_log", "rule_evidence_generations", "rule_validation_recovery_marker",
 }
 _REVIEW_TABLES = {
     "reviews", "revision_budget", "revision_drafts", "selected_drafts", "impact_reports",

@@ -188,11 +188,18 @@ def create_migrated_copy(account_path: Path, review_path: Path, target_path: Pat
                 name for kind, name in ao if kind == "table"}
             if 0 < len(_validation_tables) < 3:
                 raise ValueError("规则验证控制/任务/结果表不完整，源库需离线迁移")
-            # 施工卡-20261114-2：恢复账本两表必须依附完整的验证三表——
-            # 恢复代次历史脱离安全闸状态毫无意义且不可信（如解锁历史在而
-            # 闸状态表缺失 = 代次记录无法锚定），拒绝迁移
-            _recovery_tables = {"rule_validation_recovery_log", "rule_evidence_generations"} & {
-                name for kind, name in ao if kind == "table"}
+            # 施工卡-20261114-2 + codex P1-20261115：恢复账本一致性——
+            # ① 两表只在一 → 结构损坏，拒绝迁移（与运行时初始化同口径）
+            # ② 启用标记与账本两表必须同有同无（标记在账本丢=结构丢失；
+            #    账本在标记丢=结构不可信）
+            # ③ 账本/标记必须依附完整的验证三表（代次历史脱离安全闸无法锚定）
+            _account_table_names = {name for kind, name in ao if kind == "table"}
+            _recovery_tables = {"rule_validation_recovery_log", "rule_evidence_generations"} & _account_table_names
+            _marker_present = "rule_validation_recovery_marker" in _account_table_names
+            if len(_recovery_tables) == 1:
+                raise ValueError("恢复账本不完整（两表中缺一），源库需离线迁移")
+            if _marker_present != bool(_recovery_tables):
+                raise ValueError("恢复账本与初始化标记不一致，源库需离线迁移")
             if _recovery_tables and len(_validation_tables) < 3:
                 raise ValueError("恢复账本缺少规则验证三表，源库需离线迁移")
             if "rule_validation_control" in _validation_tables:

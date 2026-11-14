@@ -87,11 +87,18 @@ _VALIDATION_SCHEMA_SQL = """
 # - rule_evidence_generations：金标/完整回归/审核三类证据行的代次盖章，
 #   写入方在各自写事务内随证据行一起插入（evidence_id 对应各证据表主键；
 #   三类分属不同表，故不设单一外键，一致性由写入方事务保证）。
-# 证据行无盖章记录 = 恢复前证据；恢复代次 > 0 时，发布要求证据盖章等于当前代次
-# （发布侧判定在 rule_release，见施工卡-20261114-3 接线）。
+# - rule_validation_recovery_marker：账本启用标记（codex P1-20261115）——
+#   与账本两表同一事务建立；**账本在而标记不在 = 结构不可信，标记在而账本
+#   不在 = 账本丢失**，一律 fail-closed 拒绝、绝不静默补空（否则代次归零、
+#   未盖章旧证据会被误当恢复前证据）。诚实边界：标记表与账本**连同标记
+#   一起被有权限者彻底删除**时，结构与未升级旧库无法区分，按旧库升级
+#   处理——此类彻底破坏属于离线处置边界（需保留安全闸状态/任务与测试
+#   历史的离线重建），程序侧无法防御，不在自动恢复范围。
+# SQLite TEXT PRIMARY KEY 仍可接受 NULL（codex 独立验证），主键列显式
+# NOT NULL；代次以 typeof 强制整数（codex 数据约束建议）。
 _RECOVERY_SCHEMA_SQL = """
                 CREATE TABLE IF NOT EXISTS rule_validation_recovery_log (
-                    id TEXT PRIMARY KEY,
+                    id TEXT NOT NULL PRIMARY KEY,
                     action TEXT NOT NULL CHECK(action IN ('window_open','window_close','unlock','rejected_attempt','residual_risk_accepted')),
                     actor_id TEXT NOT NULL REFERENCES account_users(id),
                     incident_reason TEXT, last_job_id TEXT,
@@ -99,9 +106,9 @@ _RECOVERY_SCHEMA_SQL = """
                     created_at REAL NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS rule_evidence_generations (
-                    evidence_id TEXT PRIMARY KEY,
+                    evidence_id TEXT NOT NULL PRIMARY KEY,
                     evidence_kind TEXT NOT NULL CHECK(evidence_kind IN ('validation','full_regression','review')),
-                    recovery_generation INTEGER NOT NULL CHECK(recovery_generation >= 1),
+                    recovery_generation INTEGER NOT NULL CHECK(typeof(recovery_generation)='integer' AND recovery_generation >= 1),
                     created_at REAL NOT NULL
                 );
                 CREATE TRIGGER IF NOT EXISTS recovery_log_no_update BEFORE UPDATE ON rule_validation_recovery_log
@@ -118,7 +125,25 @@ _RECOVERY_SCHEMA_SQL = """
                 CREATE TRIGGER IF NOT EXISTS evidence_generation_no_replace BEFORE INSERT ON rule_evidence_generations
                 WHEN EXISTS (SELECT 1 FROM rule_evidence_generations WHERE evidence_id=NEW.evidence_id)
                 BEGIN SELECT RAISE(ABORT, 'evidence generations are append-only'); END;
+                CREATE TABLE IF NOT EXISTS rule_validation_recovery_marker (
+                    id INTEGER PRIMARY KEY CHECK(id=1), initialized_at REAL NOT NULL
+                );
+                CREATE TRIGGER IF NOT EXISTS recovery_marker_no_delete BEFORE DELETE ON rule_validation_recovery_marker
+                BEGIN SELECT RAISE(ABORT, 'recovery marker is retained'); END;
+                CREATE TRIGGER IF NOT EXISTS recovery_marker_no_update BEFORE UPDATE ON rule_validation_recovery_marker
+                BEGIN SELECT RAISE(ABORT, 'recovery marker is retained'); END;
             """
+# 账本域触发器 → 所属表（初始化一致性检查用；触发器被删时拒绝而非静默重建）
+_RECOVERY_EXPECTED_TRIGGERS = {
+    "recovery_log_no_update": "rule_validation_recovery_log",
+    "recovery_log_no_delete": "rule_validation_recovery_log",
+    "recovery_log_no_replace": "rule_validation_recovery_log",
+    "evidence_generation_no_update": "rule_evidence_generations",
+    "evidence_generation_no_delete": "rule_evidence_generations",
+    "evidence_generation_no_replace": "rule_evidence_generations",
+    "recovery_marker_no_delete": "rule_validation_recovery_marker",
+    "recovery_marker_no_update": "rule_validation_recovery_marker",
+}
 
 
 def _split_sqlite_script(script: str) -> list[str]:
@@ -174,10 +199,39 @@ class RuleValidationService:
             else:
                 conn.execute("INSERT OR IGNORE INTO rule_validation_control(id,blocked,reason,updated_at) "
                              "VALUES (1,0,'',0)")
-            # 恢复账本两表（施工卡-20261114-2）：同一写事务内追加建表；
-            # 存量库（无此两表）平滑升级，既有对象逐字节不动
-            for _ddl in _split_sqlite_script(_RECOVERY_SCHEMA_SQL):
-                conn.execute(_ddl)
+            # 恢复账本（施工卡-20261114-2 + codex P1-20261115）：fail-closed
+            # 一致性检查——账本缺失/不完整/与标记不一致时拒绝初始化，绝不静默
+            # 补空（补空 = 代次归零 = 未盖章旧证据被误当恢复前证据）
+            _recovery_tables_present = {row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+                "('rule_validation_recovery_log','rule_evidence_generations',"
+                "'rule_validation_recovery_marker')")}
+            _ledger_present = _recovery_tables_present & {"rule_validation_recovery_log", "rule_evidence_generations"}
+            _marker_present = "rule_validation_recovery_marker" in _recovery_tables_present
+            if len(_ledger_present) == 1:
+                raise RuntimeError("恢复账本不完整（两表中缺一），需要离线核查")
+            if _marker_present != bool(_ledger_present):
+                # 标记在而账本丢 = 启用后结构丢失；账本在而标记丢 = 结构不可信
+                raise RuntimeError("恢复账本与初始化标记不一致，需要离线核查")
+            if _ledger_present:
+                _marker_row = conn.execute(
+                    "SELECT initialized_at FROM rule_validation_recovery_marker WHERE id=1").fetchone()
+                if _marker_row is None:
+                    raise RuntimeError("恢复初始化标记行缺失，需要离线核查")
+                _existing_triggers = {row[0]: row[1] for row in conn.execute(
+                    "SELECT name,tbl_name FROM sqlite_master WHERE type='trigger'")}
+                _missing = sorted(name for name, table in _RECOVERY_EXPECTED_TRIGGERS.items()
+                                  if _existing_triggers.get(name) != table)
+                if _missing:
+                    # 触发器被删：如实拒绝，不自动补齐（补齐会被当成「历史未被修改」）
+                    raise RuntimeError("恢复账本触发器缺失（%s），需要离线核查" % ",".join(_missing))
+            else:
+                # 全新库或未升级旧库：同一写事务内建账本两表+标记表并落标记行；
+                # 既有对象逐字节不动
+                for _ddl in _split_sqlite_script(_RECOVERY_SCHEMA_SQL):
+                    conn.execute(_ddl)
+                conn.execute("INSERT INTO rule_validation_recovery_marker(id,initialized_at) "
+                             "VALUES (1,?)", (time.time(),))
 
     def unlock_generation(self, conn: sqlite3.Connection) -> int:
         """当前恢复代次 = 恢复账本中成功解锁行数（施工卡-20261114-2/3）。
