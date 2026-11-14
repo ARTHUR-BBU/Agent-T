@@ -75,10 +75,13 @@ class RuleVersionStore:
             if conn.execute("SELECT 1 FROM rule_active_versions WHERE category=?", (category,)).fetchone():
                 raise ValueError("品类规则版本已初始化")
             version_id, now = uuid.uuid4().hex, time.time()
-            conn.execute("INSERT INTO rule_versions VALUES (?,?,?,?,?,?)", (
+            # 施工卡-20261114-2：INSERT 一律写明确列名，不再依赖列序
+            conn.execute("INSERT INTO rule_versions (id,category,sha256,content,actor_id,created_at) "
+                         "VALUES (?,?,?,?,?,?)", (
                 version_id, category, digest, content, actor["id"], now,
             ))
-            conn.execute("INSERT INTO rule_active_versions VALUES (?,?,1)", (category, version_id))
+            conn.execute("INSERT INTO rule_active_versions (category,version_id,generation) VALUES (?,?,1)",
+                         (category, version_id))
             self.accounts._audit(conn, actor["id"], "initialize_rule_version", version_id)
             return {"id": version_id, "category": category, "sha256": digest,
                     "actor_id": actor["id"], "created_at": now}

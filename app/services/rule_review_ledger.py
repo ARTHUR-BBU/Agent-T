@@ -245,7 +245,10 @@ class RuleReviewLedger:
                 raise ValueError("该候选规则已审核，请提交新候选或先运行新测试")
             review_id, now = uuid.uuid4().hex, time.time()
             self_review = actor["id"] == candidate["submitted_by"]
-            conn.execute("INSERT INTO rule_candidate_reviews VALUES (?,?,?,?,?,?,?,?,?)", (
+            # 施工卡-20261114-2：INSERT 一律写明确列名，不再依赖列序
+            conn.execute("INSERT INTO rule_candidate_reviews "
+                         "(id,candidate_id,candidate_sha256,reviewer_id,decision,reason,self_review,"
+                         "validation_id,created_at) VALUES (?,?,?,?,?,?,?,?,?)", (
                 review_id, candidate_id, actual, actor["id"], decision, reason.strip(), int(self_review), validation_id, now,
             ))
             return {"id": review_id, "candidate_id": candidate_id, "candidate_sha256": actual,

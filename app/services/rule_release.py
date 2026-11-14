@@ -223,7 +223,9 @@ class RuleReleaseService:
             version = conn.execute("SELECT * FROM rule_versions WHERE category=? AND sha256=?", (candidate["category"], digest)).fetchone()
             if version is None:
                 version_id = uuid.uuid4().hex
-                conn.execute("INSERT INTO rule_versions VALUES (?,?,?,?,?,?)", (version_id, candidate["category"], digest, candidate["content"], actor["id"], time.time()))
+                # 施工卡-20261114-2：INSERT 一律写明确列名，不再依赖列序
+                conn.execute("INSERT INTO rule_versions (id,category,sha256,content,actor_id,created_at) "
+                             "VALUES (?,?,?,?,?,?)", (version_id, candidate["category"], digest, candidate["content"], actor["id"], time.time()))
             else:
                 if hashlib.sha256(version["content"]).hexdigest() != digest:
                     raise ValueError("规则版本内容损坏")
@@ -232,7 +234,10 @@ class RuleReleaseService:
             if changed != 1:
                 raise ValueError("规则基线代次已变化")
             event_id = uuid.uuid4().hex
-            conn.execute("INSERT INTO rule_release_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
+            conn.execute("INSERT INTO rule_release_events "
+                         "(id,category,action,previous_version_id,version_id,previous_generation,generation,"
+                         "actor_id,request_id,fingerprint,candidate_id,validation_id,review_id,full_result_id,"
+                         "reason,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
                 event_id, candidate["category"], "publish", active["version_id"], version_id,
                 expected_generation, expected_generation + 1, actor["id"], request_id, fingerprint,
                 candidate_id, validation_id, review_id, full_result_id, "", time.time(),
@@ -267,7 +272,10 @@ class RuleReleaseService:
             RuleSnapshot(category, target["content"], digest[:12])
             conn.execute("UPDATE rule_active_versions SET version_id=?, generation=generation+1 WHERE category=? AND generation=?", (version_id, category, expected_generation))
             event_id = uuid.uuid4().hex
-            conn.execute("INSERT INTO rule_release_events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
+            conn.execute("INSERT INTO rule_release_events "
+                         "(id,category,action,previous_version_id,version_id,previous_generation,generation,"
+                         "actor_id,request_id,fingerprint,candidate_id,validation_id,review_id,full_result_id,"
+                         "reason,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
                 event_id, category, "rollback", active["version_id"], version_id, expected_generation,
                 expected_generation + 1, actor["id"], request_id, fingerprint, None, None, None, None, reason.strip(), time.time(),
             ))

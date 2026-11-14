@@ -79,6 +79,48 @@ _VALIDATION_SCHEMA_SQL = """
             """
 
 
+# 施工卡-20261114-2（codex 实测）：ALTER TABLE ADD COLUMN 会**改写 sqlite_master
+# 中保存的建表 SQL**（在列清单末尾拼接新列定义），逐字节迁移比对随之破坏——
+# 因此恢复代次**不给任何既有表加列**，改走独立追加式账本：
+# - rule_validation_recovery_log：维护窗口/解锁/拒绝尝试/风险接受登记；
+#   当前恢复代次 = 其中 action='unlock' 的行数（追加触发器 + 写锁串行 ⇒ 单调）；
+# - rule_evidence_generations：金标/完整回归/审核三类证据行的代次盖章，
+#   写入方在各自写事务内随证据行一起插入（evidence_id 对应各证据表主键；
+#   三类分属不同表，故不设单一外键，一致性由写入方事务保证）。
+# 证据行无盖章记录 = 恢复前证据；恢复代次 > 0 时，发布要求证据盖章等于当前代次
+# （发布侧判定在 rule_release，见施工卡-20261114-3 接线）。
+_RECOVERY_SCHEMA_SQL = """
+                CREATE TABLE IF NOT EXISTS rule_validation_recovery_log (
+                    id TEXT PRIMARY KEY,
+                    action TEXT NOT NULL CHECK(action IN ('window_open','window_close','unlock','rejected_attempt','residual_risk_accepted')),
+                    actor_id TEXT NOT NULL REFERENCES account_users(id),
+                    incident_reason TEXT, last_job_id TEXT,
+                    evidence_json TEXT NOT NULL, db_file_identity TEXT NOT NULL,
+                    created_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS rule_evidence_generations (
+                    evidence_id TEXT PRIMARY KEY,
+                    evidence_kind TEXT NOT NULL CHECK(evidence_kind IN ('validation','full_regression','review')),
+                    recovery_generation INTEGER NOT NULL CHECK(recovery_generation >= 1),
+                    created_at REAL NOT NULL
+                );
+                CREATE TRIGGER IF NOT EXISTS recovery_log_no_update BEFORE UPDATE ON rule_validation_recovery_log
+                BEGIN SELECT RAISE(ABORT, 'recovery log is append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS recovery_log_no_delete BEFORE DELETE ON rule_validation_recovery_log
+                BEGIN SELECT RAISE(ABORT, 'recovery log is append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS recovery_log_no_replace BEFORE INSERT ON rule_validation_recovery_log
+                WHEN EXISTS (SELECT 1 FROM rule_validation_recovery_log WHERE id=NEW.id)
+                BEGIN SELECT RAISE(ABORT, 'recovery log is append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS evidence_generation_no_update BEFORE UPDATE ON rule_evidence_generations
+                BEGIN SELECT RAISE(ABORT, 'evidence generations are append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS evidence_generation_no_delete BEFORE DELETE ON rule_evidence_generations
+                BEGIN SELECT RAISE(ABORT, 'evidence generations are append-only'); END;
+                CREATE TRIGGER IF NOT EXISTS evidence_generation_no_replace BEFORE INSERT ON rule_evidence_generations
+                WHEN EXISTS (SELECT 1 FROM rule_evidence_generations WHERE evidence_id=NEW.evidence_id)
+                BEGIN SELECT RAISE(ABORT, 'evidence generations are append-only'); END;
+            """
+
+
 def _split_sqlite_script(script: str) -> list[str]:
     """按 sqlite3.complete_statement 拆分建库脚本（正确处理触发器
     BEGIN...END 内嵌分号）；用于在同一写事务内逐条执行。"""
@@ -132,6 +174,18 @@ class RuleValidationService:
             else:
                 conn.execute("INSERT OR IGNORE INTO rule_validation_control(id,blocked,reason,updated_at) "
                              "VALUES (1,0,'',0)")
+            # 恢复账本两表（施工卡-20261114-2）：同一写事务内追加建表；
+            # 存量库（无此两表）平滑升级，既有对象逐字节不动
+            for _ddl in _split_sqlite_script(_RECOVERY_SCHEMA_SQL):
+                conn.execute(_ddl)
+
+    def unlock_generation(self, conn: sqlite3.Connection) -> int:
+        """当前恢复代次 = 恢复账本中成功解锁行数（施工卡-20261114-2/3）。
+
+        追加式触发器 + 写锁串行保证单调；0 表示从未离线恢复过——
+        此时未盖章的存量证据即当前代次证据。"""
+        return conn.execute(
+            "SELECT COUNT(*) FROM rule_validation_recovery_log WHERE action='unlock'").fetchone()[0]
 
     def _candidate(self, conn: sqlite3.Connection, token: str, candidate_id: str, *, current: bool) -> tuple[sqlite3.Row, sqlite3.Row]:
         actor = self.accounts._session(conn, token)
@@ -194,7 +248,10 @@ class RuleValidationService:
                     raise RuntimeError("已有候选规则正在测试，请稍后重试")
                 else:
                     job_id = uuid.uuid4().hex
-                    conn.execute("INSERT INTO rule_validation_jobs VALUES (?,?,?,?,?,?,?)", (
+                    # 施工卡-20261114-2：INSERT 一律写明确列名，不再依赖列序
+                    conn.execute("INSERT INTO rule_validation_jobs "
+                                 "(id,candidate_id,actor_id,status,started_at,lease_until,result_id) "
+                                 "VALUES (?,?,?,?,?,?,?)", (
                         job_id, candidate_id, actor_id, "running", now, now + 600, None,
                     ))
             if recovery_needed:
@@ -231,7 +288,9 @@ class RuleValidationService:
                     lease_expired = True
                 else:
                     result_id = uuid.uuid4().hex
-                    conn.execute("INSERT INTO rule_validation_results VALUES (?,?,?,?,?,?,?)", (
+                    conn.execute("INSERT INTO rule_validation_results "
+                                 "(id,candidate_id,candidate_sha256,base_generation,actor_id,created_at,result_json) "
+                                 "VALUES (?,?,?,?,?,?,?)", (
                         result_id, candidate_id, digest, generation, actor_id, now,
                         json.dumps(asdict(result), ensure_ascii=False, sort_keys=True),
                     ))

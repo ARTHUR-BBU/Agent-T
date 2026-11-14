@@ -188,6 +188,13 @@ def create_migrated_copy(account_path: Path, review_path: Path, target_path: Pat
                 name for kind, name in ao if kind == "table"}
             if 0 < len(_validation_tables) < 3:
                 raise ValueError("规则验证控制/任务/结果表不完整，源库需离线迁移")
+            # 施工卡-20261114-2：恢复账本两表必须依附完整的验证三表——
+            # 恢复代次历史脱离安全闸状态毫无意义且不可信（如解锁历史在而
+            # 闸状态表缺失 = 代次记录无法锚定），拒绝迁移
+            _recovery_tables = {"rule_validation_recovery_log", "rule_evidence_generations"} & {
+                name for kind, name in ao if kind == "table"}
+            if _recovery_tables and len(_validation_tables) < 3:
+                raise ValueError("恢复账本缺少规则验证三表，源库需离线迁移")
             if "rule_validation_control" in _validation_tables:
                 # codex 三轮 P1-2：三表齐全但控制行（id=1）丢失同样拒绝——
                 # 目标库初始化会补出默认未阻断行，等同复活安全闸
